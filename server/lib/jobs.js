@@ -124,7 +124,9 @@ function run(id, fn) {
         isCancelled: () => isCancelled(id),
       };
       const result = await fn(ctx);
-      if (isCancelled(id)) return;
+      // 取消之後才跑完的工作要自己清掉。以前這裡直接 return，
+      // running 裡就永遠留著一筆 —— finish()／fail() 才會刪，而這條路兩個都不走。
+      if (isCancelled(id)) { running.delete(id); return; }
       await finish(id, result);
     } catch (e) {
       if (e.message === '__CANCELLED__') { running.delete(id); return; }

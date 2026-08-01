@@ -311,6 +311,9 @@ function sectionMedia(paper, moduleName) {
     passage: sec.passage || null,
     transcript: sec.transcript || null,
     audio: sec.audio || null,
+    // 素材編輯器有「本節圖片（地圖／平面圖）」這個欄位，
+    // 但以前沒有任何地方讀它，老師填了等於丟進黑洞
+    image: sec.image || null,
   }));
 }
 

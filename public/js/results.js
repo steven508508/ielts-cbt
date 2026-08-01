@@ -384,9 +384,16 @@ const Results = (() => {
             el('span', { class: 'muted small', style: { marginLeft: '.6rem', fontWeight: '400' } },
               `${w.wordCount} 字（要求 ${w.minWords} 字）`)),
 
-          w.prompt && el('details', { style: { marginBottom: '.8rem' } },
+          w.prompt && el('details', { open: !!w.image, style: { marginBottom: '.8rem' } },
             el('summary', { class: 'small muted' }, '題目'),
-            el('div', { class: 'bodyhtml small', html: sanitize(w.prompt) })),
+            el('div', { class: 'bodyhtml small', html: sanitize(w.prompt) }),
+            // Task 1 的圖表就是題目本身。沒有它，學生看著「描述下圖」四個字
+            // 和一篇 Band 8 範文，完全不知道當初在描述什麼。
+            w.image ? el('img', { src: w.image, class: 'rev-img', alt: `Task ${w.taskNo} 圖表`, loading: 'lazy' }) : null,
+            !w.image && w.visualDescription
+              ? el('div', { class: 'small muted', style: { marginTop: '.4rem' } },
+                  '（這題沒有上傳圖檔，AI 出題時的圖表描述：', w.visualDescription, '）')
+              : null),
 
           el('details', { open: true, style: { marginBottom: '.8rem' } },
             el('summary', { class: 'small muted' }, '你的作文'),
@@ -459,6 +466,26 @@ const Results = (() => {
               el('p', {}, v.why_zh || ''),
               v.evidence?.length ? el('ul', {}, v.evidence.map((x) => el('li', { class: 'muted' }, `「${x}」`))) : null,
               v.howToImprove_zh && el('p', {}, el('b', {}, '怎麼改進：'), v.howToImprove_zh))))),
+
+      // AI 是分 Part 診斷的（Part 1 答太短 vs Part 2 沒話講 vs Part 3 講不抽象），
+      // 這些資料一直都有回傳，只是畫面沒畫
+      fb.byPart && Object.keys(fb.byPart).length ? el('div', { class: 'card' },
+        el('h3', {}, '各 Part 表現'),
+        Object.entries(fb.byPart).map(([k, v]) => el('div', { style: { marginBottom: '.5rem' } },
+          el('b', {}, `Part ${k}`), '　',
+          el('span', { class: 'small' }, v?.comment_zh || v?.comment || ''))))
+        : null,
+
+      // 寫作有「用字升級建議」，口說的資料格式一模一樣卻沒畫，是漏掉的
+      fb.upgrades?.length ? el('div', { class: 'card' },
+        el('h3', {}, '用字升級建議'),
+        UI.dataTable(
+          el('thead', {}, el('tr', {}, el('th', {}, '你用的'), el('th', {}, 'Band 8 說法'), el('th', {}, '為什麼更好'))),
+          el('tbody', {}, fb.upgrades.map((u) => el('tr', {},
+            el('td', {}, u.original),
+            el('td', {}, el('b', {}, u.suggestion)),
+            el('td', { class: 'small muted' }, u.note_zh || ''))))))
+        : null,
 
       fb.corrections?.length && el('div', { class: 'card' },
         el('h3', {}, '表達修正'),

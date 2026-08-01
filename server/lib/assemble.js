@@ -19,10 +19,11 @@ const DEFAULT_TARGETS = { listening: 40, reading: 40, writing: 2, speaking: 1 };
 
 /** 題庫一筆 = 幾題 */
 function itemSize(item) {
-  const g = item.payload?.group || (item.payload?.groups || [])[0];
-  if (!g) return 0;
-  if (g.type === 'writing_task' || g.type === 'speaking_part') return (g.questions || []).length;
-  return (g.questions || []).length;
+  // payload 可能是單一 group，也可能是 groups 陣列（匯入時常見）。
+  // 舊版只算 groups[0]，於是抽題時把一個 20 題的題組當成 7 題，
+  // 湊出來的卷子會默默超出目標題數。
+  const gs = item.payload?.group ? [item.payload.group] : (item.payload?.groups || []);
+  return gs.reduce((n, g) => n + (g?.questions || []).length, 0);
 }
 
 /** 洗牌。給定 seed 時結果可重現，方便測試與「換一組」。 */
@@ -96,16 +97,32 @@ function toSections(module, picked) {
   return buckets
     .map((items, i) => {
       if (!items.length) return null;
-      // 一節可以有多個題組，但文章／逐字稿只能有一份 ——
-      // 所以同一節裡只保留第一個帶文章的，其餘題組附在後面
-      const withText = items.find((x) => x.payload?.passage || x.payload?.transcript);
+      /* 一節可能放進好幾個題組，而每個題組都帶著自己的文章。
+         舊版只留第一份，其餘直接丟掉 —— 於是學生被問到一篇他從來沒看過的
+         文章，而且會被計分。validatePaper 看到「這一節有 passage」也不會警告，
+         老師預覽時完全看不出來。
+         正確做法是把它們接起來（官方 GT Section 1 本來就會有兩三篇短文），
+         一個字都不能掉。 */
+      const texts = items.filter((x) => x.payload?.passage);
+      const scripts = items.filter((x) => x.payload?.transcript);
+      const join = (list, pick) => list
+        .map((x, k) => {
+          const title = x.payload?.passageTitle;
+          const head = list.length > 1 ? `<h4>${title || `Text ${k + 1}`}</h4>` : (title ? '' : '');
+          return `${head}${pick(x)}`;
+        })
+        .join(list.length > 1 ? '\n<hr class="passage-split">\n' : '\n');
+
       return {
         title: plan.name(i),
-        passageTitle: withText?.payload?.passageTitle || null,
-        passage: withText?.payload?.passage || null,
-        transcript: withText?.payload?.transcript || null,
+        passageTitle: texts.length === 1 ? (texts[0].payload.passageTitle || null) : null,
+        passage: texts.length ? join(texts, (x) => x.payload.passage) : null,
+        transcript: scripts.length
+          ? scripts.map((x) => x.payload.transcript).join('\n\n──────────\n\n')
+          : null,
         groups: items.flatMap((x) => (x.payload?.group ? [x.payload.group] : (x.payload?.groups || []))),
         _sources: items.map((x) => x.id),
+        _merged: texts.length > 1 || scripts.length > 1,
       };
     })
     .filter(Boolean);
@@ -170,7 +187,14 @@ function assemble(bank, {
 
     const sections = toSections(module, picked);
     sections.forEach((s) => report.usedIds.push(...s._sources));
-    sections.forEach((s) => { delete s._sources; });
+    const merged = sections.filter((s) => s._merged).length;
+    if (merged) {
+      (report.merged = report.merged || {})[module] = merged;
+      report.warningsZh = report.warningsZh || [];
+      report.warningsZh.push(
+        `${module}：有 ${merged} 節放了多篇文章／逐字稿（已接在一起，請人工確認順序是否合理）`);
+    }
+    sections.forEach((s) => { delete s._sources; delete s._merged; });
 
     modules.push({ module, sections });
     report.picked[module] = { groups: picked.length, questions: total, target, typeMix };

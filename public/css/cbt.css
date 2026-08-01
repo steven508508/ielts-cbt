@@ -357,3 +357,9 @@ mark.hl.has-note{background:var(--c-note); border-bottom:2px dotted currentColor
 
 /* 提示訊息不要蓋在底部的題號列與上下題按鈕上 */
 .exam-body #toasts{bottom:calc(var(--foot-h, 56px) + 14px)}
+
+/* 本節圖片（地圖／平面圖） */
+.sec-img {
+  display: block; max-width: 100%; height: auto; margin: .6rem 0;
+  border: 1px solid var(--c-line, #ccc); border-radius: 4px; background: #fff;
+}

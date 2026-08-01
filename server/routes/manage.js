@@ -121,6 +121,7 @@ router.put('/policy', requireRole('admin'), async (req, res) => {
   const clean = {};
   for (const k of ['keepResultsMonths', 'keepSpeakingAudioMonths', 'keepAbandonedDays',
     'keepAiLogsDays', 'keepReadNotificationsDays', 'keepDeviceChecksDays',
+    'keepExamEventsDays', 'keepMaintenanceLogDays',
     'deleteUnusedMediaDays', 'runAtHour']) {
     if (p[k] !== undefined) clean[k] = Math.max(0, Number(p[k]) || 0);
   }

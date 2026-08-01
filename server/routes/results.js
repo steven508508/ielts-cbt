@@ -163,6 +163,8 @@ router.get('/:id', async (req, res) => {
       gradedBy: w.graded_by, gradedAt: w.graded_at,
       prompt: tasks.find((t) => t.taskNo === w.task_no)?.prompt || '',
       image: tasks.find((t) => t.taskNo === w.task_no)?.image || null,
+      // 沒上傳圖檔時，AI 出題當初寫的圖表描述至少讓學生知道在描述什麼
+      visualDescription: tasks.find((t) => t.taskNo === w.task_no)?.visualDescription || '',
       minWords: tasks.find((t) => t.taskNo === w.task_no)?.minWords || 150,
     })),
     speaking,

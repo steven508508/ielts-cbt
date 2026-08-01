@@ -671,7 +671,19 @@ registerProcessor('cap', Cap);`;
     try {
       const r = await API.post(`/speaking/${S.attemptId}/response`, fd);
       transcript = r.transcript || browserText;
+      /* 語音辨識失敗時，練習模式會提示，但正式考試以前是默默吞掉的 ——
+         學生看到「已記錄」就繼續往下考，等分數出來才發現這一題根本沒有逐字稿。
+         錄音檔有存下來，老師可以補救，但一定要當場講。 */
+      if (r?.sttError && !transcript.trim()) {
+        toast('這一題沒有辨識到文字，錄音已存下來，請舉手告訴監考老師', 'err');
+      } else if (r?.sttError) {
+        toast('語音辨識不穩，已改用瀏覽器辨識的結果', 'warn');
+      }
     } catch (e) { toast(`上傳失敗：${e.message}`, 'err'); }
+
+    if (!transcript.trim()) {
+      toast('這一題沒有錄到內容，可能會影響分數', 'err');
+    }
 
     S.history[step.part] = S.history[step.part] || [];
     S.history[step.part].push({ question: step.question || '', transcript });

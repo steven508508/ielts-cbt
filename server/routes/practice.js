@@ -84,11 +84,14 @@ async function collectWrong(userId, { module: mod, type, limit = 200 } = {}) {
 
     const pKey = `${r.test_id}:${r.module}:${q.sectionIndex}`;
     const sec = media[`${r.module}:${q.sectionIndex}`];
-    if (sec && (sec.passage || sec.transcript) && !passages[pKey]) {
+    if (sec && (sec.passage || sec.transcript || sec.audio) && !passages[pKey]) {
       passages[pKey] = {
         title: sec.passageTitle || sec.title || '',
         passage: sec.passage || null,
         transcript: sec.transcript || null,
+        // 聽力錯題只給逐字稿不給音檔，等於沒辦法練「聽」
+        audio: sec.audio || null,
+        image: sec.image || null,
       };
     }
 
@@ -227,7 +230,15 @@ router.post('/speaking/question', aiLimit, async (req, res) => {
   // ① 先找現成的（已發布試卷裡的口說題組）
   if (!topic) {
     const rows = await db.query(
-      "SELECT content FROM tests WHERE published = 1 AND content LIKE '%speaking_part%' ORDER BY RAND() LIMIT 5"
+      /* 只抽「這個學生已經考完」的試卷。
+         指派會自動把試卷設成 published=1，所以照 published 抽的話，
+         學生只要一直按「換一題」就能把下週考卷的 Part 2 題卡撈光。 */
+      `SELECT t.content FROM tests t
+        WHERE t.content LIKE '%speaking_part%'
+          AND EXISTS (
+            SELECT 1 FROM attempts a
+             WHERE a.test_id = t.id AND a.user_id = ? AND a.status <> 'in_progress')
+        ORDER BY RAND() LIMIT 5`, [req.user.id]
     );
     const found = [];
     for (const r of rows) {

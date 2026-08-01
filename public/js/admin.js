@@ -710,7 +710,21 @@ const Admin = (() => {
       } catch { /* 沒有就算了 */ }
     })();
 
-    function showGenerated(r, body) {
+    /** 選項清單（校對用，不標對錯，只是要看得到內容） */
+  function optionPreview(options) {
+    return el('ul', { class: 'rev-opts' },
+      options.map((o) => el('li', {}, el('b', {}, `${o.key}.`), ' ', o.text)));
+  }
+
+  /** 「答案：ii」看不出選了什麼，把選項文字補上 */
+  function withOptText(key, options) {
+    const k = String(key ?? '').trim();
+    if (!k || !options?.length) return k;
+    const hit = options.find((o) => String(o.key).toUpperCase() === k.toUpperCase());
+    return hit ? `${k}（${hit.text}）` : k;
+  }
+
+  function showGenerated(r, body) {
       const group = r.group;
       UI.render(result, 
         el('h3', {}, '產生結果'),
@@ -720,12 +734,21 @@ const Admin = (() => {
         r.transcript && el('details', {}, el('summary', { class: 'small muted' }, '聽力逐字稿'),
           el('pre', { style: { whiteSpace: 'pre-wrap', fontSize: '.85rem' } }, r.transcript)),
         el('div', { class: 'rubric small' }, group?.instructions || ''),
+        // 老師要校對，就一定要看得到選項與填空版面。
+        // 只印「答案：B」而不給 B 是什麼，這個答案根本無從驗證。
+        group?.image ? el('img', { src: group.image, class: 'rev-img', alt: '題組圖片', loading: 'lazy' }) : null,
+        group?.bodyHtml
+          ? el('div', { class: 'rev-body small', html: sanitize(group.bodyHtml) }) : null,
+        group?.options?.length ? optionPreview(group.options) : null,
         UI.dataTable(
           el('thead', {}, el('tr', {}, el('th', {}, '#'), el('th', {}, '題目'), el('th', {}, '答案'), el('th', {}, '解析'))),
           el('tbody', {}, (group?.questions || []).map((q) => el('tr', {},
             el('td', {}, String(q.number)),
-            el('td', { class: 'small' }, q.text || '(填空)'),
-            el('td', {}, el('b', {}, (q.answers || []).join(' / '))),
+            el('td', { class: 'small' },
+              q.text || (group?.bodyHtml ? el('span', { class: 'muted' }, '（見上方版面的空格）') : '(填空)'),
+              q.options?.length ? optionPreview(q.options) : null,
+              q.image ? el('img', { src: q.image, class: 'rev-img', alt: '圖片', loading: 'lazy' }) : null),
+            el('td', {}, el('b', {}, (q.answers || []).map((a) => withOptText(a, q.options || group?.options)).join(' / '))),
             el('td', { class: 'small muted' }, q.explanation || ''))))),
         el('div', { style: { display: 'flex', gap: '.5rem', marginTop: '.8rem' } },
           el('button', {
@@ -2037,6 +2060,9 @@ const Admin = (() => {
             num('deleteUnusedMediaDays', '未使用媒體檔保留（天）', '沒有任何試卷引用的檔案')),
           el('div', { class: 'row' },
             num('keepDeviceChecksDays', '考前環境檢查紀錄保留（天）', ''),
+            num('keepExamEventsDays', '監考事件紀錄保留（天）', '成績與作答不受影響')),
+          el('div', { class: 'row' },
+            num('keepMaintenanceLogDays', '維護紀錄保留（天）', ''),
             num('runAtHour', '每天執行時間（點）', '0–23，伺服器時間')),
           el('div', { class: 'toolbar', style: { marginTop: '.8rem' } },
             el('button', {
@@ -2710,9 +2736,15 @@ const Admin = (() => {
       g?.options?.length ? el('div', { class: 'small', style: { margin: '.5rem 0' } },
         el('b', {}, '選項：'), g.options.map((o, i) =>
           el('div', {}, `${o.key || String.fromCharCode(65 + i)}. ${o.text ?? o}`))) : null,
+      // 填空題的題幹就在版面裡，圖表題的重點就是那張圖 ——
+      // 少了這兩樣，老師在題庫裡看到的是一串「（無題幹）」，
+      // 分不出這個題組是好的還是壞掉的
+      g?.bodyHtml ? el('div', { class: 'rev-body small', html: sanitize(g.bodyHtml) }) : null,
+      g?.image ? el('img', { src: g.image, class: 'rev-img', alt: '題組圖片', loading: 'lazy' }) : null,
       el('ol', { class: 'qb-preview', style: { lineHeight: '1.8', paddingLeft: '1.4rem' } },
         qs.map((q) => el('li', { value: q.number || undefined },
-          el('div', {}, q.prompt || q.text || '（無題幹）'),
+          el('div', {}, q.prompt || q.text
+              || (g.bodyHtml ? '（填空，見上方版面）' : '（無題幹）')),
           q.options?.length ? el('div', { class: 'small muted' },
             q.options.map((o, i) => `${o.key || String.fromCharCode(65 + i)}. ${o.text ?? o}`).join('　')) : null,
           el('div', { class: 'small', style: { color: 'var(--ok)' } },

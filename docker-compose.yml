@@ -8,6 +8,13 @@ services:
     image: mysql:8.0
     container_name: ielts-db
     restart: unless-stopped
+    # 日誌沒有上限的話，一個錯誤迴圈就能把磁碟寫滿 ——
+    # 而且跟口說錄音是同一顆碟
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
     command: >
       --character-set-server=utf8mb4
       --collation-server=utf8mb4_unicode_ci
@@ -42,6 +49,13 @@ services:
     pull_policy: build
     container_name: ielts-app
     restart: unless-stopped
+    # 日誌沒有上限的話，一個錯誤迴圈就能把磁碟寫滿 ——
+    # 而且跟口說錄音是同一顆碟
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
     depends_on:
       db:
         condition: service_healthy

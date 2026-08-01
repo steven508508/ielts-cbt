@@ -665,11 +665,13 @@
 
   /** 錯題／重做共用：把那一節的原文或逐字稿附上去 */
   function srcBlock(p) {
-    if (!p || (!p.passage && !p.transcript)) return null;
+    if (!p || (!p.passage && !p.transcript && !p.audio)) return null;
     return el('details', { class: 'rev-src' },
-      el('summary', {}, p.passage ? '📄 看原文' : '🎧 看逐字稿',
+      el('summary', {}, p.passage ? '📄 看原文' : '🎧 聽原音／看逐字稿',
         p.title ? el('span', { class: 'muted small' }, `　${p.title}`) : null),
       el('div', { class: 'rev-src-body' },
+        p.audio ? el('audio', { src: p.audio, controls: true, preload: 'none', style: { width: '100%' } }) : null,
+        p.image ? el('img', { src: p.image, class: 'rev-img', alt: '本節圖片', loading: 'lazy' }) : null,
         p.passage ? el('div', { class: 'passage', html: UI.sanitize(p.passage) }) : null,
         p.transcript ? el('pre', { class: 'transcript' }, p.transcript) : null));
   }

@@ -17,6 +17,8 @@ const DEFAULT_POLICY = {
   keepAiLogsDays: 30,        // AI 呼叫紀錄保留幾天
   keepReadNotificationsDays: 60, // 已讀的站內通知保留幾天（未讀的永遠留著）
   keepDeviceChecksDays: 30,  // 考前環境診斷紀錄保留幾天
+  keepExamEventsDays: 180,   // 監考事件紀錄保留幾天（成績本身不受影響）
+  keepMaintenanceLogDays: 365, // 維護紀錄保留幾天
   deleteUnusedMediaDays: 0,  // 沒有任何試卷引用的媒體檔幾天後刪（0 = 不自動刪）
   runAtHour: 3,              // 每天幾點執行（伺服器時間）
 };
@@ -39,10 +41,19 @@ async function savePolicy(patch) {
 const sizeCache = new Map();
 const SIZE_TTL = 60_000;
 
+const SIZE_CACHE_MAX = 500;
+
 function dirSize(dir) {
   const hit = sizeCache.get(dir);
   if (hit && Date.now() - hit.at < SIZE_TTL) return hit.value;
   const value = dirSizeUncached(dir);
+  // 每刪一場考試的錄音就會量一次那個資料夾，批次刪除幾千場之後
+  // 這個 Map 會留下幾千筆再也用不到的路徑。過期的先掃掉，還是滿就丟最舊的。
+  if (sizeCache.size >= SIZE_CACHE_MAX) {
+    const now = Date.now();
+    for (const [k, v] of sizeCache) if (now - v.at > SIZE_TTL) sizeCache.delete(k);
+    while (sizeCache.size >= SIZE_CACHE_MAX) sizeCache.delete(sizeCache.keys().next().value);
+  }
   sizeCache.set(dir, { at: Date.now(), value });
   return value;
 }
@@ -231,6 +242,35 @@ async function runCleanup({ dryRun = true, policy = null, actor = 'system' } = {
     const n = Number(c?.n || 0);
     if (!dryRun && n) await devicecheck.cleanup(p.keepDeviceChecksDays);
     add('清除考前診斷紀錄', n, 0, `超過 ${p.keepDeviceChecksDays} 天`);
+  }
+
+  // 4.7) 監考事件。一場考試 20～60 筆，而且以前完全沒有清理機制 ——
+  //      成績要留兩年，但「他第 3 分鐘切了一次分頁」不需要留那麼久。
+  if (p.keepExamEventsDays > 0) {
+    const c = await db.one(
+      'SELECT COUNT(*) AS n FROM exam_events WHERE created_at < DATE_SUB(NOW(), INTERVAL ? DAY)',
+      [p.keepExamEventsDays]
+    ).catch(() => null);
+    const n = Number(c?.n || 0);
+    if (!dryRun && n) {
+      await db.exec('DELETE FROM exam_events WHERE created_at < DATE_SUB(NOW(), INTERVAL ? DAY)',
+        [p.keepExamEventsDays]);
+    }
+    add('清除監考事件紀錄', n, 0, `超過 ${p.keepExamEventsDays} 天（成績與作答不受影響）`);
+  }
+
+  // 4.8) 維護紀錄
+  if (p.keepMaintenanceLogDays > 0) {
+    const c = await db.one(
+      'SELECT COUNT(*) AS n FROM maintenance_log WHERE created_at < DATE_SUB(NOW(), INTERVAL ? DAY)',
+      [p.keepMaintenanceLogDays]
+    ).catch(() => null);
+    const n = Number(c?.n || 0);
+    if (!dryRun && n) {
+      await db.exec('DELETE FROM maintenance_log WHERE created_at < DATE_SUB(NOW(), INTERVAL ? DAY)',
+        [p.keepMaintenanceLogDays]);
+    }
+    add('清除維護紀錄', n, 0, `超過 ${p.keepMaintenanceLogDays} 天`);
   }
 
   // 5) 沒有被引用的媒體檔

@@ -179,6 +179,9 @@ const Exam = (() => {
 
     document.addEventListener('visibilitychange', () => {
       if (!S || !S.module) return;
+      // 沒開監考就完全不要回報。以前 return 沒有被 proc().enabled 擋住，
+      // 於是關掉監考的考試照樣一路寫 exam_events，而那張表沒有任何清理機制。
+      if (!proc().enabled) return;
       if (document.visibilityState === 'hidden') onViolation('leave', '切換到其他分頁或視窗');
       else reportEvent('return');
     });
@@ -726,6 +729,7 @@ const Exam = (() => {
       el('div', { class: 'cbt-pane single' },
         el('div', { class: 'inner' },
           audioBar(sec),
+          sec.image ? el('img', { src: sec.image, class: 'sec-img', alt: sec.title || '本節圖片' }) : null,
           sec.groups.map((g, gi) => renderGroup('listening', g, S.section, gi)))));
   }
 
@@ -783,6 +787,9 @@ const Exam = (() => {
       el('div', { class: 'cbt-pane left cbt-passage', id: 'pane-passage' },
         el('h2', {}, sec.passageTitle || sec.title),
         sec.source && el('div', { class: 'sub' }, sec.source),
+        // 素材編輯器的「本節圖片（地圖／平面圖）」以前沒有任何地方讀，
+        // 老師填了等於丟進黑洞，學生看到的是空白
+        sec.image ? el('img', { src: sec.image, class: 'sec-img', alt: sec.title || '本節圖片' }) : null,
         el('div', { html: sanitize(sec.passage || '<p>（沒有文章內容）</p>') })),
       el('div', { class: 'cbt-split', id: 'splitter' }),
       el('div', { class: 'cbt-pane right' },

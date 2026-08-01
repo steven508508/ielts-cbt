@@ -204,6 +204,17 @@ function shiftNumbers(sections, afterNumber) {
   if (!Number.isFinite(min)) return sections;
   const offset = afterNumber - min + 1;
   if (offset <= 0) return sections;
+  /* 題號位移之後，bodyHtml 裡的 [[n]] 也要跟著換。
+     漏掉的話 validatePaper 會回「缺少空格 [[41]]、多餘的空格 [[1]]」，
+     老師只看到一個看不懂的 400 —— 而且併進「新試卷」時沒事、併進
+     「現有試卷」時才炸，看起來像隨機發生。 */
+  for (const s of sections || []) {
+    for (const g of s.groups || []) {
+      if (!g.bodyHtml) continue;
+      g.bodyHtml = String(g.bodyHtml).replace(/\[\[\s*(\d+)\s*\]\]/g,
+        (_, n) => `[[${Number(n) + offset}]]`);
+    }
+  }
   for (const s of sections || []) {
     for (const g of s.groups || []) {
       for (const q of g.questions || []) {

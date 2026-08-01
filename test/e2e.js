@@ -781,6 +781,20 @@ async function call(method, path, body, token) {
   ok(autoShort.data.report.shortfall?.writing?.missing === 2,
     '湊不到的科目會老實回報還差幾題，而不是硬塞');
 
+  // 一節放進兩個題組時，舊版只留第一份文章，第二個題組的題目就變成
+  // 「問一篇學生從來沒看過的文章」，而且照樣計分、驗證還說沒問題
+  const autoTexts = auto.data.paper.modules.find((m) => m.module === 'reading')
+    .sections.map((s) => s.passage || '').join('\n');
+  ok(!autoTexts.includes('undefined'), '組出來的文章沒有壞掉');
+  ok(auto.data.paper.modules.find((m) => m.module === 'reading')
+    .sections.every((s) => (s.passage || '').trim().length > 0), '每一節都有文章');
+  const autoSecCount = auto.data.paper.modules.find((m) => m.module === 'reading').sections.length;
+  const autoGroupCount = auto.data.paper.modules.find((m) => m.module === 'reading')
+    .sections.reduce((n, s) => n + s.groups.length, 0);
+  ok(autoGroupCount > autoSecCount, `題組數（${autoGroupCount}）多於節數（${autoSecCount}），代表有節放了多個題組`);
+  ok(auto.data.report.merged || autoGroupCount === autoSecCount,
+    '一節放多篇文章時會在報告裡講出來，不會默默吃掉');
+
   const autoSeed1 = await call('POST', '/ai/bank/auto', { targets: { reading: 20 }, seed: 7 }, tea);
   const autoSeed2 = await call('POST', '/ai/bank/auto', { targets: { reading: 20 }, seed: 7 }, tea);
   ok(JSON.stringify(autoSeed1.data.report.usedIds) === JSON.stringify(autoSeed2.data.report.usedIds),
@@ -1274,6 +1288,65 @@ async function call(method, path, body, token) {
   ok(jCancel.status === 200, '可以取消工作');
   const jCancelStu = await call('POST', `/ai/jobs/${jobId}/cancel`, {}, stu);
   ok(jCancelStu.status === 403, '學生不能取消別人的工作');
+
+  // ── 考試授權（這一段守的是答案卷不會外洩）──────────────────
+  console.log('\n考試授權');
+  const secretPaper = normalizePaper({
+    title: `未指派的機密卷 ${stamp}`, testType: 'academic',
+    modules: [{ module: 'reading', sections: [{ title: 'P1', passage: '<p>Secret.</p>',
+      groups: [{ type: 'tfng', instructions: 'x',
+        questions: [{ number: 1, prompt: 'Q1', answers: ['TRUE'], explanation: '不該被看到的解析' }] }] }] }],
+  });
+  const secretTest = await call('POST', '/tests', { paper: secretPaper, published: false }, tea);
+  ok(secretTest.status === 200, '老師建立一份沒有指派、沒有發布的試卷');
+
+  // 這曾經是個嚴重漏洞：學生直接送 testId 就能開考，交卷後
+  // /results/:id 會把整份標準答案與解析吐出來。三個請求撈光答案卷。
+  const rawStart = await call('POST', '/exam/start', { testId: secretTest.data.id }, stu);
+  ok(rawStart.status === 403, '學生不能只靠 testId 就開一份沒指派給他的試卷');
+  ok(!rawStart.data.attemptId, '而且真的沒有建立場次');
+  const ghostStart = await call('POST', '/exam/start',
+    { assignmentId: 999999, testId: secretTest.data.id }, stu);
+  ok(ghostStart.status === 403, '拿不存在的指派編號也不行');
+  const staffStart = await call('POST', '/exam/start', { testId: secretTest.data.id }, tea);
+  ok(staffStart.status === 200, '老師仍然可以自己試考');
+  if (staffStart.data.attemptId) {
+    await call('POST', '/manage/results/bulk',
+      { action: 'delete', ids: [staffStart.data.attemptId], force: true }, adm);
+  }
+
+  const secretAssign = await call('POST', '/tests/assignments',
+    { testId: secretTest.data.id, userIds: [stuUid], modules: 'reading', maxAttempts: 9 }, tea);
+  const okStart = await call('POST', '/exam/start',
+    { assignmentId: secretAssign.data.ids[0], testId: secretTest.data.id }, stu);
+  ok(okStart.status === 200, '被指派的學生開得起來');
+  const authAttempt = okStart.data.attemptId;
+
+  // 時限也要伺服器把關：跳過 module/start 就沒有 endsAt，等於無限時
+  const noStart = await call('POST', `/exam/${authAttempt}/answers`,
+    { module: 'reading', number: 1, response: 'TRUE' }, stu);
+  ok(noStart.data.rejected?.length === 1, '沒有先開始那一科就不能作答（不然那一科等於沒有時限）');
+  await call('POST', `/exam/${authAttempt}/module/start`, { module: 'reading' }, stu);
+  const afterStart = await call('POST', `/exam/${authAttempt}/answers`,
+    { module: 'reading', number: 1, response: 'TRUE' }, stu);
+  ok(!afterStart.data.rejected?.length, '正常開始之後就存得進去');
+
+  const expired = await call('POST', '/tests/assignments',
+    { testId: secretTest.data.id, userIds: [stuUid], modules: 'reading',
+      maxAttempts: 9, openUntil: '2020-01-01 00:00:00' }, tea);
+  ok((await call('POST', '/exam/start', { assignmentId: expired.data.ids[0] }, stu)).status === 403,
+    '已截止的指派開不起來');
+  const future = await call('POST', '/tests/assignments',
+    { testId: secretTest.data.id, userIds: [stuUid], modules: 'reading',
+      maxAttempts: 9, openFrom: '2099-01-01 00:00:00' }, tea);
+  ok((await call('POST', '/exam/start', { assignmentId: future.data.ids[0] }, stu)).status === 403,
+    '還沒開放的指派也開不起來');
+
+  for (const id of [...secretAssign.data.ids, ...expired.data.ids, ...future.data.ids]) {
+    await call('DELETE', `/tests/assignments/${id}`, null, tea);
+  }
+  await call('POST', '/manage/results/bulk', { action: 'delete', ids: [authAttempt], force: true }, adm);
+  await call('DELETE', `/tests/${secretTest.data.id}`, null, adm);
 
   // ── 檢討素材 ────────────────────────────────────────────
   console.log('\n檢討素材');
