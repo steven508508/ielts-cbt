@@ -31,6 +31,13 @@ module.exports = {
     dateStrings: true,
   },
 
+  // Cloudflare Turnstile 人機驗證（也可以之後在網頁「系統設定」填）
+  turnstileDefaults: {
+    ...(process.env.TURNSTILE_SITE_KEY ? { siteKey: process.env.TURNSTILE_SITE_KEY } : {}),
+    ...(process.env.TURNSTILE_SECRET_KEY ? { secretKey: process.env.TURNSTILE_SECRET_KEY } : {}),
+    ...(process.env.TURNSTILE_ENABLED ? { enabled: process.env.TURNSTILE_ENABLED === '1' } : {}),
+  },
+
   bootstrapAdmin: {
     username: process.env.ADMIN_USERNAME || 'admin',
     password: process.env.ADMIN_PASSWORD || 'admin1234',

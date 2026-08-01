@@ -418,6 +418,66 @@ async function call(method, path, body, token) {
   ok(plain.data.rules.break.policy === 'flexible', '沒設休息政策時預設自由');
   ok(plain.data.rules.durations.listening === 1920, '沒改時間時沿用試卷的 30 分 + 2 分轉答案');
 
+  // ── 登入人機驗證（Cloudflare Turnstile）────────────────
+  // 用 Cloudflare 官方提供的測試金鑰，不需要真的申請帳號
+  const TS_SITE_PASS = '1x00000000000000000000AA';
+  const TS_SECRET_PASS = '1x0000000000000000000000000000000AA';
+  const TS_SECRET_FAIL = '2x0000000000000000000000000000000AA';
+
+  console.log('\n登入人機驗證');
+  const cfg0 = await call('GET', '/auth/config');
+  ok(cfg0.status === 200, '未登入也能讀取登入頁的公開設定');
+  ok(cfg0.data.turnstile.enabled === false, '預設關閉，不影響原本的登入');
+  ok(!('secretKey' in cfg0.data.turnstile), '公開設定裡沒有 Secret Key 這個欄位');
+
+  const tsTea = await call('PUT', '/manage/turnstile', { turnstile: { enabled: true } }, tea);
+  ok(tsTea.status === 403, '老師不能改人機驗證設定（只有管理員）');
+
+  // 開啟（永遠通過的測試金鑰）
+  const on = await call('PUT', '/manage/turnstile', {
+    turnstile: { enabled: true, siteKey: TS_SITE_PASS, secretKey: TS_SECRET_PASS, failOpen: true },
+  }, adm);
+  ok(on.data.turnstile.active === true, '管理員啟用人機驗證');
+  ok(/••••/.test(on.data.turnstile.secretKey), `後台只看得到遮罩後的 Secret Key：${on.data.turnstile.secretKey}`);
+
+  const cfg1 = await call('GET', '/auth/config');
+  ok(cfg1.data.turnstile.enabled === true && cfg1.data.turnstile.siteKey === TS_SITE_PASS,
+    '登入頁拿得到 Site Key（Site Key 本來就是公開的）');
+  ok(!JSON.stringify(cfg1.data).includes(TS_SECRET_PASS), 'Secret Key 沒有外洩到公開設定');
+
+  const noToken = await call('POST', '/auth/login', { username: 'student1', password: 'ielts1234' });
+  ok(noToken.status === 400 && noToken.data.turnstileFailed, '沒帶驗證 token 會被擋下');
+  ok(/人機驗證/.test(noToken.data.error), `錯誤訊息看得懂：「${noToken.data.error}」`);
+
+  const withToken = await call('POST', '/auth/login', {
+    username: 'student1', password: 'ielts1234', turnstileToken: 'dummy-token-for-testing',
+  });
+  ok(withToken.status === 200 && withToken.data.token, '帶著驗證 token 就能正常登入');
+
+  const wrongPw = await call('POST', '/auth/login', {
+    username: 'student1', password: '錯的密碼', turnstileToken: 'dummy-token-for-testing',
+  });
+  ok(wrongPw.status === 401, '通過人機驗證後，密碼還是要對');
+
+  // 換成永遠失敗的金鑰，確認真的有打到 Cloudflare
+  await call('PUT', '/manage/turnstile', { turnstile: { secretKey: TS_SECRET_FAIL } }, adm);
+  const rejected = await call('POST', '/auth/login', {
+    username: 'student1', password: 'ielts1234', turnstileToken: 'dummy-token-for-testing',
+  });
+  ok(rejected.status === 400 && rejected.data.turnstileFailed,
+    'Cloudflare 判定驗證失敗時，就算帳密正確也登不進去');
+
+  const tsTest = await call('POST', '/manage/turnstile/test', {}, adm);
+  ok(typeof tsTest.data.ok === 'boolean', `「測試 Secret Key」可用：${tsTest.data.message || tsTest.data.error}`);
+
+  // 關掉，把環境還原，免得影響之後的測試與實際部署
+  const off = await call('PUT', '/manage/turnstile', {
+    turnstile: { enabled: false, siteKey: '', secretKey: '' },
+  }, adm);
+  ok(off.data.turnstile.active === false, '關閉後還原');
+  const back = await call('POST', '/auth/login', { username: 'student1', password: 'ielts1234' });
+  ok(back.status === 200, '關閉後不帶 token 也能正常登入');
+
   console.log(`\n${'─'.repeat(46)}`);
   console.log(`通過 ${pass}　失敗 ${fail}`);
   process.exit(fail ? 1 : 0);

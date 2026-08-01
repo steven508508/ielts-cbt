@@ -729,9 +729,13 @@ const Admin = (() => {
 
   // ── 系統設定 ────────────────────────────────────────────
   async function settings(mount) {
-    const s = await API.get('/ai/settings');
+    const [s, ts] = await Promise.all([
+      API.get('/ai/settings'),
+      API.get('/manage/turnstile').catch(() => ({ turnstile: null })),
+    ]);
     const a = s.ai;
     const f = {};
+    const t = {};
 
     const sel = (key, opts, val) => (f[key] = el('select', {}, opts.map(([v, t]) => el('option', { value: v, selected: val === v }, t))));
     const txt = (key, val, ph = '') => (f[key] = el('input', { type: 'text', value: val || '', placeholder: ph }));
@@ -798,6 +802,83 @@ const Admin = (() => {
               e.target.disabled = false;
             },
           }, '測試語音'))),
+
+      // ── Cloudflare Turnstile ──────────────────────────
+      ts.turnstile && el('div', { class: 'card' },
+        el('h3', {}, '登入人機驗證（Cloudflare Turnstile）',
+          ts.turnstile.active
+            ? el('span', { class: 'pill ok', style: { marginLeft: '.6rem' } }, '運作中')
+            : el('span', { class: 'pill', style: { marginLeft: '.6rem' } }, '未啟用')),
+        el('p', { class: 'small muted' },
+          '擋掉自動化的登入嘗試。到 ',
+          el('a', { href: 'https://dash.cloudflare.com/?to=/:account/turnstile', target: '_blank', rel: 'noopener' },
+            'Cloudflare 主控台 → Turnstile'),
+          ' 免費新增一個 Widget，把網域填成你的考試網址，就會拿到 Site Key 與 Secret Key。'),
+        el('label', { class: 'field' }, el('span', {},
+          (t.enabled = el('input', {
+            type: 'checkbox', checked: ts.turnstile.enabled, style: { width: 'auto', marginRight: '.4rem' },
+          })),
+          '啟用登入人機驗證')),
+        el('div', { class: 'row' },
+          el('label', { class: 'field' }, el('span', {}, 'Site Key（公開，會出現在網頁原始碼）'),
+            (t.siteKey = el('input', { type: 'text', value: ts.turnstile.siteKey || '', placeholder: '0x4AAAAAAA…' }))),
+          el('label', { class: 'field' }, el('span', {}, 'Secret Key（只存在伺服器）'),
+            (t.secretKey = el('input', {
+              type: 'text', value: ts.turnstile.secretKey || '',
+              placeholder: ts.turnstile.hasSecret ? '（已設定，留著不動就不會變更）' : '0x4AAAAAAA…',
+            })))),
+        el('label', { class: 'field' }, el('span', {},
+          (t.failOpen = el('input', {
+            type: 'checkbox', checked: ts.turnstile.failOpen, style: { width: 'auto', marginRight: '.4rem' },
+          })),
+          '連不到 Cloudflare 時仍允許登入（建議勾選）'),
+          el('span', { class: 'small muted' },
+            '不勾的話，Cloudflare 或校內網路一出問題，全校就都登不進來。登入本來就還有速率限制擋暴力破解。')),
+        el('div', { class: 'toolbar' },
+          el('button', {
+            class: 'btn primary',
+            onclick: async () => {
+              try {
+                const r = await API.put('/manage/turnstile', {
+                  turnstile: {
+                    enabled: t.enabled.checked,
+                    failOpen: t.failOpen.checked,
+                    siteKey: t.siteKey.value.trim(),
+                    secretKey: t.secretKey.value.trim(),
+                  },
+                });
+                toast(r.turnstile.active ? '已啟用人機驗證' : '設定已儲存（目前未啟用）', 'ok');
+                settings(mount);
+              } catch (e) { UI.alert(e.message); }
+            },
+          }, '儲存驗證設定'),
+          el('button', {
+            class: 'btn',
+            onclick: async (e) => {
+              e.target.disabled = true;
+              try {
+                const r = await API.post('/manage/turnstile/test', {});
+                UI.alert(r.ok ? `✓ ${r.message}` : `✗ ${r.error}`);
+              } catch (er) { UI.alert(`✗ ${er.message}`); }
+              e.target.disabled = false;
+            },
+          }, '測試 Secret Key'),
+          el('button', {
+            class: 'btn sm',
+            onclick: () => {
+              t.siteKey.value = '1x00000000000000000000AA';
+              t.secretKey.value = '1x0000000000000000000000000000000AA';
+              toast('已填入 Cloudflare 官方測試金鑰（一律通過），記得正式上線要換掉', 'ok');
+            },
+          }, '填入測試金鑰')),
+        el('p', { class: 'small muted' },
+          el('b', { style: { color: 'var(--warn)' } }, '啟用前務必確認兩件事：'), el('br'),
+          '① Cloudflare 的 Widget 設定裡要把你的考試網域加進去，否則驗證一律失敗（用 IP 直連時填 ',
+          el('code', {}, 'localhost'), ' 或關掉網域檢查）。', el('br'),
+          '② 學生的電腦要連得到 ', el('code', {}, 'challenges.cloudflare.com'),
+          '。校內網路若擋掉這個網域，所有人都會登不進來 —— ',
+          '這種情況「連不到 Cloudflare 時仍允許登入」也救不了，因為瀏覽器根本產不出驗證碼。', el('br'),
+          '建議先開起來自己用學生電腦登入試一次，確認沒問題再正式宣布。')),
 
       el('div', { class: 'card' },
         el('h3', {}, '批改規則'),

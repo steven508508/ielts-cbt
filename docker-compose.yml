@@ -82,6 +82,11 @@ services:
       TTS_MODEL: ${TTS_MODEL:-gpt-4o-mini-tts}
       TTS_VOICE: ${TTS_VOICE:-alloy}
       REALTIME_MODEL: ${REALTIME_MODEL:-gpt-4o-realtime-preview}
+
+      # 登入人機驗證（Cloudflare Turnstile）
+      TURNSTILE_ENABLED: ${TURNSTILE_ENABLED:-0}
+      TURNSTILE_SITE_KEY: ${TURNSTILE_SITE_KEY:-}
+      TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:-}
     volumes:
       - uploads:/data/uploads
     ports:

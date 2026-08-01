@@ -4,6 +4,7 @@ const bcrypt = require('bcryptjs');
 const db = require('../db');
 const { sign, requireAuth } = require('../middleware/auth');
 const { rateLimit, reset } = require('../middleware/rateLimit');
+const turnstile = require('../lib/turnstile');
 
 const router = express.Router();
 
@@ -12,8 +13,18 @@ const loginLimiter = rateLimit({
   message: '登入嘗試次數過多',
 });
 
+/** 登入頁需要的公開設定（未登入即可讀，不含任何機密） */
+router.get('/config', async (req, res) => {
+  res.json({ turnstile: await turnstile.publicConfig() });
+});
+
 router.post('/login', loginLimiter, async (req, res) => {
-  const { username, password } = req.body || {};
+  const { username, password, turnstileToken } = req.body || {};
+
+  // 先過人機驗證，再比對帳密（沒啟用時直接放行）
+  const check = await turnstile.verify(turnstileToken, req.ip);
+  if (!check.ok) return res.status(400).json({ error: check.reason, turnstileFailed: true });
+
   if (!username || !password) return res.status(400).json({ error: '請輸入帳號與密碼' });
   const user = await db.one('SELECT * FROM users WHERE username = ?', [String(username).trim()]);
   if (!user || !user.active) return res.status(401).json({ error: '帳號或密碼錯誤' });

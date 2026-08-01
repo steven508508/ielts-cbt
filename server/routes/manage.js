@@ -57,6 +57,49 @@ router.get('/overview', async (req, res) => {
   });
 });
 
+// ── Cloudflare Turnstile 人機驗證 ─────────────────────────────
+const turnstile = require('../lib/turnstile');
+
+router.get('/turnstile', async (req, res) => {
+  res.json({ turnstile: turnstile.maskConfig(await turnstile.getConfig(true)) });
+});
+
+router.put('/turnstile', requireRole('admin'), async (req, res) => {
+  const t = req.body?.turnstile || {};
+  const patch = {};
+  if (t.enabled !== undefined) patch.enabled = !!t.enabled;
+  if (t.failOpen !== undefined) patch.failOpen = !!t.failOpen;
+  if (t.siteKey !== undefined) patch.siteKey = String(t.siteKey).trim();
+  // 前端送回遮罩過的字串時不要覆寫
+  if (t.secretKey !== undefined && !/••••/.test(String(t.secretKey))) {
+    patch.secretKey = String(t.secretKey).trim();
+  }
+  const next = await turnstile.saveConfig(patch);
+  res.json({ ok: true, turnstile: turnstile.maskConfig(next) });
+});
+
+/** 用目前設定實際打一次 Cloudflare，確認 Secret Key 有效 */
+router.post('/turnstile/test', requireRole('admin'), async (req, res) => {
+  const c = await turnstile.getConfig(true);
+  if (!c.secretKey) return res.status(400).json({ ok: false, error: '尚未填入 Secret Key' });
+  try {
+    const r = await fetch(turnstile.VERIFY_URL, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ secret: c.secretKey, response: 'connectivity-test-token' }),
+    });
+    const data = await r.json();
+    const codes = data['error-codes'] || [];
+    // 用假 token 一定會失敗；重點是看是不是「token 無效」而不是「secret 無效」
+    if (codes.includes('invalid-input-secret') || codes.includes('missing-input-secret')) {
+      return res.json({ ok: false, error: 'Secret Key 無效，Cloudflare 不認得這把金鑰', codes });
+    }
+    res.json({ ok: true, message: 'Cloudflare 連線正常，Secret Key 看起來有效', codes });
+  } catch (e) {
+    res.status(502).json({ ok: false, error: `無法連線到 Cloudflare：${e.message}` });
+  }
+});
+
 // ── 保留政策 ──────────────────────────────────────────────────
 router.get('/policy', async (req, res) => res.json({ policy: await retention.getPolicy() }));
 

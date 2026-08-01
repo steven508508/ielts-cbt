@@ -522,6 +522,31 @@ Pronunciation 四項給分，並附語速統計、逐題錄音與逐字稿。
 - **改掉 `JWT_SECRET`**，換成一長串隨機字元（`openssl rand -hex 32`），否則任何人都能偽造登入。
   用 Docker 時沒設定會直接讓 compose 啟動失敗，就是為了避免忘記。
 - 登入有速率限制：同一個 IP 十分鐘內失敗 20 次就會被暫時擋下。
+- 可以再加一層 **Cloudflare Turnstile 人機驗證**，見下一節。
+
+### 登入人機驗證（Cloudflare Turnstile）
+
+預設關閉。要開的話：
+
+1. 到 [Cloudflare 主控台 → Turnstile](https://dash.cloudflare.com/?to=/:account/turnstile) 免費新增一個 Widget，
+   **Domain 填你的考試網址**（用 IP 直連時填 `localhost` 或關掉網域檢查）。
+2. 拿到 Site Key 與 Secret Key，填進「系統設定 → 登入人機驗證」，勾選啟用。
+   也可以寫在 `.env` 的 `TURNSTILE_SITE_KEY` / `TURNSTILE_SECRET_KEY` / `TURNSTILE_ENABLED=1`。
+3. 按「測試 Secret Key」確認伺服器連得到 Cloudflare。
+4. **用學生的電腦實際登入一次再正式宣布。**
+
+幾個實作細節：
+
+- Site Key 會出現在網頁原始碼（本來就是公開的）；**Secret Key 只存在伺服器**，
+  後台與 API 回傳都只給遮罩後的字串。
+- 驗證在比對帳密**之前**執行；驗證失敗時前端會自動重置元件（Turnstile 的 token 只能用一次）。
+- 「連不到 Cloudflare 時仍允許登入」建議勾著。不勾的話，Cloudflare 一出狀況全校就都登不進來，
+  而登入本來就還有速率限制在擋暴力破解。
+- ⚠️ 這個選項救不了「**學生的瀏覽器**連不到 `challenges.cloudflare.com`」的情況 ——
+  瀏覽器產不出驗證碼，伺服器再寬鬆也沒用。校內網路如果會擋這個網域，就不要開這個功能。
+  遇到這種情形登入頁會直接顯示原因並停用登入鈕，不會讓人一直卡在看不懂的錯誤。
+- 開發或測試可以用 Cloudflare 官方測試金鑰（後台有「填入測試金鑰」按鈕）：
+  Site Key `1x00000000000000000000AA`、Secret Key `1x0000000000000000000000000000000AA`，一律通過。
 - **套上 HTTPS**（Nginx / Caddy 反向代理 + Let's Encrypt）。口說錄音必須有 HTTPS。
 - Nginx 反向代理時記得放寬上傳大小，並**打開 WebSocket 轉發**（口說即時對話需要）：
 

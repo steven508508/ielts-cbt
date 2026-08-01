@@ -5,21 +5,59 @@
   const { el, band, fmtDate, toast } = UI;
   const root = () => document.getElementById('app');
 
+  // ── Cloudflare Turnstile ────────────────────────────────
+  const TURNSTILE_SRC = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+  let turnstileLoading = null;
+
+  function loadTurnstile() {
+    if (window.turnstile) return Promise.resolve(window.turnstile);
+    if (turnstileLoading) return turnstileLoading;
+    turnstileLoading = new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = TURNSTILE_SRC;
+      s.async = true; s.defer = true;
+      s.onload = () => resolve(window.turnstile);
+      s.onerror = () => reject(new Error('無法載入 Cloudflare 驗證元件'));
+      document.head.append(s);
+      setTimeout(() => reject(new Error('載入 Cloudflare 驗證元件逾時')), 15000);
+    });
+    return turnstileLoading;
+  }
+
   // ── 登入 ────────────────────────────────────────────────
-  function loginPage() {
+  async function loginPage() {
     document.body.classList.remove('exam-body');
+    document.body.style.overflow = '';
+
     const u = el('input', { type: 'text', autofocus: true, autocomplete: 'username' });
     const p = el('input', { type: 'password', autocomplete: 'current-password' });
-    const msg = el('div', { class: 'small', style: { color: 'var(--err)', minHeight: '1.2em' } });
+    const msg = el('div', { class: 'small', style: { color: 'var(--err)', minHeight: '1.2em', lineHeight: '1.5' } });
+    const capBox = el('div', { style: { margin: '.2rem 0 .6rem', display: 'flex', justifyContent: 'center' } });
+    const btn = el('button', { class: 'btn primary', type: 'submit', style: { width: '100%', marginTop: '.5rem' } }, '登入');
+
+    let widgetId = null;
+    let token = '';
 
     const submit = async () => {
       msg.textContent = '';
+      btn.disabled = true;
       try {
-        const r = await API.post('/auth/login', { username: u.value.trim(), password: p.value });
+        const r = await API.post('/auth/login', {
+          username: u.value.trim(), password: p.value, turnstileToken: token,
+        });
         API.setSession(r.token, r.user);
         location.hash = '#/';
         route();
-      } catch (e) { msg.textContent = e.message; }
+      } catch (e) {
+        msg.textContent = e.message;
+        // Turnstile 的 token 只能用一次，登入失敗就要重新驗證
+        if (widgetId !== null && window.turnstile) {
+          token = '';
+          try { window.turnstile.reset(widgetId); } catch {}
+        }
+      } finally {
+        btn.disabled = false;
+      }
     };
 
     UI.render(root(), el('div', { class: 'login-wrap' },
@@ -31,10 +69,51 @@
         el('div', { class: 'sub' }, '電腦化測驗 · 四科完整模擬 · AI 批改'),
         el('label', { class: 'field' }, el('span', {}, '帳號'), u),
         el('label', { class: 'field' }, el('span', {}, '密碼'), p),
+        capBox,
         msg,
-        el('button', { class: 'btn primary', type: 'submit', style: { width: '100%', marginTop: '.5rem' } }, '登入'),
+        btn,
         el('p', { class: 'small muted', style: { marginTop: '1rem', textAlign: 'center' } },
           '忘記密碼請找老師或管理員重設。'))));
+
+    // 有開 Turnstile 才載入元件；沒開的話登入頁完全不會碰 Cloudflare
+    let cfg = null;
+    try { cfg = (await API.get('/auth/config')).turnstile; } catch { cfg = null; }
+    if (!cfg?.enabled || !cfg.siteKey) return;
+
+    try {
+      const ts = await loadTurnstile();
+      widgetId = ts.render(capBox, {
+        sitekey: cfg.siteKey,
+        theme: 'light',
+        language: 'zh-tw',
+        callback: (t) => { token = t; msg.textContent = ''; },
+        'expired-callback': () => { token = ''; },
+        'timeout-callback': () => { token = ''; },
+        'error-callback': () => {
+          token = '';
+          msg.textContent = '人機驗證元件發生錯誤，請重新整理頁面再試一次。';
+        },
+      });
+    } catch (e) {
+      // 載不到驗證元件就一定拿不到 token，伺服器那邊必定會擋。
+      // 與其讓使用者按了才看到看不懂的錯誤，不如直接講清楚。
+      btn.disabled = true;
+      UI.render(capBox, el('div', {
+        class: 'small',
+        style: {
+          textAlign: 'center', lineHeight: '1.7', color: 'var(--err)',
+          border: '1px solid #e6b8b3', background: '#fdf0ee', borderRadius: '4px', padding: '.6rem .7rem',
+        },
+      },
+        el('b', {}, '無法載入人機驗證元件'), el('br'),
+        '這台電腦連不到 challenges.cloudflare.com，因此無法登入。', el('br'),
+        el('span', { class: 'muted' }, '請檢查網路或防火牆設定，或請管理員暫時關閉登入人機驗證。'),
+        el('div', { style: { marginTop: '.5rem' } },
+          el('button', {
+            class: 'btn sm', type: 'button',
+            onclick: () => { turnstileLoading = null; loginPage(); },
+          }, '重新嘗試'))));
+    }
   }
 
   // ── 外框 ────────────────────────────────────────────────
