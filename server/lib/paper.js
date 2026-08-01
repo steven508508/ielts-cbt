@@ -295,6 +295,25 @@ function validatePaper(input) {
 }
 
 /** 把某一科的所有客觀題攤平成一維陣列，方便批改與導覽 */
+/**
+ * 每一節的素材（文章、逐字稿、音檔）。
+ *
+ * 刻意跟 flattenQuestions 分開：一篇閱讀文章一千字，
+ * 複製到那一節的十三題上就是十三份，光一次檢討就多傳幾百 KB。
+ */
+function sectionMedia(paper, moduleName) {
+  const mod = (paper.modules || []).find((m) => m.module === moduleName);
+  if (!mod) return [];
+  return (mod.sections || []).map((sec, i) => ({
+    index: i,
+    title: sec.title || '',
+    passageTitle: sec.passageTitle || null,
+    passage: sec.passage || null,
+    transcript: sec.transcript || null,
+    audio: sec.audio || null,
+  }));
+}
+
 function flattenQuestions(paper, moduleName) {
   const out = [];
   const mod = (paper.modules || []).find((m) => m.module === moduleName);
@@ -318,6 +337,11 @@ function flattenQuestions(paper, moduleName) {
           options: q.options || g.options || null,
           groupType: g.type,
           multiCount: g.type === 'mcq_multi' ? (g.selectCount || (q.answers || []).length) : null,
+          // 檢討錯題時沒有這些就只剩一句題幹，學生根本看不懂當初在問什麼。
+          // 文章／逐字稿留在 sectionMedia()，這裡只帶「跟著題目走」的東西。
+          instructions: g.instructions || '',
+          image: q.image || g.image || null,
+          bodyHtml: g.bodyHtml || null,
         });
       }
     }
@@ -351,6 +375,7 @@ function countQuestions(paper, moduleName) {
 }
 
 module.exports = {
+  sectionMedia,
   QUESTION_TYPES, MODULES, MODULE_DEFAULTS,
   normalizePaper, validatePaper, flattenQuestions, stripAnswers, countQuestions, gapsIn,
 };

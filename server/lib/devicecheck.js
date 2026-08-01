@@ -74,6 +74,27 @@ function sanitize(raw) {
   };
 }
 
+/** 同一個人／同一台電腦最多留幾筆。學生考前會反覆重測，不控制的話一天就好幾十筆。 */
+const KEEP_PER_USER = 5;
+const KEEP_PER_IP = 3;
+const HARD_KEEP_DAYS = 90;
+
+/**
+ * 只留最近幾筆。
+ *
+ * 不能寫成 DELETE ... WHERE id NOT IN (SELECT ... LIMIT n) ——
+ * MySQL 不允許在 DELETE 的子查詢裡讀同一張表。先把界線查出來再刪，
+ * 走 index 也比較快。
+ */
+async function trim(where, params, keep) {
+  const rows = await db.query(
+    `SELECT id FROM device_checks WHERE ${where} ORDER BY id DESC LIMIT ${keep}`, params);
+  if (rows.length < keep) return 0;
+  const r = await db.exec(
+    `DELETE FROM device_checks WHERE ${where} AND id < ?`, [...params, rows[rows.length - 1].id]);
+  return r?.affectedRows || 0;
+}
+
 async function save({ raw, userId = null, ua = '', ip = '' }) {
   const clean = sanitize(raw);
   const code = makeCode();
@@ -83,6 +104,19 @@ async function save({ raw, userId = null, ua = '', ip = '' }) {
     [userId, code, clean.ok ? 1 : 0, clean.score, clean.summary,
       JSON.stringify(clean.results), String(ua || '').slice(0, 255), String(ip || '').slice(0, 45)]
   ).catch((e) => { console.warn('[devicecheck] 寫入失敗：', e.message); });
+
+  // 每次寫入順手修剪。這一段的成敗完全不影響學生，所以整包吞掉錯誤。
+  // 放在這裡而不是只靠每晚的自動清理，是因為自動清理預設是關的 ——
+  // 老師沒開的話這張表會一直長，而學生考前重測又特別頻繁。
+  try {
+    if (userId) await trim('user_id = ?', [userId], KEEP_PER_USER);
+    else if (ip) await trim('user_id IS NULL AND ip = ?', [String(ip).slice(0, 45)], KEEP_PER_IP);
+    // 再兜個底：超過 90 天的一律清掉，一次最多 200 筆，不會拖慢這支請求
+    await db.exec(
+      `DELETE FROM device_checks
+        WHERE created_at < DATE_SUB(NOW(), INTERVAL ? DAY) LIMIT 200`, [HARD_KEEP_DAYS]);
+  } catch (e) { console.warn('[devicecheck] 修剪失敗：', e.message); }
+
   return { ...clean, code };
 }
 
@@ -114,4 +148,7 @@ async function cleanup(days = 30) {
   return r?.affectedRows || 0;
 }
 
-module.exports = { CHECKS, STATUSES, sanitize, save, list, cleanup, makeCode };
+module.exports = {
+  CHECKS, STATUSES, sanitize, save, list, cleanup, makeCode, trim,
+  KEEP_PER_USER, KEEP_PER_IP, HARD_KEEP_DAYS,
+};

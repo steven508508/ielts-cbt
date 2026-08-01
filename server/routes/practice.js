@@ -9,7 +9,7 @@ const express = require('express');
 const multer = require('multer');
 const db = require('../db');
 const { requireAuth } = require('../middleware/auth');
-const { normalizePaper, flattenQuestions, QUESTION_TYPES } = require('../lib/paper');
+const { normalizePaper, flattenQuestions, sectionMedia, QUESTION_TYPES } = require('../lib/paper');
 const { checkAnswer } = require('../lib/answers');
 const ai = require('../lib/ai');
 const aiTasks = require('../lib/aiTasks');
@@ -60,20 +60,38 @@ async function collectWrong(userId, { module: mod, type, limit = 200 } = {}) {
   // 同一份試卷只解析一次
   const cache = new Map();
   const items = [];
+  // 文章／逐字稿另外收在一起，用 key 指過去。
+  // 直接掛在每一題上的話，同一篇文章會被複製幾十份 ——
+  // 一次錯題複習就多傳好幾 MB。
+  const passages = {};
   for (const r of rows) {
     if (!cache.has(r.test_id)) {
       try {
         const paper = normalizePaper(JSON.parse(r.content));
         const index = new Map();
+        const media = {};
         for (const m of paper.modules) {
           for (const q of flattenQuestions(paper, m.module)) index.set(`${m.module}:${q.number}`, q);
+          for (const sec of sectionMedia(paper, m.module)) media[`${m.module}:${sec.index}`] = sec;
         }
-        cache.set(r.test_id, index);
-      } catch { cache.set(r.test_id, new Map()); }
+        cache.set(r.test_id, { index, media });
+      } catch { cache.set(r.test_id, { index: new Map(), media: {} }); }
     }
-    const q = cache.get(r.test_id).get(`${r.module}:${r.q_number}`);
+    const { index, media } = cache.get(r.test_id);
+    const q = index.get(`${r.module}:${r.q_number}`);
     if (!q) continue;
     if (type && q.type !== type) continue;
+
+    const pKey = `${r.test_id}:${r.module}:${q.sectionIndex}`;
+    const sec = media[`${r.module}:${q.sectionIndex}`];
+    if (sec && (sec.passage || sec.transcript) && !passages[pKey]) {
+      passages[pKey] = {
+        title: sec.passageTitle || sec.title || '',
+        passage: sec.passage || null,
+        transcript: sec.transcript || null,
+      };
+    }
+
     items.push({
       key: `${r.attempt_id}:${r.module}:${r.q_number}`,
       attemptId: r.attempt_id,
@@ -86,6 +104,9 @@ async function collectWrong(userId, { module: mod, type, limit = 200 } = {}) {
       text: q.text || q.prompt || '',
       options: q.options || q.group?.options || null,
       wordLimit: q.wordLimit ?? q.group?.wordLimit ?? null,
+      image: q.image || null,
+      bodyHtml: q.bodyHtml || null,
+      passageKey: passages[pKey] ? pKey : null,
       yourAnswer: r.response || '',
       // answers.expected 存的是 JSON 字串（["FALSE"]），直接顯示會很醜
       expected: prettyExpected(r.expected) || (q.answers || []).join(' / '),
@@ -93,23 +114,24 @@ async function collectWrong(userId, { module: mod, type, limit = 200 } = {}) {
       answers: q.answers || [],
     });
   }
-  return items;
+  return { items, passages };
 }
 
 /** 錯題清單（含正解與解析——成績單本來就看得到，這裡是整理過的版本）*/
 router.get('/wrong', async (req, res) => {
   const uid = targetUser(req);
-  const items = await collectWrong(uid, {
+  const { items, passages } = await collectWrong(uid, {
     module: req.query.module, type: req.query.type, limit: req.query.limit,
   });
 
   // 各題型錯幾題，讓學生知道自己弱在哪
-  const all = req.query.module || req.query.type ? await collectWrong(uid, {}) : items;
+  const all = req.query.module || req.query.type ? (await collectWrong(uid, {})).items : items;
   const byType = {};
   for (const it of all) byType[it.type] = (byType[it.type] || 0) + 1;
 
   res.json({
     items,
+    passages,
     total: items.length,
     byType: Object.entries(byType)
       .map(([t, n]) => ({ type: t, label: QUESTION_TYPES[t]?.label || t, wrong: n }))
@@ -121,7 +143,8 @@ router.get('/wrong', async (req, res) => {
 router.post('/drill', drillLimit, async (req, res) => {
   const uid = targetUser(req);
   const count = Math.min(50, Math.max(1, Number(req.body?.count) || 10));
-  let pool = await collectWrong(uid, { module: req.body?.module, type: req.body?.type, limit: 500 });
+  const collected = await collectWrong(uid, { module: req.body?.module, type: req.body?.type, limit: 500 });
+  let pool = collected.items;
   if (!pool.length) return res.status(400).json({ error: '目前沒有符合條件的錯題可以練習' });
 
   // 依 key 去重（同一題在不同場次錯過好幾次，只留最近一次）
@@ -134,13 +157,20 @@ router.post('/drill', drillLimit, async (req, res) => {
   });
 
   const picked = pool.slice(0, count);
+  // 重做時一樣要給文章，不然閱讀題根本無從作答
+  const used = {};
+  for (const it of picked) {
+    if (it.passageKey && collected.passages[it.passageKey]) used[it.passageKey] = collected.passages[it.passageKey];
+  }
   res.json({
     items: picked.map((it) => ({
       key: it.key, module: it.module, number: it.number, type: it.type,
       instructions: it.instructions, text: it.text, options: it.options,
       wordLimit: it.wordLimit, testTitle: it.testTitle,
+      image: it.image, bodyHtml: it.bodyHtml, passageKey: it.passageKey,
       // 這裡刻意不給 answers / expected / explanation
     })),
+    passages: used,
   });
 });
 
@@ -148,7 +178,7 @@ router.post('/drill', drillLimit, async (req, res) => {
 router.post('/drill/check', async (req, res) => {
   const uid = targetUser(req);
   const responses = req.body?.responses || {};
-  const pool = await collectWrong(uid, { limit: 500 });
+  const pool = (await collectWrong(uid, { limit: 500 })).items;
   const byKey = new Map(pool.map((it) => [it.key, it]));
 
   const results = [];

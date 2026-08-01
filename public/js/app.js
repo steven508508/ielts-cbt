@@ -599,10 +599,15 @@
               WRONG_TYPE_LABEL[it.type] || it.type,
               it.submittedAt ? `　·　${fmtDate(it.submittedAt)}` : ''),
             it.instructions ? el('div', { class: 'small muted' }, it.instructions) : null,
-            el('p', { style: { fontWeight: '500' } }, it.text || '（這題的題幹在版面裡，請看原始成績單）'),
+            el('p', { style: { fontWeight: '500' } }, it.text || '（這題的題幹在版面裡，請看下方原文）'),
+            it.bodyHtml
+              ? el('div', { class: 'rev-body small', html: UI.sanitize(it.bodyHtml) }) : null,
+            it.image ? el('img', { src: it.image, class: 'rev-img', alt: '題目圖片', loading: 'lazy' }) : null,
             it.options?.length
               ? el('div', { class: 'small muted' },
                   it.options.map((o) => `${o.key}. ${o.text}`).join('　')) : null,
+            // 沒有原文的話，閱讀錯題根本沒得檢討 —— 學生看不出當初為什麼選錯
+            srcBlock(d.passages?.[it.passageKey]),
             el('div', { style: { display: 'flex', gap: '1.2rem', flexWrap: 'wrap', marginTop: '.4rem' } },
               el('div', {}, el('span', { class: 'small muted' }, '你的答案　'),
                 el('b', { style: { color: 'var(--err)' } }, it.yourAnswer || '（空白）')),
@@ -635,6 +640,17 @@
     load();
   }
 
+  /** 錯題／重做共用：把那一節的原文或逐字稿附上去 */
+  function srcBlock(p) {
+    if (!p || (!p.passage && !p.transcript)) return null;
+    return el('details', { class: 'rev-src' },
+      el('summary', {}, p.passage ? '📄 看原文' : '🎧 看逐字稿',
+        p.title ? el('span', { class: 'muted small' }, `　${p.title}`) : null),
+      el('div', { class: 'rev-src-body' },
+        p.passage ? el('div', { class: 'passage', html: UI.sanitize(p.passage) }) : null,
+        p.transcript ? el('pre', { class: 'transcript' }, p.transcript) : null));
+  }
+
   /** 錯題重做 */
   async function startDrill(filter) {
     let d;
@@ -657,7 +673,10 @@
         el('div', { class: 'small muted' },
           `${i + 1}.　${it.testTitle}　第 ${it.number} 題　·　${WRONG_TYPE_LABEL[it.type] || it.type}`),
         it.instructions ? el('div', { class: 'small muted' }, it.instructions) : null,
+        srcBlock(d.passages?.[it.passageKey]),
         el('p', { style: { margin: '.3rem 0' } }, it.text || '（題幹在版面裡）'),
+        it.bodyHtml ? el('div', { class: 'rev-body small', html: UI.sanitize(it.bodyHtml) }) : null,
+        it.image ? el('img', { src: it.image, class: 'rev-img', alt: '題目圖片', loading: 'lazy' }) : null,
         input);
     }));
 

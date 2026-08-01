@@ -2,7 +2,7 @@
 const express = require('express');
 const db = require('../db');
 const { requireAuth, requireStaff } = require('../middleware/auth');
-const { normalizePaper, flattenQuestions } = require('../lib/paper');
+const { normalizePaper, flattenQuestions, sectionMedia } = require('../lib/paper');
 const bands = require('../lib/bands');
 const grade = require('../lib/grade');
 
@@ -71,6 +71,7 @@ router.get('/:id', async (req, res) => {
 
   // 逐題檢討（含正解與解析），只有交卷後才給
   const review = {};
+  const reviewMedia = {};
   if (attempt.status !== 'in_progress') {
     for (const mod of ['listening', 'reading']) {
       if (!attempt.modules.includes(mod)) continue;
@@ -85,11 +86,19 @@ router.get('/:id', async (req, res) => {
         const a = map.get(q.number);
         return {
           number: q.number, type: q.type, section: q.sectionTitle, text: q.text,
+          sectionIndex: q.sectionIndex,
           response: a?.response ?? '', correct: a ? !!a.correct : false,
           answers: q.answers, explanation: q.explanation,
           options: q.options || null,
+          // 沒有這些的話，檢討時只看得到一句題幹，
+          // 學生根本回想不起來當初在讀什麼、看什麼圖
+          instructions: q.instructions || '',
+          image: q.image || null,
+          bodyHtml: q.bodyHtml || null,
         };
       });
+      // 文章／逐字稿一節一份，不要複製到每一題上
+      reviewMedia[mod] = sectionMedia(paper, mod);
     }
   }
 
@@ -144,6 +153,7 @@ router.get('/:id', async (req, res) => {
     test: { id: test.id, title: test.title, testType: test.test_type },
     moduleResults,
     review,
+    reviewMedia,
     writing: writing.map((w) => ({
       taskNo: w.task_no, essay: w.essay, wordCount: w.word_count,
       band: w.band == null ? null : Number(w.band),

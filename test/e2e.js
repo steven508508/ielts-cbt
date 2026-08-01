@@ -1275,6 +1275,78 @@ async function call(method, path, body, token) {
   const jCancelStu = await call('POST', `/ai/jobs/${jobId}/cancel`, {}, stu);
   ok(jCancelStu.status === 403, '學生不能取消別人的工作');
 
+  // ── 檢討素材 ────────────────────────────────────────────
+  console.log('\n檢討素材');
+  const rvPaper = normalizePaper({
+    title: `檢討素材 ${stamp}`, testType: 'academic',
+    modules: [{
+      module: 'reading',
+      sections: [{
+        title: 'Reading Passage 1', passageTitle: 'Urban Greening',
+        passage: '<p>Cities are planting trees to cool their streets.</p>',
+        groups: [
+          { type: 'tfng', instructions: 'Do the following statements agree?',
+            questions: [
+              { number: 1, prompt: 'Cities plant trees.', answers: ['TRUE'], explanation: '第一句。' },
+              { number: 2, prompt: 'It works in one year.', answers: ['FALSE'], explanation: '文章沒說。' },
+            ] },
+          { type: 'label_image', instructions: 'Label the diagram.',
+            image: '/uploads/image/diagram.png',
+            questions: [{ number: 3, prompt: 'canopy', answers: ['canopy'],
+              image: '/uploads/image/diagram.png' }] },
+        ],
+      }],
+    }],
+  });
+  const rvTest = await call('POST', '/tests', { paper: rvPaper }, tea);
+  const rvAssign = await call('POST', '/tests/assignments',
+    { testId: rvTest.data.id, userIds: [stuUid], modules: 'reading', maxAttempts: 9 }, tea);
+  const rvAvail = (await call('GET', '/exam/available', null, stu)).data.available
+    .find((x) => x.assignmentId === rvAssign.data.ids[0]);
+  const rvStart = await call('POST', '/exam/start',
+    { assignmentId: rvAvail.assignmentId, testId: rvAvail.testId }, stu);
+  const rvId = rvStart.data.attemptId;
+  await call('POST', `/exam/${rvId}/module/start`, { module: 'reading' }, stu);
+  await call('POST', `/exam/${rvId}/answers`, {
+    items: [
+      { module: 'reading', number: 1, response: 'FALSE' },
+      { module: 'reading', number: 2, response: 'TRUE' },
+      { module: 'reading', number: 3, response: 'roots' },
+    ],
+  }, stu);
+  await call('POST', `/exam/${rvId}/module/finish`, { module: 'reading' }, stu);
+  await call('POST', `/exam/${rvId}/submit`, {}, stu);
+  await new Promise((r) => setTimeout(r, 2500));
+
+  const rvRes = await call('GET', `/results/${rvId}`, null, stu);
+  const rvMedia = rvRes.data.reviewMedia?.reading || [];
+  ok(!!rvMedia[0]?.passage, '成績頁的檢討帶得回原文');
+  ok(rvMedia[0]?.passageTitle === 'Urban Greening', '原文標題也在');
+  const rvQ = rvRes.data.review?.reading || [];
+  ok(rvQ.find((q) => q.number === 3)?.image === '/uploads/image/diagram.png', '圖表題帶得回圖片');
+  ok(!!rvQ.find((q) => q.number === 1)?.instructions, '作答說明也帶回來了');
+  ok(rvQ.every((q) => q.sectionIndex === 0), '每一題知道自己屬於哪一節');
+  ok(rvQ.every((q) => !q.passage), '文章一節一份，沒有複製到每一題上');
+  ok(rvQ.find((q) => q.number === 1)?.response === 'FALSE', '學生當初填的答案也還在');
+
+  const rvWrong = await call('GET', '/practice/wrong?module=reading', null, stu);
+  const rvItem = rvWrong.data.items.find((x) => x.attemptId === rvId && x.number === 1);
+  ok(!!rvItem?.passageKey, '錯題複習的題目指得到原文');
+  ok(!!rvWrong.data.passages?.[rvItem.passageKey]?.passage, '而且原文真的附在回應裡');
+  ok(rvWrong.data.items.find((x) => x.attemptId === rvId && x.number === 3)?.image
+    === '/uploads/image/diagram.png', '錯題複習也帶得回圖片');
+  const pCount = Object.keys(rvWrong.data.passages || {}).length;
+  ok(pCount <= rvWrong.data.items.length, `原文去重過（${pCount} 篇 / ${rvWrong.data.items.length} 題）`);
+
+  const rvDrill = await call('POST', '/practice/drill', { module: 'reading', count: 5 }, stu);
+  ok(Object.keys(rvDrill.data.passages || {}).length > 0, '重做時也給原文，不然閱讀題無從作答');
+  ok(rvDrill.data.items.every((x) => !x.answers && !x.expected && !x.explanation),
+    '但重做時絕對不能夾帶答案');
+
+  await call('DELETE', `/tests/assignments/${rvAssign.data.ids[0]}`, null, tea);
+  await call('POST', '/manage/results/bulk', { action: 'delete', ids: [rvId], force: true }, adm);
+  await call('DELETE', `/tests/${rvTest.data.id}`, null, adm);
+
   // ── 出題難度 ────────────────────────────────────────────
   console.log('\n出題難度');
   const dfCfg = await call('GET', '/ai/difficulty', null, tea);
@@ -1353,6 +1425,16 @@ async function call(method, path, body, token) {
   ok(!JSON.stringify(dcList.data).includes('<script>'), '存進去的狀態是正規化過的');
   const dcStu = await call('GET', '/check/list', null, stu);
   ok(dcStu.status === 403, '學生看不到別人的檢查紀錄');
+
+  // 學生考前會反覆重測，不控制的話這張表會一直長。
+  // 這裡再打 5 次（含上面那次共 6 次 > 上限 5），驗證寫入時真的會修剪。
+  for (let i = 0; i < 5; i += 1) {
+    await call('POST', '/check', { results: { mic: { status: 'pass' } } }, stu);
+  }
+  const dcMineList = (await call('GET', `/check/list?limit=200&userId=${stuUid}`, null, tea)).data.items;
+  ok(dcMineList.length <= 5,
+    `同一個學生連測 6 次只留最近 5 筆（實際 ${dcMineList.length} 筆）`);
+  ok(dcMineList.length > 0, '而且不是整批被刪光');
 
   // ── 紀律事件分級 ────────────────────────────────────────
   console.log('\n紀律事件分級');

@@ -414,3 +414,31 @@ table.data tr.warn-row td{background:#fffaf0}
   padding: 0 .25rem; font-size: .95em; word-break: break-all;
 }
 .chk-fix .toolbar { margin-top: .5rem; }
+
+/* ── 檢討／錯題：把原文與圖片放回來 ────────────────────────── */
+.rev-src { margin: .4rem 0 .6rem; border: 1px solid var(--line-2); border-radius: 4px; background: #fbfcfd; }
+.rev-src > summary {
+  cursor: pointer; padding: .4rem .6rem; font-size: .85rem; font-weight: 600;
+  list-style: none; user-select: none;
+}
+.rev-src > summary::-webkit-details-marker { display: none; }
+.rev-src > summary::before { content: '▸ '; color: var(--muted); }
+.rev-src[open] > summary::before { content: '▾ '; }
+.rev-src-body {
+  padding: .1rem .8rem .7rem; max-height: 420px; overflow: auto;
+  border-top: 1px solid var(--line-2);
+}
+.rev-src-body .passage { font-size: .9rem; line-height: 1.85; }
+.rev-src-body .passage p { margin: .6rem 0; }
+.rev-src-body .transcript {
+  white-space: pre-wrap; font-size: .85rem; line-height: 1.8;
+  font-family: inherit; margin: .4rem 0;
+}
+.rev-img {
+  display: block; max-width: 100%; height: auto; margin: .4rem 0;
+  border: 1px solid var(--line-2); border-radius: 4px; background: #fff;
+}
+.rev-body {
+  margin: .3rem 0; padding: .5rem .6rem; background: #f6f8fa;
+  border: 1px solid var(--line-2); border-radius: 4px; line-height: 1.9;
+}

@@ -764,3 +764,74 @@ test('難度：中文說明看得出實際差別', () => {
 test('難度：認不得的科目不會炸', () => {
   assert.equal(diffLib.promptFor('nonsense', diffLib.resolve({})), '');
 });
+
+// ── 檢討素材 ──────────────────────────────────────────────
+// 這一組守的是：考完檢討時看得到當初的文章與圖片。
+// 之前 flattenQuestions 只留題幹，學生打開錯題只看到一句話，
+// 根本回想不起來當初在讀什麼。
+const { sectionMedia: secMedia, flattenQuestions: flatQ } = require('../server/lib/paper');
+
+const MEDIA_PAPER = {
+  title: 'x', testType: 'academic',
+  modules: [{
+    module: 'reading',
+    sections: [
+      { title: 'Passage 1', passageTitle: 'Trees', passage: '<p>Text one.</p>',
+        groups: [{ type: 'tfng', instructions: 'Do the statements agree?',
+          questions: [{ number: 1, text: 'A', answers: ['TRUE'] }] }] },
+      { title: 'Passage 2', passage: '<p>Text two.</p>',
+        groups: [{ type: 'label_image', image: '/uploads/image/g.png',
+          bodyHtml: '<p>Fill [[2]]</p>',
+          questions: [{ number: 2, text: 'B', answers: ['x'], image: '/uploads/image/q.png' }] }] },
+    ],
+  }],
+};
+
+test('檢討素材：sectionMedia 一節一份，拿得到文章與標題', () => {
+  const m = secMedia(MEDIA_PAPER, 'reading');
+  assert.equal(m.length, 2);
+  assert.equal(m[0].passageTitle, 'Trees');
+  assert.match(m[0].passage, /Text one/);
+  assert.match(m[1].passage, /Text two/);
+  assert.equal(m[0].index, 0);
+});
+
+test('檢討素材：認不得的科目回空陣列，不會炸', () => {
+  assert.deepEqual(secMedia(MEDIA_PAPER, 'listening'), []);
+  assert.deepEqual(secMedia({}, 'reading'), []);
+});
+
+test('檢討素材：題目本身帶得走圖片、作答說明與填空版面', () => {
+  const qs = flatQ(MEDIA_PAPER, 'reading');
+  assert.equal(qs[0].instructions, 'Do the statements agree?');
+  assert.equal(qs[1].image, '/uploads/image/q.png', '題目自己的圖優先');
+  assert.match(qs[1].bodyHtml, /\[\[2\]\]/);
+  assert.equal(qs[0].image, null, '沒有圖的題目要是 null 而不是 undefined');
+});
+
+test('檢討素材：題目上不會夾帶整篇文章（一篇千字複製十三份太浪費）', () => {
+  for (const q of flatQ(MEDIA_PAPER, 'reading')) {
+    assert.ok(!('passage' in q), `第 ${q.number} 題不該帶 passage`);
+    assert.ok(!('transcript' in q), `第 ${q.number} 題不該帶 transcript`);
+  }
+});
+
+test('檢討素材：題目找得到自己屬於哪一節，才對得回文章', () => {
+  const qs = flatQ(MEDIA_PAPER, 'reading');
+  const media = secMedia(MEDIA_PAPER, 'reading');
+  assert.equal(qs[0].sectionIndex, 0);
+  assert.equal(qs[1].sectionIndex, 1);
+  assert.match(media[qs[1].sectionIndex].passage, /Text two/, '對得回正確那一篇');
+});
+
+test('檢討素材：沒有圖沒有文章的聽力題也不會出錯', () => {
+  const p = {
+    title: 'x', testType: 'academic',
+    modules: [{ module: 'listening', sections: [{ title: 'S1', transcript: 'Hello.',
+      groups: [{ type: 'gap_fill', questions: [{ number: 1, text: '', answers: ['a'] }] }] }] }],
+  };
+  const m = secMedia(p, 'listening');
+  assert.equal(m[0].transcript, 'Hello.');
+  assert.equal(m[0].passage, null);
+  assert.equal(flatQ(p, 'listening')[0].image, null);
+});

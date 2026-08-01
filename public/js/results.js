@@ -222,10 +222,13 @@ const Results = (() => {
     const r = D.moduleResults[mod];
     const wrong = rows.filter((x) => !x.correct);
 
+    // 依 sectionIndex 分組（用標題分的話，兩節同名就會被併在一起）
+    const media = (D.reviewMedia || {})[mod] || [];
     const bySection = new Map();
     for (const q of rows) {
-      if (!bySection.has(q.section)) bySection.set(q.section, []);
-      bySection.get(q.section).push(q);
+      const k = q.sectionIndex ?? q.section;
+      if (!bySection.has(k)) bySection.set(k, { title: q.section, items: [] });
+      bySection.get(k).items.push(q);
     }
 
     const typeStats = new Map();
@@ -251,18 +254,36 @@ const Results = (() => {
         ? el('div', { class: 'card' }, el('p', {}, '全部答對，太厲害了。'))
         : null,
 
-      [...bySection].map(([sec, qs]) => el('div', { class: 'card' },
-        el('h3', {}, sec),
-        qs.map((q) => el('div', { class: `rev-q ${q.correct ? 'correct' : 'wrong'}` },
+      [...bySection].map(([k, sec]) => el('div', { class: 'card' },
+        el('h3', {}, sec.title),
+        // 檢討一定要能看到原文。只給題幹的話學生根本回想不起來當初在讀什麼。
+        sourceBlock(media[Number(k)]),
+        sec.items.map((q) => el('div', { class: `rev-q ${q.correct ? 'correct' : 'wrong'}` },
           el('div', { class: 'hd' },
             el('b', {}, `Q${q.number}`),
             el('span', { class: `pill ${q.correct ? 'ok' : 'err'}` }, q.correct ? '答對' : '答錯'),
             el('span', { class: 'muted small' }, TYPE_LABEL[q.type] || q.type)),
+          q.instructions && el('div', { class: 'small muted', style: { marginBottom: '.2rem' } }, q.instructions),
           q.text && el('div', { class: 'small', style: { marginBottom: '.3rem' }, html: sanitize(q.text) }),
+          q.bodyHtml && el('div', { class: 'rev-body small', html: sanitize(q.bodyHtml) }),
+          q.image && el('img', { src: q.image, class: 'rev-img', alt: `Q${q.number} 圖片`, loading: 'lazy' }),
           el('div', { class: 'small' },
             '你的答案：', el('span', { class: 'yours' }, q.response || '（未作答）'),
             !q.correct ? el('span', {}, '　正解：', el('b', {}, (q.answers || []).join(' / '))) : null),
           q.explanation && el('div', { class: 'exp', html: sanitize(q.explanation) }))))));
+  }
+
+  /** 這一節的文章／逐字稿／音檔。預設收起來，按一下展開對照。 */
+  function sourceBlock(m) {
+    if (!m || (!m.passage && !m.transcript && !m.audio)) return null;
+    return el('details', { class: 'rev-src', open: true },
+      el('summary', {},
+        m.passage ? '📄 原文' : '🎧 聽力逐字稿',
+        m.passageTitle ? el('span', { class: 'muted small' }, `　${m.passageTitle}`) : null),
+      el('div', { class: 'rev-src-body' },
+        m.audio ? el('audio', { src: m.audio, controls: true, preload: 'none', style: { width: '100%' } }) : null,
+        m.passage ? el('div', { class: 'passage', html: sanitize(m.passage) }) : null,
+        m.transcript ? el('pre', { class: 'transcript' }, m.transcript) : null));
   }
 
   const TYPE_LABEL = {
