@@ -1,5 +1,10 @@
 # IELTS 機考全面模擬考試系統
 
+[![CI](https://github.com/steven508508/ielts-cbt/actions/workflows/ci.yml/badge.svg)](https://github.com/steven508508/ielts-cbt/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+![Node](https://img.shields.io/badge/Node-%E2%89%A518-339933?logo=node.js&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-compose-2496ED?logo=docker&logoColor=white)
+
 一套可以自行架設的雅思電腦化測驗（CBT）模擬平台。學生端 1:1 臨摹官方機考介面，
 支援所有官方題型，口說是與 AI 考官的**即時語音對話**並即時評分，
 考完自動產出仿官方風格成績單；教師端有完整的檔案、考試資料與成績管理服務。
