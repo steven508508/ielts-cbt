@@ -1275,6 +1275,49 @@ async function call(method, path, body, token) {
   const jCancelStu = await call('POST', `/ai/jobs/${jobId}/cancel`, {}, stu);
   ok(jCancelStu.status === 403, '學生不能取消別人的工作');
 
+  // ── 出題難度 ────────────────────────────────────────────
+  console.log('\n出題難度');
+  const dfCfg = await call('GET', '/ai/difficulty', null, tea);
+  ok(dfCfg.status === 200 && Object.keys(dfCfg.data.levels).length === 5, '五檔難度讀得到');
+  ok(dfCfg.data.defaultLevel === 'band 6-7', '預設是官方一般難度');
+  ok(Object.keys(dfCfg.data.knobs).length === 4, '四個進階微調項目');
+  ok(/文章 800–950 字/.test(dfCfg.data.describe.reading || ''), '中文說明講得出具體字數');
+  const dfStu = await call('GET', '/ai/difficulty', null, stu);
+  ok(dfStu.status === 403, '學生看不到出題難度設定');
+
+  const dfMix = await call('GET', `/ai/difficulty?${new URLSearchParams({
+    level: 'band 7-8',
+    perModule: JSON.stringify({ listening: 'band 4-5' }),
+    knobs: JSON.stringify({ vocab: 'common' }),
+  })}`, null, tea);
+  ok(dfMix.data.resolved.modules.listening.level === 'band 4-5'
+    && dfMix.data.resolved.modules.listening.overridden === true, '單科覆寫生效');
+  ok(dfMix.data.resolved.modules.reading.level === 'band 7-8'
+    && dfMix.data.resolved.modules.reading.overridden === false, '沒覆寫的科目維持整體難度');
+  ok(dfMix.data.resolved.modules.reading.knobs.vocab === 'common', '進階微調套用到每一科');
+  ok(/500–650 字/.test(dfMix.data.describe.listening || ''), '覆寫後的說明跟著變');
+
+  const dfJunk = await call('GET', `/ai/difficulty?${new URLSearchParams({
+    level: '<script>alert(1)</script>', perModule: 'not-json', knobs: '{"vocab":"; DROP TABLE"}',
+  })}`, null, tea);
+  ok(dfJunk.status === 200 && dfJunk.data.resolved.level === 'band 6-7', '亂送參數退回預設，不會 500');
+  ok(dfJunk.data.resolved.knobs.vocab === 'auto', '不認得的微調值退回 auto');
+
+  // 難度要真的跟著背景工作走，重新整理頁面接回時才看得到當初選了什麼
+  const dfJob = await call('POST', '/ai/generate-paper', {
+    testType: 'academic', theme: `難度測試 ${stamp}`,
+    difficulty: { level: 'band 8-9', perModule: { listening: 'band 4-5' }, knobs: { vocab: 'common' } },
+  }, adm);
+  if (dfJob.status === 202) {
+    const j = await call('GET', `/ai/jobs/${dfJob.data.jobId}`, null, adm);
+    const p = j.data.job.params || {};
+    ok(p.difficulty?.level === 'band 8-9', '難度存進背景工作的參數裡');
+    ok(p.difficulty?.modules?.listening?.level === 'band 4-5', '單科覆寫也存下來了');
+    await call('POST', `/ai/jobs/${dfJob.data.jobId}/cancel`, {}, adm);
+  } else {
+    ok(dfJob.status === 409, `已有工作在跑，略過（${dfJob.status}）`);
+  }
+
   // ── 考前環境診斷 ────────────────────────────────────────
   console.log('\n考前環境診斷');
   const dcCfg = await call('GET', '/check/config');

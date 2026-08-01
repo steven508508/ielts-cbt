@@ -6,6 +6,7 @@ const ai = require('../lib/ai');
 const aiTasks = require('../lib/aiTasks');
 const jobs = require('../lib/jobs');
 const assemble = require('../lib/assemble');
+const difficultyLib = require('../lib/difficulty');
 const { rateLimit } = require('../middleware/rateLimit');
 const bands = require('../lib/bands');
 const { validatePaper, normalizePaper } = require('../lib/paper');
@@ -87,9 +88,32 @@ router.post('/generate', requireStaff, aiLimit, async (req, res) => {
  * （本系統 180 秒、反向代理、Cloudflare 橘雲的 100 秒硬上限），
  * 所以改成背景工作：這裡立刻回 jobId，前端輪詢 /ai/jobs/:id。
  */
+/** 出題頁的難度選項與說明 */
+router.get('/difficulty', requireStaff, (req, res) => {
+  const testType = req.query.testType === 'general' ? 'general' : 'academic';
+  const spec = difficultyLib.resolve({
+    level: req.query.level,
+    perModule: (() => { try { return JSON.parse(req.query.perModule || '{}'); } catch { return {}; } })(),
+    knobs: (() => { try { return JSON.parse(req.query.knobs || '{}'); } catch { return {}; } })(),
+  });
+  res.json({
+    levels: Object.fromEntries(Object.entries(difficultyLib.LEVELS)
+      .map(([k, v]) => [k, { label: v.label, zh: v.zh }])),
+    knobs: Object.fromEntries(Object.entries(difficultyLib.KNOBS).map(([k, v]) => [k, {
+      label: v.label, zh: v.zh,
+      options: Object.fromEntries(Object.entries(v.options).map(([ok, ov]) => [ok, { label: ov.label, zh: ov.zh || '' }])),
+    }])),
+    defaultLevel: difficultyLib.DEFAULT_LEVEL,
+    resolved: spec,
+    describe: difficultyLib.describe(spec, { testType }),
+  });
+});
+
 router.post('/generate-paper', requireStaff, aiHeavyLimit, async (req, res) => {
   const testType = req.body?.testType === 'general' ? 'general' : 'academic';
   const theme = String(req.body?.theme || '').slice(0, 200);
+  // resolve() 自己會把不認得的值退回預設，所以這裡收到什麼都不會壞
+  const difficulty = difficultyLib.resolve(req.body?.difficulty || {});
 
   // 同一個人已經有一個在跑就不要再開，免得白燒額度
   const mine = await jobs.listFor(req.user.id, { limit: 5, kind: 'generate_paper' });
@@ -97,11 +121,11 @@ router.post('/generate-paper', requireStaff, aiHeavyLimit, async (req, res) => {
   if (busy) return res.status(409).json({ error: '你已經有一份試卷正在產生中', jobId: busy.id });
 
   const jobId = await jobs.create({
-    kind: 'generate_paper', params: { testType, theme }, totalSteps: 9, userId: req.user.id,
+    kind: 'generate_paper', params: { testType, theme, difficulty }, totalSteps: 9, userId: req.user.id,
   });
 
   jobs.run(jobId, async (ctx) => {
-    const raw = await aiTasks.generateFullPaper({ testType, theme, userId: req.user.id, ctx });
+    const raw = await aiTasks.generateFullPaper({ testType, theme, difficulty, userId: req.user.id, ctx });
     const result = validatePaper(normalizePaper(raw));
     return {
       ok: result.ok,

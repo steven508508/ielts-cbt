@@ -437,6 +437,95 @@ const Admin = (() => {
       }, '產生題目'));
 
     const wholeF = {};
+    // ── 出題難度 ────────────────────────────────────────
+    // 只選一個整體難度就能用；要細調再展開。四個微調預設「跟隨難度」，
+    // 所以不碰的人拿到的就是這個 Band 的官方標準組合。
+    const diffBox = el('div');
+    const dF = { perModule: {}, knobs: {} };
+    let diffMeta = null;
+
+    function readDifficulty() {
+      if (!diffMeta) return {};
+      const perModule = {};
+      for (const [m, sel] of Object.entries(dF.perModule)) if (sel.value) perModule[m] = sel.value;
+      const knobs = {};
+      for (const [k, sel] of Object.entries(dF.knobs)) knobs[k] = sel.value;
+      return { level: dF.level.value, perModule, knobs };
+    }
+
+    async function refreshDiffPreview() {
+      if (!diffMeta) return;
+      const d = readDifficulty();
+      try {
+        const r = await API.get('/ai/difficulty?' + new URLSearchParams({
+          testType: wholeF.testType.value,
+          level: d.level,
+          perModule: JSON.stringify(d.perModule),
+          knobs: JSON.stringify(d.knobs),
+        }));
+        UI.render(dPreview, Object.entries(r.describe).map(([m, text]) =>
+          el('div', { class: 'diff-line' },
+            el('span', { class: 'diff-mod' }, UI.MODULE_LABEL[m]?.split(' ')[0] || m),
+            el('span', {}, text),
+            r.resolved.modules[m]?.overridden ? el('span', { class: 'pill' }, '單獨指定') : null)));
+      } catch { /* 預覽失敗不影響出題 */ }
+    }
+
+    const dPreview = el('div', { class: 'diff-preview' });
+
+    (async () => {
+      let meta;
+      try { meta = await API.get('/ai/difficulty'); } catch { return; }
+      diffMeta = meta;
+      const levelOpts = (sel, blank) => [
+        blank ? el('option', { value: '' }, blank) : null,
+        ...Object.entries(meta.levels).map(([k, v]) =>
+          el('option', { value: k, selected: !blank && k === sel }, v.label)),
+      ];
+
+      dF.level = el('select', {}, levelOpts(meta.defaultLevel));
+      dF.level.onchange = refreshDiffPreview;
+
+      const modRow = el('div', { class: 'row' }, ['listening', 'reading', 'writing', 'speaking'].map((m) => {
+        const sel = el('select', {}, levelOpts(null, '跟隨整體'));
+        sel.onchange = refreshDiffPreview;
+        dF.perModule[m] = sel;
+        return el('label', { class: 'field' },
+          el('span', {}, UI.MODULE_LABEL[m]?.split(' ')[0] || m), sel);
+      }));
+
+      const knobRow = el('div', { class: 'row' }, Object.entries(meta.knobs).map(([k, v]) => {
+        const sel = el('select', {}, Object.entries(v.options).map(([ok, ov]) =>
+          el('option', { value: ok, selected: ok === 'auto' }, ov.label)));
+        sel.onchange = refreshDiffPreview;
+        dF.knobs[k] = sel;
+        return el('label', { class: 'field' },
+          el('span', {}, v.label), sel,
+          el('span', { class: 'small muted' }, v.zh));
+      }));
+
+      UI.render(diffBox,
+        el('div', { class: 'row' },
+          el('label', { class: 'field' },
+            el('span', {}, '出題難度'), dF.level,
+            el('span', { class: 'small muted' },
+              '影響文章長度、句子複雜度、生難字比例與推論題多寡'))),
+        el('details', {},
+          el('summary', {}, '各科單獨指定難度'),
+          el('div', { style: { paddingTop: '.6rem' } },
+            el('p', { class: 'small muted' }, '留「跟隨整體」就用上面那個難度。班上聽力特別弱的話可以只把聽力調低。'),
+            modRow)),
+        el('details', {},
+          el('summary', {}, '進階微調'),
+          el('div', { style: { paddingTop: '.6rem' } },
+            el('p', { class: 'small muted' }, '每一項預設「跟隨難度」，也就是這個 Band 的官方標準組合。要偏離再改。'),
+            knobRow)),
+        el('div', { class: 'small muted', style: { marginTop: '.2rem' } }, '這個設定會產出：'),
+        dPreview);
+      if (wholeF.testType) wholeF.testType.onchange = refreshDiffPreview;
+      refreshDiffPreview();
+    })();
+
     const startBtn = el('button', { class: 'btn primary' }, '產生完整試卷');
     const whole = el('div', {},
       el('p', { class: 'small muted' },
@@ -449,6 +538,7 @@ const Admin = (() => {
         el('label', { class: 'field' }, el('span', {}, '類型'),
           (wholeF.testType = el('select', {}, el('option', { value: 'academic' }, 'Academic'), el('option', { value: 'general' }, 'General Training')))),
         el('label', { class: 'field' }, el('span', {}, '主題風格'), (wholeF.theme = el('input', { type: 'text', placeholder: '例：環境與科技' })))),
+      diffBox,
       startBtn);
 
     startBtn.onclick = async () => {
@@ -456,6 +546,7 @@ const Admin = (() => {
       try {
         const r = await API.post('/ai/generate-paper', {
           testType: wholeF.testType.value, theme: wholeF.theme.value,
+          difficulty: readDifficulty(),
         });
         watchJob(r.jobId);
       } catch (er) {

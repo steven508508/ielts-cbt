@@ -668,3 +668,99 @@ test('診斷碼：長度固定，而且不含容易看錯的字', () => {
     assert.ok(!/[01IO]/.test(c), `${c} 含有容易看錯的字元`);
   }
 });
+
+// ── 出題難度 ──────────────────────────────────────────────
+// 重點不是「有沒有把 band 傳下去」，而是「band 有沒有被翻譯成 AI 聽得懂的
+// 具體指令」。叫模型出 band 5-6 而不給字數，它照樣寫一篇 1000 字學術文章。
+const diffLib = require('../server/lib/difficulty');
+
+test('難度：只給整體難度時四科都跟著走', () => {
+  const s = diffLib.resolve({ level: 'band 7-8' });
+  for (const m of diffLib.MODULES) {
+    assert.equal(s.modules[m].level, 'band 7-8', m);
+    assert.equal(s.modules[m].overridden, false, m);
+  }
+});
+
+test('難度：某一科可以單獨覆寫，其他科不受影響', () => {
+  const s = diffLib.resolve({ level: 'band 7-8', perModule: { listening: 'band 4-5' } });
+  assert.equal(s.modules.listening.level, 'band 4-5');
+  assert.equal(s.modules.listening.overridden, true);
+  assert.equal(s.modules.reading.level, 'band 7-8');
+  assert.equal(s.modules.reading.overridden, false);
+});
+
+test('難度：微調預設 auto，會取用該 band 的預設檔位', () => {
+  const easy = diffLib.resolve({ level: 'band 4-5' });
+  const hard = diffLib.resolve({ level: 'band 8-9' });
+  assert.equal(easy.modules.reading.knobs.hardTypes, 'few');
+  assert.equal(hard.modules.reading.knobs.hardTypes, 'many');
+  assert.equal(easy.modules.listening.knobs.listening, 'slow');
+  assert.equal(hard.modules.listening.knobs.listening, 'fast');
+});
+
+test('難度：微調設定會蓋掉 band 的預設，而且套用到每一科', () => {
+  const s = diffLib.resolve({ level: 'band 8-9', knobs: { vocab: 'common' } });
+  for (const m of diffLib.MODULES) assert.equal(s.modules[m].knobs.vocab, 'common', m);
+  assert.equal(s.modules.reading.knobs.text, 'dense', '沒動到的項目要維持 band 預設');
+});
+
+test('難度：亂送的值一律退回預設，不會壞掉', () => {
+  for (const bad of [null, undefined, 'nonsense', 42, { level: '<script>' }]) {
+    const s = diffLib.resolve(typeof bad === 'object' && bad ? bad : { level: bad });
+    assert.equal(s.level, diffLib.DEFAULT_LEVEL);
+  }
+  const s2 = diffLib.resolve({ level: 'band 7-8', knobs: { vocab: 'DROP TABLE' }, perModule: { reading: 'band 99' } });
+  assert.equal(s2.knobs.vocab, 'auto');
+  assert.equal(s2.modules.reading.level, 'band 7-8', '不認得的科目難度要退回整體');
+});
+
+test('難度：提示裡真的有具體字數，不是只寫一句 band', () => {
+  const easy = diffLib.promptFor('reading', diffLib.resolve({ level: 'band 4-5' }));
+  const hard = diffLib.promptFor('reading', diffLib.resolve({ level: 'band 8-9' }));
+  assert.match(easy, /Passage length: 500-650 words/);
+  assert.match(hard, /Passage length: 1050-1200 words/);
+  assert.ok(hard.length > 200, '難度指令不能只有一行');
+});
+
+test('難度：General Training 的閱讀字數比 Academic 短', () => {
+  const spec = diffLib.resolve({ level: 'band 6-7' });
+  const ac = diffLib.promptFor('reading', spec, { testType: 'academic' });
+  const gt = diffLib.promptFor('reading', spec, { testType: 'general' });
+  const num = (t) => Number(t.match(/Passage length: (\d+)/)[1]);
+  assert.ok(num(gt) < num(ac), `GT ${num(gt)} 應該比 Academic ${num(ac)} 短`);
+});
+
+test('難度：聽力提示會講語速，閱讀不會', () => {
+  const s = diffLib.resolve({ level: 'band 8-9' });
+  assert.match(diffLib.promptFor('listening', s), /160 words per minute/);
+  assert.ok(!/words per minute/.test(diffLib.promptFor('reading', s)));
+});
+
+test('難度：低難度不會叫 AI 塞一堆 NOT GIVEN', () => {
+  const easy = diffLib.promptFor('reading', diffLib.resolve({ level: 'band 4-5' }));
+  const hard = diffLib.promptFor('reading', diffLib.resolve({ level: 'band 8-9' }));
+  assert.match(easy, /LOW-inference/);
+  assert.match(hard, /HIGH-inference/);
+  assert.match(hard, /Not Given items must be genuinely not stated/);
+});
+
+test('難度：寫作與口說也吃得到難度，不是只有聽讀', () => {
+  const easy = diffLib.resolve({ level: 'band 4-5' });
+  const hard = diffLib.resolve({ level: 'band 8-9' });
+  assert.match(diffLib.promptFor('writing', easy), /concrete, familiar question/);
+  assert.match(diffLib.promptFor('writing', hard), /abstract, two-part or evaluative/);
+  assert.match(diffLib.promptFor('speaking', hard), /genuinely abstract and evaluative/);
+});
+
+test('難度：中文說明看得出實際差別', () => {
+  const d = diffLib.describe(diffLib.resolve({ level: 'band 4-5' }));
+  assert.match(d.reading, /Band 4–5/);
+  assert.match(d.reading, /500–650 字/);
+  assert.match(d.listening, /wpm/);
+  assert.ok(!/字範圍/.test(d.writing), '寫作那行不能出現會被讀成作文字數的字樣');
+});
+
+test('難度：認不得的科目不會炸', () => {
+  assert.equal(diffLib.promptFor('nonsense', diffLib.resolve({})), '');
+});

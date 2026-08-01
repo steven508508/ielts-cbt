@@ -385,3 +385,18 @@ table.data tr.warn-row td{background:#fffaf0}
   .chk-row { padding: .55rem 0; }
   .chk-meter { max-width: none; }
 }
+
+/* ── AI 出題難度 ─────────────────────────────────────────── */
+.diff-preview {
+  margin-top: .3rem; padding: .5rem .7rem; border-radius: 4px;
+  background: #f6f8fa; border: 1px solid var(--line-2); font-size: .85rem;
+}
+.diff-line { display: flex; gap: .5rem; align-items: baseline; padding: .12rem 0; }
+.diff-mod {
+  flex: 0 0 3.2rem; font-weight: 600; color: var(--brand);
+}
+.diff-preview .pill { font-size: .68rem; padding: 0 .3rem; }
+@media (max-width: 560px) {
+  .diff-line { flex-wrap: wrap; }
+  .diff-mod { flex-basis: 100%; }
+}

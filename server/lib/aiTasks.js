@@ -9,6 +9,9 @@
  */
 const ai = require('./ai');
 const { QUESTION_TYPES } = require('./paper');
+const diffLib = require('./difficulty');
+
+const MODULE_ZH = { listening: '聽力', reading: '閱讀', writing: '寫作', speaking: '口說' };
 
 // ── 共用：把系統的題型規格說明給 AI 聽 ─────────────────────────
 const SCHEMA_SPEC = `
@@ -79,7 +82,7 @@ Return JSON: { "group": {…}${withPassage ? ', "passage": "…", "passageTitle"
   const user = `Module: ${mod}
 Question type: ${type}
 Topic: ${topic || '(you choose an authentic IELTS topic)'}
-Target difficulty: ${difficulty}
+${diffLib.promptFor(mod, diffLib.resolve({ level: difficulty }), { testType })}
 Number of question numbers to produce: ${count}
 Question numbering starts at: ${startNumber}
 Section: ${sectionNo}
@@ -126,7 +129,7 @@ const READING_GENERAL_PLAN = [
 ];
 
 /** 產生一個聽力 section（10 題 + 完整逐字稿）*/
-async function generateListeningSection({ no, range, brief, theme, testType, userId }) {
+async function generateListeningSection({ no, range, brief, theme, testType, diff = '', userId }) {
   const system = `You are a senior IELTS item writer for Cambridge English. You write listening material that is
 indistinguishable from the official papers: natural spoken English with hesitations, self-corrections and
 speaker labels; distractors that punish careless listening; answers that appear verbatim in the transcript.
@@ -144,13 +147,14 @@ Content: ${brief}
 Question numbers: ${range[0]} to ${range[1]} inclusive — exactly ${range[1] - range[0] + 1} question numbers, none missing, none extra.
 Theme / subject flavour: ${theme || 'authentic everyday and academic IELTS topics'}
 Use two or three different question types within this section, as the real test does.
-Every answer must appear in the transcript, in order. Respect every wordLimit you set.`;
+Every answer must appear in the transcript, in order. Respect every wordLimit you set.
+${diff ? `\n${diff}` : ''}`;
 
   return ai.chat({ system, user, json: true, maxTokens: 12000, temperature: 0.8, purpose: 'generate_paper', userId });
 }
 
 /** 產生一篇閱讀（文章 + 13~14 題）*/
-async function generateReadingPassage({ no, range, brief, theme, testType, userId }) {
+async function generateReadingPassage({ no, range, brief, theme, testType, diff = '', userId }) {
   const system = `You are a senior IELTS item writer for Cambridge English. You write ${testType === 'general' ? 'General Training' : 'Academic'}
 reading material indistinguishable from the official papers.
 
@@ -169,13 +173,14 @@ Content: ${brief}
 Question numbers: ${range[0]} to ${range[1]} inclusive — exactly ${range[1] - range[0] + 1} question numbers, none missing, none extra.
 Theme / subject flavour: ${theme || 'authentic IELTS topics'}
 Use two or three different question types, as the real test does.
-Every answer must be verifiable from the passage. Do not create trick items.`;
+Every answer must be verifiable from the passage. Do not create trick items.
+${diff ? `\n${diff}` : ''}`;
 
   return ai.chat({ system, user, json: true, maxTokens: 14000, temperature: 0.8, purpose: 'generate_paper', userId });
 }
 
 /** 產生寫作兩題 */
-async function generateWritingTasks({ theme, testType, userId }) {
+async function generateWritingTasks({ theme, testType, diff = '', userId }) {
   const system = `You are a senior IELTS item writer. Write the Writing module of a
 ${testType === 'general' ? 'General Training' : 'Academic'} paper.
 
@@ -195,13 +200,14 @@ Return JSON:
   const user = `Theme / subject flavour: ${theme || 'authentic IELTS topics'}
 Task 1: ${testType === 'general' ? 'a letter (formal, semi-formal or informal — state which)' : 'describe a chart, table, diagram or process'}.
 Task 2: a discursive essay with a clear question type (opinion / discussion / problem-solution / two-part).
-Write the rubrics exactly in official style. Model answers should be genuinely band 8-9.`;
+Write the rubrics exactly in official style. Model answers should be genuinely band 8-9.
+${diff ? `\n${diff}` : ''}`;
 
   return ai.chat({ system, user, json: true, maxTokens: 8000, temperature: 0.8, purpose: 'generate_paper', userId });
 }
 
 /** 產生口說三部分 */
-async function generateSpeakingSet({ theme, userId }) {
+async function generateSpeakingSet({ theme, diff = '', userId }) {
   const system = `You are a senior IELTS speaking examiner and item writer.
 
 Return JSON:
@@ -218,7 +224,8 @@ Return JSON:
 Part 1: three familiar everyday topics, four questions each.
 Part 2: one cue card, with the Part 2 topic linked to the Part 3 discussion.
 Part 3: six abstract discussion questions that escalate in difficulty, clearly related to the Part 2 topic.
-Write them exactly as an examiner would say them aloud.`;
+Write them exactly as an examiner would say them aloud.
+${diff ? `\n${diff}` : ''}`;
 
   return ai.chat({ system, user, json: true, maxTokens: 6000, temperature: 0.85, purpose: 'generate_paper', userId });
 }
@@ -227,26 +234,31 @@ Write them exactly as an examiner would say them aloud.`;
  * 分段產生整份試卷。
  * ctx 由 jobs.run 提供（setStep / savePartial / check），沒有的話就當作單純跑一次。
  */
-async function generateFullPaper({ testType = 'academic', theme = '', userId, ctx = null }) {
+async function generateFullPaper({ testType = 'academic', theme = '', difficulty = null, userId, ctx = null }) {
   const readingPlan = testType === 'general' ? READING_GENERAL_PLAN : READING_ACADEMIC_PLAN;
   const steps = [];
+
+  // 老師選的難度翻成具體的出題指令。沒帶就用預設（band 6-7），
+  // 行為跟以前完全一樣。
+  const spec = diffLib.resolve(difficulty || {});
+  const dp = (m) => diffLib.promptFor(m, spec, { testType });
 
   for (const s of LISTENING_PLAN) {
     steps.push({
       label: `聽力 Section ${s.no}（第 ${s.range[0]}–${s.range[1]} 題）`,
-      run: () => generateListeningSection({ ...s, theme, testType, userId }),
+      run: () => generateListeningSection({ ...s, theme, testType, diff: dp('listening'), userId }),
       into: 'listening',
     });
   }
   for (const s of readingPlan) {
     steps.push({
       label: `閱讀 Passage ${s.no}（第 ${s.range[0]}–${s.range[1]} 題）`,
-      run: () => generateReadingPassage({ ...s, theme, testType, userId }),
+      run: () => generateReadingPassage({ ...s, theme, testType, diff: dp('reading'), userId }),
       into: 'reading',
     });
   }
-  steps.push({ label: '寫作 Task 1 與 Task 2', run: () => generateWritingTasks({ theme, testType, userId }), into: 'writing' });
-  steps.push({ label: '口說 Part 1–3', run: () => generateSpeakingSet({ theme, userId }), into: 'speaking' });
+  steps.push({ label: '寫作 Task 1 與 Task 2', run: () => generateWritingTasks({ theme, testType, diff: dp('writing'), userId }), into: 'writing' });
+  steps.push({ label: '口說 Part 1–3', run: () => generateSpeakingSet({ theme, diff: dp('speaking'), userId }), into: 'speaking' });
 
   const collected = { listening: [], reading: [], writing: [], speaking: [] };
   const failed = [];
@@ -277,12 +289,12 @@ async function generateFullPaper({ testType = 'academic', theme = '', userId, ct
     }
     if (section) {
       collected[s.into].push(section);
-      await ctx?.savePartial(assemble(collected, { testType, theme, failed }));
+      await ctx?.savePartial(assemble(collected, { testType, theme, failed, spec }));
     }
   }
 
   await ctx?.setStep('組裝試卷…', steps.length);
-  const paper = assemble(collected, { testType, theme, failed });
+  const paper = assemble(collected, { testType, theme, failed, spec });
   if (!collected.listening.length && !collected.reading.length
       && !collected.writing.length && !collected.speaking.length) {
     const err = new Error(failed.length
@@ -295,7 +307,7 @@ async function generateFullPaper({ testType = 'academic', theme = '', userId, ct
 }
 
 /** 把各段結果組成一份完整 paper */
-function assemble(collected, { testType, theme, failed = [] }) {
+function assemble(collected, { testType, theme, failed = [], spec = null }) {
   const modules = [];
   const push = (module, durationSec, sections) => {
     if (sections.length) modules.push({ module, durationSec, sections });
@@ -306,13 +318,23 @@ function assemble(collected, { testType, theme, failed = [] }) {
   push('speaking', 840, collected.speaking);
 
   const stamp = new Date().toISOString().slice(0, 10);
+  // 難度寫進標題與說明，老師之後在試卷清單一眼就看得出這份是照什麼難度出的
+  const lv = spec ? (diffLib.LEVELS[spec.level]?.label || spec.level) : null;
+  const perMod = spec
+    ? Object.entries(spec.modules).filter(([, v]) => v.overridden)
+      .map(([k, v]) => `${MODULE_ZH[k] || k} ${diffLib.LEVELS[v.level]?.label || v.level}`)
+    : [];
   return {
-    title: `AI 模擬試卷${theme ? ` — ${theme}` : ''}（${stamp}）`,
+    title: `AI 模擬試卷${theme ? ` — ${theme}` : ''}${lv ? `（${lv}）` : ''}（${stamp}）`,
     testType,
-    description: failed.length
-      ? `AI 產生，有 ${failed.length} 個段落失敗需要補：${failed.join('；')}`
-      : 'AI 產生的完整模擬試卷，請人工校對後再指派。',
+    description: [
+      failed.length
+        ? `AI 產生，有 ${failed.length} 個段落失敗需要補：${failed.join('；')}`
+        : 'AI 產生的完整模擬試卷，請人工校對後再指派。',
+      lv ? `出題難度：${lv}${perMod.length ? `（${perMod.join('、')}另外指定）` : ''}` : '',
+    ].filter(Boolean).join('\n'),
     generationIssues: failed,
+    difficulty: spec || null,
     modules,
   };
 }
