@@ -23,7 +23,7 @@ async function requireAuth(req, res, next) {
   if (!token) return res.status(401).json({ error: '請先登入' });
   try {
     const payload = jwt.verify(token, config.jwtSecret);
-    const user = await db.one('SELECT id, username, name, role, class_group, candidate_no, active FROM users WHERE id = ?', [payload.uid]);
+    const user = await db.one('SELECT id, username, name, email, role, class_group, candidate_no, active FROM users WHERE id = ?', [payload.uid]);
     if (!user || !user.active) return res.status(401).json({ error: '帳號已停用' });
     req.user = user;
     next();

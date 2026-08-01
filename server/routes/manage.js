@@ -120,7 +120,7 @@ router.put('/policy', requireRole('admin'), async (req, res) => {
   const p = req.body?.policy || {};
   const clean = {};
   for (const k of ['keepResultsMonths', 'keepSpeakingAudioMonths', 'keepAbandonedDays',
-    'keepAiLogsDays', 'deleteUnusedMediaDays', 'runAtHour']) {
+    'keepAiLogsDays', 'keepReadNotificationsDays', 'deleteUnusedMediaDays', 'runAtHour']) {
     if (p[k] !== undefined) clean[k] = Math.max(0, Number(p[k]) || 0);
   }
   if (p.enabled !== undefined) clean.enabled = !!p.enabled;

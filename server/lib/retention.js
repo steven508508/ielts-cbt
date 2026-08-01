@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const db = require('../db');
 const config = require('../config');
+const notify = require('./notify');
 
 const KEY = 'retention';
 
@@ -13,6 +14,7 @@ const DEFAULT_POLICY = {
   keepSpeakingAudioMonths: 6,// 口說錄音檔保留幾個月（成績本身留著）
   keepAbandonedDays: 14,     // 未完成又沒動作的考試場次幾天後清掉
   keepAiLogsDays: 30,        // AI 呼叫紀錄保留幾天
+  keepReadNotificationsDays: 60, // 已讀的站內通知保留幾天（未讀的永遠留著）
   deleteUnusedMediaDays: 0,  // 沒有任何試卷引用的媒體檔幾天後刪（0 = 不自動刪）
   runAtHour: 3,              // 每天幾點執行（伺服器時間）
 };
@@ -203,6 +205,19 @@ async function runCleanup({ dryRun = true, policy = null, actor = 'system' } = {
       await db.exec('DELETE FROM ai_jobs WHERE created_at < DATE_SUB(NOW(), INTERVAL ? DAY)', [p.keepAiLogsDays]);
     }
     add('清除 AI 背景工作紀錄', jn, 0, `超過 ${p.keepAiLogsDays} 天（結果已存成試卷的不受影響）`);
+  }
+
+  // 4.5) 已讀的站內通知。一個班一次指派就是幾十筆，不清會一直長。
+  //      未讀的一律留著 —— 學生還沒看到的東西不能替他刪掉。
+  if (p.keepReadNotificationsDays > 0) {
+    const c = await db.one(
+      `SELECT COUNT(*) AS n FROM notifications
+        WHERE read_at IS NOT NULL AND created_at < DATE_SUB(NOW(), INTERVAL ? DAY)`,
+      [p.keepReadNotificationsDays]
+    ).catch(() => null);
+    const n = Number(c?.n || 0);
+    if (!dryRun && n) await notify.cleanup(p.keepReadNotificationsDays);
+    add('清除已讀通知', n, 0, `已讀且超過 ${p.keepReadNotificationsDays} 天（未讀的一律保留）`);
   }
 
   // 5) 沒有被引用的媒體檔

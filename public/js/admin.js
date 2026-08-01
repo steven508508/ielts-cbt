@@ -1031,8 +1031,14 @@ const Admin = (() => {
       el('input', { type: 'checkbox', value: u.id, class: 'check' }),
       `${u.name}（${u.username}）`, u.class_group ? el('span', { class: 'muted small' }, ` · ${u.class_group}`) : null)));
 
-    UI.render(mount, 
-      el('h2', {}, '指派考試'),
+    UI.render(mount,
+      el('div', { class: 'toolbar' },
+        el('h2', { style: { margin: 0 } }, '指派考試'),
+        el('span', { style: { flex: '1' } }),
+        el('button', {
+          class: 'btn',
+          onclick: () => noticeDialog(users, classes),
+        }, '📢 發通知給學生')),
       el('div', { class: 'card' },
         el('div', { class: 'row' },
           el('label', { class: 'field' }, el('span', {}, '試卷'),
@@ -1209,6 +1215,75 @@ const Admin = (() => {
                 }, '取消'))))))))));
   }
 
+  /**
+   * 發一則通知給學生。
+   * 指派考試會自動通知，這裡是給「臨時改教室、記得帶耳機」這種臨時公告用的。
+   */
+  async function noticeDialog(users, classes) {
+    const title = el('input', { type: 'text', placeholder: '例如：明天聽力考試改到電腦教室' });
+    const body = el('textarea', { rows: 3, placeholder: '（選填）想多說的話寫在這裡' });
+    const cls = el('select', {}, el('option', { value: '' }, '（不指定班級）'),
+      classes.map((c) => el('option', { value: c.name }, `${c.name}（${c.n} 人）`)));
+    const box = el('div', {
+      style: {
+        maxHeight: '200px', overflow: 'auto', border: '1px solid var(--line)',
+        borderRadius: '4px', padding: '.5rem',
+      },
+    }, users.map((u) => el('label', { style: { display: 'block', padding: '.15rem 0' } },
+      el('input', { type: 'checkbox', value: u.id, class: 'check' }),
+      `${u.name}（${u.username}）`,
+      u.class_group ? el('span', { class: 'muted small' }, ` · ${u.class_group}`) : null)));
+
+    const count = el('span', { class: 'small muted' });
+    const recount = () => {
+      const n = box.querySelectorAll('input:checked').length;
+      const c = classes.find((x) => x.name === cls.value);
+      count.textContent = cls.value
+        ? `會送給 ${cls.value} 全班${c ? ` ${c.n} 人` : ''}${n ? `，外加另外勾選的 ${n} 人` : ''}`
+        : (n ? `會送給勾選的 ${n} 位學生` : '還沒選收件者');
+    };
+    box.addEventListener('change', recount);
+    cls.addEventListener('change', recount);
+    recount();
+
+    const ok = await UI.modal({
+      title: '發通知給學生',
+      width: '620px',
+      body: el('div', {},
+        el('p', { class: 'small muted' },
+          '會出現在學生右上角的鈴鐺。如果有設定 Email 通知，也會一起寄信給有填信箱的學生。'),
+        el('label', { class: 'field' }, el('span', {}, '標題（必填）'), title),
+        el('label', { class: 'field' }, el('span', {}, '內容'), body),
+        el('label', { class: 'field' }, el('span', {}, '整個班級'), cls),
+        el('label', { class: 'field' }, el('span', {}, '或個別挑選'), box),
+        el('p', { style: { marginTop: '.5rem' } }, count)),
+      actions: [
+        { label: '取消', value: false },
+        {
+          label: '送出',
+          class: 'primary',
+          value: true,
+          onClick: () => {
+            if (!title.value.trim()) { toast('請填標題', 'warn'); return false; }
+            if (!cls.value && !box.querySelector('input:checked')) { toast('請選收件者', 'warn'); return false; }
+            return true;
+          },
+        },
+      ],
+    });
+    if (!ok) return;
+
+    try {
+      const r = await API.post('/notifications/send', {
+        title: title.value.trim(),
+        body: body.value.trim() || null,
+        classGroup: cls.value || null,
+        userIds: [...box.querySelectorAll('input:checked')].map((i) => Number(i.value)),
+      });
+      toast(`通知已送給 ${r.sent} 位學生`, 'ok');
+    } catch (e) { UI.alert(e.message); }
+  }
+
   // ── 成績總覽 ────────────────────────────────────────────
   async function results(mount) {
     const [{ results: list }, stats] = await Promise.all([API.get('/results'), API.get('/results/stats/overview')]);
@@ -1263,13 +1338,15 @@ const Admin = (() => {
 
   // ── 系統設定 ────────────────────────────────────────────
   async function settings(mount) {
-    const [s, ts] = await Promise.all([
+    const [s, ts, sm] = await Promise.all([
       API.get('/ai/settings'),
       API.get('/manage/turnstile').catch(() => ({ turnstile: null })),
+      API.get('/notifications/smtp').catch(() => ({ smtp: null })),
     ]);
     const a = s.ai;
     const f = {};
     const t = {};
+    const m = {};
 
     const sel = (key, opts, val) => (f[key] = el('select', {}, opts.map(([v, t]) => el('option', { value: v, selected: val === v }, t))));
     const txt = (key, val, ph = '') => (f[key] = el('input', { type: 'text', value: val || '', placeholder: ph }));
@@ -1431,6 +1508,9 @@ const Admin = (() => {
             '目前這個後台的網址是 ', el('code', {}, location.host),
             ' —— Cloudflare Widget 的網域清單裡要有這一個（不含連接埠）。'))),
 
+      // ── Email 通知（選用）─────────────────────────────
+      sm.smtp && smtpCard(sm.smtp),
+
       el('div', { class: 'card' },
         el('h3', {}, '批改規則'),
         el('label', { class: 'field' }, el('span', {},
@@ -1480,6 +1560,134 @@ const Admin = (() => {
         });
         toast('設定已儲存', 'ok');
       } catch (e) { UI.alert(e.message); }
+    }
+
+    // ── Email 通知（選用）──────────────────────────────────
+    // 站內通知不需要任何設定就會送到；這一區只是「順便寄一封 Email」。
+    // 沒填、填錯、或郵件主機掛掉，都不會影響站內通知或指派本身。
+    function smtpCard(c) {
+      const canEdit = API.user?.role === 'admin';
+      const chk = (key, on) => (m[key] = el('input', { type: 'checkbox', checked: !!on, class: 'check', disabled: !canEdit }));
+      const inp = (key, val, ph = '', type = 'text') =>
+        (m[key] = el('input', { type, value: val == null ? '' : String(val), placeholder: ph, disabled: !canEdit }));
+
+      // 注意：這裡不能在 render 當下讀 m.host.value —— 輸入框還沒建出來。
+      // 所以 host 是 null 時就代表「只改連接埠，主機留著不動」。
+      const preset = (label, cfg, hint) => el('button', {
+        class: 'btn sm',
+        title: hint,
+        onclick: () => {
+          if (cfg.host != null) m.host.value = cfg.host;
+          m.port.value = cfg.port;
+          m.secure.checked = !!cfg.secure;
+          toast(hint || `已填入 ${label} 的主機設定`, 'ok');
+        },
+      }, label);
+
+      return el('div', { class: 'card' },
+        el('h3', {}, 'Email 通知（選用）',
+          c.active
+            ? el('span', { class: 'pill ok', style: { marginLeft: '.6rem' } }, '運作中')
+            : el('span', { class: 'pill', style: { marginLeft: '.6rem' } }, '未啟用')),
+        el('p', { class: 'small muted' },
+          '站內通知（右上角鈴鐺）不需要任何設定就會送到。這一區設定好之後，指派考試與批改完成時',
+          el('b', {}, '再多寄一封 Email'), '給有填信箱的學生。',
+          '沒設定、設定錯誤、或郵件主機當掉，都只是不寄信而已，站內通知照常。'),
+
+        el('label', { class: 'field' }, el('span', {},
+          chk('enabled', c.enabled), '啟用 Email 通知')),
+
+        el('div', { class: 'toolbar', style: { marginBottom: '.2rem' } },
+          el('span', { class: 'small muted' }, '常用設定：'),
+          preset('Gmail', { host: 'smtp.gmail.com', port: 587, secure: false },
+            'Gmail 要用「應用程式密碼」，不是你平常登入的密碼'),
+          preset('Microsoft 365', { host: 'smtp.office365.com', port: 587, secure: false },
+            '帳號填完整信箱，密碼可能要先在 Microsoft 帳戶開應用程式密碼'),
+          preset('改用 SSL 465', { host: null, port: 465, secure: true },
+            '主機不動，改成一開始就加密的 465 連接埠')),
+
+        el('div', { class: 'row' },
+          el('label', { class: 'field' }, el('span', {}, 'SMTP 主機'),
+            inp('host', c.host, 'smtp.gmail.com')),
+          el('label', { class: 'field' }, el('span', {}, '連接埠'),
+            inp('port', c.port || 587, '587', 'number')),
+          el('label', { class: 'field' }, el('span', {}, '帳號（留空 = 不需登入）'),
+            inp('user', c.user, 'you@example.com')),
+          el('label', { class: 'field' }, el('span', {}, '密碼 / 應用程式密碼'),
+            inp('pass', c.pass, c.hasPass ? '（已設定，留著不動就不會變更）' : '', 'password'))),
+
+        el('label', { class: 'field' }, el('span', {},
+          chk('secure', c.secure), '連線一開始就加密（連接埠 465 用這個）'),
+          el('span', { class: 'small muted' },
+            '587 請不要勾 —— 那是先連明文再升級成 TLS（STARTTLS），系統會自動處理。')),
+
+        el('div', { class: 'row' },
+          el('label', { class: 'field' }, el('span', {}, '寄件人信箱'),
+            inp('from', c.from, 'noreply@your-school.edu')),
+          el('label', { class: 'field' }, el('span', {}, '寄件人顯示名稱'),
+            inp('fromName', c.fromName || 'IELTS 模擬考', 'IELTS 模擬考'))),
+
+        canEdit ? el('div', { class: 'toolbar' },
+          el('button', {
+            class: 'btn primary',
+            onclick: async (e) => {
+              e.target.disabled = true;
+              try {
+                const r = await API.put('/notifications/smtp', {
+                  smtp: {
+                    enabled: m.enabled.checked,
+                    secure: m.secure.checked,
+                    host: m.host.value.trim(),
+                    port: Number(m.port.value) || 587,
+                    user: m.user.value.trim(),
+                    pass: m.pass.value,
+                    from: m.from.value.trim(),
+                    fromName: m.fromName.value.trim(),
+                  },
+                });
+                toast(r.smtp.active ? 'Email 通知已啟用' : '設定已儲存（目前未啟用）', 'ok');
+                settings(mount);
+              } catch (er) { UI.alert(er.message); e.target.disabled = false; }
+            },
+          }, '儲存 Email 設定'),
+          el('button', {
+            class: 'btn',
+            onclick: async (e) => {
+              const box = el('input', { type: 'email', value: API.user?.email || '', placeholder: 'you@example.com' });
+              const ok = await UI.modal({
+                title: '寄一封測試信',
+                body: el('div', {},
+                  el('p', { class: 'small muted' }, '會用上面「已儲存」的設定寄信 —— 如果剛改過欄位，請先按儲存。'),
+                  el('label', { class: 'field' }, el('span', {}, '收件信箱'), box)),
+                actions: [
+                  { label: '取消', value: false },
+                  {
+                    label: '寄出',
+                    class: 'primary',
+                    value: true,
+                    // 空白就不要默默關掉視窗 —— 使用者會以為信寄出去了
+                    onClick: () => { if (!box.value.trim()) { toast('請填收件信箱', 'warn'); return false; } return true; },
+                  },
+                ],
+              });
+              if (!ok) return;
+              e.target.disabled = true; e.target.textContent = '寄送中…';
+              try {
+                const r = await API.post('/notifications/smtp/test', { to: box.value.trim() });
+                UI.alert(`✓ ${r.message}\n\n收不到的話記得看一下垃圾郵件匣。`);
+              } catch (er) { UI.alert(`✗ ${er.message}`); }
+              e.target.disabled = false; e.target.textContent = '寄測試信';
+            },
+          }, '寄測試信'))
+          : el('p', { class: 'small muted' }, '只有管理員能修改寄信設定。'),
+
+        el('p', { class: 'small muted' },
+          el('b', {}, '注意：'), '密碼會存在你自己的伺服器資料庫，載入這一頁時只會回傳遮罩後的 ',
+          el('code', {}, '••••••'), '，不會把真的密碼送到瀏覽器。要換密碼就直接覆蓋掉那個欄位；',
+          '不想動就整欄留著不要碰。'),
+        el('p', { class: 'small muted' },
+          '寄不出去最常見的三個原因：① Gmail／Microsoft 要用應用程式密碼，不是登入密碼；',
+          '② 學校防火牆擋掉對外的 25／465／587 連接埠；③ 寄件人信箱和登入帳號不同網域，被對方伺服器當成偽造退回。'));
     }
   }
 
@@ -1734,7 +1942,9 @@ const Admin = (() => {
             num('keepAbandonedDays', '未完成考試保留（天）', '開始了卻沒交卷的場次')),
           el('div', { class: 'row' },
             num('keepAiLogsDays', 'AI 呼叫紀錄保留（天）', ''),
-            num('deleteUnusedMediaDays', '未使用媒體檔保留（天）', '沒有任何試卷引用的檔案'),
+            num('keepReadNotificationsDays', '已讀通知保留（天）', '未讀的通知一律保留'),
+            num('deleteUnusedMediaDays', '未使用媒體檔保留（天）', '沒有任何試卷引用的檔案')),
+          el('div', { class: 'row' },
             num('runAtHour', '每天執行時間（點）', '0–23，伺服器時間')),
           el('div', { class: 'toolbar', style: { marginTop: '.8rem' } },
             el('button', {
@@ -2174,7 +2384,8 @@ const Admin = (() => {
       el('div', { class: 'toolbar' },
         el('h2', { style: { margin: 0 } }, '題庫'),
         counter,
-        el('span', { style: { flex: 1 } }),
+        el('span', { class: 'spacer' }),
+        el('button', { class: 'btn', onclick: () => autoAssemble(load) }, '🎲 自動組卷'),
         el('a', { class: 'btn', href: '#/admin/import' }, '＋ 匯入題目'),
         el('a', { class: 'btn primary', href: '#/admin/generate' }, '✨ AI 出題')),
       el('p', { class: 'small muted' },
@@ -2182,6 +2393,151 @@ const Admin = (() => {
       el('div', { class: 'card' }, bar, box));
 
     load();
+  }
+
+  /* ── 自動組卷 ────────────────────────────────────────
+     依目標題數從題庫抽題。先讓老師看到「題庫夠不夠」，
+     再預覽組出來的結果，確認了才存成試卷。 */
+  async function autoAssemble(reload) {
+    let cov;
+    try { cov = await API.get('/ai/bank/coverage'); }
+    catch (e) { return UI.alert(e.message); }
+
+    if (!cov.total) {
+      return UI.alert(el('div', {},
+        el('p', {}, '題庫是空的，沒有東西可以組。'),
+        el('p', { class: 'small muted' }, '先到「AI 出題」產生題組並按「存進題庫」，或在「匯入題目」把整份試卷的題組收進來。')),
+      '題庫是空的');
+    }
+
+    const f = {};
+    const MODS = [
+      ['listening', '聽力', 40],
+      ['reading', '閱讀', 40],
+      ['writing', '寫作', 2],
+      ['speaking', '口說', 1],
+    ];
+
+    // 題庫現況：每一科有多少題、夠不夠
+    const covRows = MODS.map(([m, label, want]) => {
+      const c = cov.coverage[m];
+      const have = c?.questions || 0;
+      const enough = have >= want;
+      return el('div', { class: 'inline', style: { padding: '.25rem 0' } },
+        el('b', { style: { minWidth: '3.5rem', display: 'inline-block' } }, label),
+        el('span', { class: 'small' }, `題庫有 ${have} 題`),
+        el('span', { class: `pill ${enough ? 'ok' : 'warn'}` },
+          enough ? '足夠' : have ? `還差 ${want - have} 題` : '沒有題目'),
+        c ? el('span', { class: 'small muted' },
+          Object.entries(c.byType).map(([t, n]) => `${TYPE_SHORT[t] || t} ${n}`).join('、')) : null);
+    });
+
+    const diffs = new Set();
+    Object.values(cov.coverage).forEach((c) =>
+      Object.keys(c.byDifficulty || {}).forEach((d) => diffs.add(d)));
+
+    const body = el('div', {},
+      el('div', { class: 'card', style: { background: '#fafafa', marginBottom: '.8rem' } },
+        el('h4', {}, '題庫現況'), covRows),
+      el('label', { class: 'field' }, el('span', {}, '試卷名稱'),
+        (f.title = el('input', { type: 'text', value: `自動組卷 ${new Date().toISOString().slice(0, 10)}` }))),
+      el('div', { class: 'row' },
+        el('label', { class: 'field' }, el('span', {}, '類型'),
+          (f.testType = el('select', {},
+            el('option', { value: 'academic' }, 'Academic'),
+            el('option', { value: 'general' }, 'General Training')))),
+        el('label', { class: 'field' }, el('span', {}, '難度（湊不夠時會自動放寬）'),
+          (f.difficulty = el('select', {},
+            el('option', { value: '' }, '不限'),
+            [...diffs].sort().map((d) => el('option', { value: d }, d)))))),
+      el('div', { class: 'row' }, MODS.map(([m, label, want]) =>
+        el('label', { class: 'field' }, el('span', {}, `${label}題數`),
+          (f[m] = el('input', {
+            type: 'number', min: 0, max: 100,
+            value: (cov.coverage[m]?.questions || 0) > 0 ? want : 0,
+          }))))),
+      el('p', { class: 'small muted' }, '填 0 = 這一科不放。組出來的題號會自動重新編成連續的 1、2、3…'));
+
+    const go = await UI.modal({
+      title: '自動組卷',
+      width: '720px',
+      body,
+      actions: [{ label: '產生預覽', value: true, class: 'primary' }, { label: '取消', value: false }],
+    });
+    if (!go) return;
+
+    const payload = {
+      title: f.title.value.trim(),
+      testType: f.testType.value,
+      difficulty: f.difficulty.value,
+      targets: Object.fromEntries(MODS.map(([m]) => [m, Number(f[m].value) || 0])),
+    };
+
+    let r;
+    try { r = await API.post('/ai/bank/auto', payload); }
+    catch (e) { return UI.alert(e.details?.report ? shortfallText(e.details.report) : e.message, '組不出來'); }
+
+    const rep = r.report || {};
+    const save = await UI.modal({
+      title: r.ok ? '預覽：組好了' : '預覽：有格式問題',
+      width: '720px',
+      body: el('div', {},
+        el('p', {}, el('b', {}, r.paper.title)),
+        el('p', { class: 'small' },
+          `聽力 ${r.stats.listening} 題　閱讀 ${r.stats.reading} 題　`
+          + `寫作 ${r.stats.writingTasks} 篇　口說 ${r.stats.speakingParts} 部分`),
+        Object.keys(rep.picked || {}).length
+          ? el('div', {}, Object.entries(rep.picked).map(([m, p]) =>
+              el('div', { class: 'small', style: { padding: '.2rem 0' } },
+                el('b', {}, UI.MODULE_LABEL[m]?.split(' ')[0] || m),
+                `　抽了 ${p.groups} 個題組、${p.questions} 題`,
+                p.typeMix?.length
+                  ? el('span', { class: 'muted' },
+                      `（${p.typeMix.map((t) => `${TYPE_SHORT[t.type] || t.type}×${t.groups}`).join('、')}）`)
+                  : null)))
+          : null,
+        Object.keys(rep.shortfall || {}).length
+          ? el('div', { class: 'small', style: { color: 'var(--warn)', marginTop: '.5rem' } },
+              el('b', {}, '題庫不夠，這幾科沒湊滿：'), shortfallText(rep))
+          : null,
+        rep.relaxed?.length
+          ? el('p', { class: 'small muted' },
+              `${rep.relaxed.map((m) => UI.MODULE_LABEL[m]?.split(' ')[0]).join('、')} 的指定難度題目不夠，已放寬成不限難度。`)
+          : null,
+        r.errors?.length
+          ? el('ul', { class: 'small' }, r.errors.slice(0, 8).map((x) => el('li', { style: { color: 'var(--err)' } }, x)))
+          : null,
+        r.warnings?.length
+          ? el('details', {}, el('summary', { class: 'small muted' }, `提醒 ${r.warnings.length} 則`),
+              el('ul', { class: 'small muted' }, r.warnings.map((x) => el('li', {}, x))))
+          : null,
+        el('p', { class: 'small muted', style: { marginTop: '.6rem' } },
+          '存成草稿試卷後，記得到「題目」檢查，並到「素材」補上聽力音檔。')),
+      actions: [
+        ...(r.ok ? [{ label: '存成試卷', value: 'save', class: 'primary' }] : []),
+        { label: '換一組再試', value: 'again' },
+        { label: '關閉', value: false },
+      ],
+    });
+
+    if (save === 'again') return autoAssemble(reload);
+    if (save !== 'save') return;
+
+    try {
+      const saved = await API.post('/ai/bank/auto', { ...payload, save: true });
+      toast('已存成草稿試卷', 'ok');
+      await warnIfMissingMedia(saved.warnings);
+      location.hash = '#/admin/tests';
+      if (reload) reload();
+    } catch (e) {
+      UI.alert(e.details?.errors?.join('\n') || e.message);
+    }
+  }
+
+  function shortfallText(rep) {
+    return Object.entries(rep.shortfall || {})
+      .map(([m, s]) => `${UI.MODULE_LABEL[m]?.split(' ')[0] || m}：只湊到 ${s.got}/${s.want} 題，還差 ${s.missing}`)
+      .join('；');
   }
 
   /** 預覽一個題組的完整內容 */

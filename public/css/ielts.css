@@ -296,3 +296,19 @@ table.data tr.warn-row td{background:#fffaf0}
   .filterbar > select{flex:1 1 45%; min-width:0}
   .filterbar > input[type=search]{flex:1 1 100%}
 }
+
+/* 通知鈴鐺 */
+.btn.bell{position:relative; font-size:1rem; padding:.35rem .5rem}
+.btn.bell.has-unread{border-color:var(--brand)}
+.bell-badge{
+  position:absolute; top:-5px; right:-5px; min-width:17px; height:17px; padding:0 4px;
+  border-radius:99px; background:var(--err); color:#fff;
+  font-size:.68rem; line-height:17px; font-weight:700; text-align:center;
+}
+.notif{padding:.6rem .1rem; border-bottom:1px solid var(--line-2); cursor:pointer}
+.notif:last-child{border-bottom:none}
+.notif:hover{background:#fafafa}
+.notif.unread{border-left:3px solid var(--brand); padding-left:.55rem; background:#fdf7f8}
+.notif-title{font-weight:600; line-height:1.5}
+.notif-body{font-size:.88rem; color:var(--ink-2); line-height:1.6; margin-top:.15rem}
+.notif-time{font-size:.76rem; color:var(--muted); margin-top:.25rem}

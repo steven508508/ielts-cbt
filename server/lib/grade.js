@@ -300,6 +300,26 @@ async function gradeAttempt(attemptId, { speakingMode = 'ai', writingMode = 'ai'
   }
 
   out.summary = await recomputeAttempt(attemptId);
+
+  // 批改完成就通知學生。通知失敗不能影響成績。
+  try {
+    if (out.summary?.status === 'graded') {
+      const a = await db.one(
+        'SELECT a.user_id, t.title FROM attempts a JOIN tests t ON t.id = a.test_id WHERE a.id = ?', [attemptId]);
+      if (a?.user_id) {
+        const notify = require('./notify');
+        await notify.push([a.user_id], {
+          type: 'graded',
+          title: `成績出來了：${a.title || '你的考試'}`,
+          body: out.summary.overall != null ? `總分 Band ${out.summary.overall}` : null,
+          link: `#/result/${attemptId}`,
+        });
+      }
+    }
+  } catch (e) {
+    console.warn('[grade] 通知失敗：', e.message);
+  }
+
   return out;
 }
 

@@ -249,3 +249,17 @@ CREATE TABLE IF NOT EXISTS ai_jobs (
   INDEX idx_aijob_user (created_by, id),
   INDEX idx_aijob_status (status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ── v2.9：站內通知 ──────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS notifications (
+  id         INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  user_id    INT UNSIGNED NOT NULL,
+  type       VARCHAR(40)  NOT NULL,
+  title      VARCHAR(200) NOT NULL,
+  body       VARCHAR(500) NULL,
+  link       VARCHAR(200) NULL,
+  read_at    DATETIME NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_notif_user (user_id, read_at, id),
+  CONSTRAINT fk_notif_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

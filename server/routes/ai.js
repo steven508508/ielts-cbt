@@ -5,6 +5,7 @@ const { requireAuth, requireStaff, requireRole } = require('../middleware/auth')
 const ai = require('../lib/ai');
 const aiTasks = require('../lib/aiTasks');
 const jobs = require('../lib/jobs');
+const assemble = require('../lib/assemble');
 const { rateLimit } = require('../middleware/rateLimit');
 const bands = require('../lib/bands');
 const { validatePaper, normalizePaper } = require('../lib/paper');
@@ -254,6 +255,67 @@ router.get('/bank', requireStaff, async (req, res) => {
   );
   const total = await db.one('SELECT COUNT(*) AS n FROM question_bank');
   res.json({ items, stats, total: Number(total?.n || 0) });
+});
+
+/* ── 自動組卷 ─────────────────────────────────────────── */
+
+/** 題庫目前有多少料，夠不夠組一份完整試卷 */
+router.get('/bank/coverage', requireStaff, async (req, res) => {
+  const rows = await db.query('SELECT id, module, type, difficulty, payload FROM question_bank LIMIT 3000');
+  const bank = rows.map((r) => {
+    let payload = {};
+    try { payload = JSON.parse(r.payload); } catch { payload = {}; }
+    return { ...r, payload };
+  });
+  res.json({ coverage: assemble.coverage(bank), total: bank.length, targets: assemble.DEFAULT_TARGETS });
+});
+
+/**
+ * 自動組卷。預設只做預覽（不存檔），確認後再帶 save=true 存成試卷。
+ */
+router.post('/bank/auto', requireStaff, async (req, res) => {
+  const rows = await db.query('SELECT id, module, type, topic, difficulty, payload FROM question_bank LIMIT 3000');
+  if (!rows.length) return res.status(400).json({ error: '題庫是空的，請先用「AI 出題」或「匯入題目」放一些題組進來' });
+
+  const bank = rows.map((r) => {
+    let payload = {};
+    try { payload = JSON.parse(r.payload); } catch { payload = {}; }
+    return { ...r, payload };
+  });
+
+  const targets = {};
+  for (const m of ['listening', 'reading', 'writing', 'speaking']) {
+    const v = Number(req.body?.targets?.[m]);
+    if (Number.isFinite(v) && v > 0) targets[m] = Math.min(100, Math.round(v));
+  }
+  if (!Object.keys(targets).length) Object.assign(targets, assemble.DEFAULT_TARGETS);
+
+  const out = assemble.assemble(bank, {
+    title: String(req.body?.title || '').trim() || `自動組卷 ${new Date().toISOString().slice(0, 10)}`,
+    testType: req.body?.testType === 'general' ? 'general' : 'academic',
+    targets,
+    difficulty: String(req.body?.difficulty || ''),
+    types: Array.isArray(req.body?.types) && req.body.types.length ? req.body.types : null,
+    seed: req.body?.seed != null ? Number(req.body.seed) : null,
+  });
+
+  if (!out.paper) return res.status(400).json({ error: out.error || '組不出試卷', report: out.report });
+
+  if (req.body?.save) {
+    if (!out.ok) {
+      return res.status(400).json({ error: '組出來的試卷格式有誤，請調整條件再試', errors: out.errors, report: out.report });
+    }
+    const id = await db.insert(
+      'INSERT INTO tests (title, test_type, description, content, published, created_by) VALUES (?,?,?,?,0,?)',
+      [out.paper.title, out.paper.testType, out.paper.description || null, JSON.stringify(out.paper), req.user.id]
+    );
+    return res.json({ ok: true, saved: true, testId: id, stats: out.stats, warnings: out.warnings, report: out.report });
+  }
+
+  res.json({
+    ok: out.ok, errors: out.errors, warnings: out.warnings,
+    stats: out.stats, report: out.report, paper: out.paper,
+  });
 });
 
 router.get('/bank/:id', requireStaff, async (req, res) => {

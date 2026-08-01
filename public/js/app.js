@@ -2,7 +2,7 @@
    路由與主要頁面
    ═══════════════════════════════════════════════════════════ */
 (() => {
-  const { el, band, fmtDate, toast } = UI;
+  const { el, $$, band, fmtDate, toast } = UI;
   const root = () => document.getElementById('app');
 
   // ── Cloudflare Turnstile ────────────────────────────────
@@ -196,6 +196,7 @@
 
   // ── 外框 ────────────────────────────────────────────────
   function shell(active) {
+    stopBell();
     document.body.classList.remove('exam-body');
     document.body.style.overflow = '';
     const staff = API.user?.role !== 'student';
@@ -213,6 +214,7 @@
         el('nav', { class: 'app-nav' }, links.map(([href, label]) =>
           el('a', { href, class: href === active ? 'active' : '' }, label))),
         el('div', { class: 'spacer' }),
+        bell(),
         el('span', { class: 'small muted who', title: API.user?.name || '' }, API.user?.name || ''),
         el('button', {
           class: 'btn sm ghost', title: '我的帳號', 'aria-label': '我的帳號',
@@ -663,6 +665,69 @@
               ? el('div', { class: 'small muted', style: { marginTop: '.2rem' } }, res.explanation) : null);
         })),
       actions: [{ label: '關閉', value: true }],
+    });
+  }
+
+  /* ── 通知鈴鐺 ────────────────────────────────────────
+     指派考試、批改完成、老師發訊息都會進來。
+     只輪詢一支很小的 /count，開啟清單時才拉完整內容。 */
+  let bellTimer = null;
+  function stopBell() { clearInterval(bellTimer); bellTimer = null; }
+
+  function bell() {
+    const badge = el('span', { class: 'bell-badge', style: { display: 'none' } });
+    const btn = el('button', {
+      class: 'btn sm ghost bell', title: '通知', 'aria-label': '通知',
+      onclick: () => openNotifications(refresh),
+    }, '🔔', badge);
+
+    const refresh = async () => {
+      try {
+        const { unread } = await API.get('/notifications/count');
+        badge.textContent = unread > 99 ? '99+' : String(unread);
+        badge.style.display = unread ? '' : 'none';
+        btn.classList.toggle('has-unread', unread > 0);
+      } catch { /* 沒連上就先不管 */ }
+    };
+
+    stopBell();
+    refresh();
+    bellTimer = setInterval(refresh, 60_000);
+    return btn;
+  }
+
+  async function openNotifications(after) {
+    let d;
+    try { d = await API.get('/notifications?limit=30'); }
+    catch (e) { return UI.alert(e.message); }
+
+    const rows = d.items.length
+      ? el('div', {}, d.items.map((n) => el('div', {
+          class: 'notif' + (n.read_at ? '' : ' unread'),
+          onclick: () => {
+            if (!n.link) return;
+            $$('.modal-back').forEach((b) => b.remove());
+            location.hash = n.link;
+          },
+        },
+          el('div', { class: 'notif-title' }, n.title),
+          n.body ? el('div', { class: 'notif-body' }, n.body) : null,
+          el('div', { class: 'notif-time' }, fmtDate(n.created_at)))))
+      : UI.emptyState('目前沒有通知', null, '指派考試、成績出來時會出現在這裡。');
+
+    await UI.modal({
+      title: d.unread ? `通知（${d.unread} 則未讀）` : '通知',
+      width: '520px',
+      body: rows,
+      actions: [
+        ...(d.unread ? [{ label: '全部標為已讀', value: 'read', class: 'primary' }] : []),
+        { label: '關閉', value: false },
+      ],
+    }).then(async (v) => {
+      if (v === 'read') {
+        await API.post('/notifications/read', {}).catch(() => {});
+        if (after) after();
+      }
     });
   }
 

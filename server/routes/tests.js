@@ -3,6 +3,7 @@ const express = require('express');
 const db = require('../db');
 const { requireAuth, requireStaff } = require('../middleware/auth');
 const { validatePaper, normalizePaper, countQuestions, QUESTION_TYPES } = require('../lib/paper');
+const notify = require('../lib/notify');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -186,6 +187,28 @@ router.post('/assignments', requireStaff, async (req, res) => {
     ));
   }
   await db.exec('UPDATE tests SET published = 1 WHERE id = ?', [testId]);
+
+  // 通知被指派到的學生。通知失敗不能讓指派本身失敗。
+  try {
+    const t = await db.one('SELECT title FROM tests WHERE id = ?', [testId]);
+    let targets = userIds.map(Number).filter(Boolean);
+    if (classGroup) {
+      const rows = await db.query(
+        "SELECT id FROM users WHERE class_group = ? AND role = 'student' AND active = 1", [classGroup]);
+      targets = targets.concat(rows.map((r) => r.id));
+    }
+    if (targets.length) {
+      await notify.push(targets, {
+        type: 'assignment',
+        title: `你有一份新的考試：${t?.title || ''}`,
+        body: openUntil ? `請在 ${String(openUntil).slice(0, 16).replace('T', ' ')} 之前完成。` : '可以隨時開始。',
+        link: '#/',
+      });
+    }
+  } catch (e) {
+    console.warn('[assign] 通知失敗：', e.message);
+  }
+
   res.json({ ids: made });
 });
 

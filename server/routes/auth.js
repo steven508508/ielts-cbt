@@ -35,7 +35,7 @@ router.post('/login', loginLimiter, async (req, res) => {
     token: sign(user),
     user: {
       id: user.id, username: user.username, name: user.name, role: user.role,
-      classGroup: user.class_group, candidateNo: user.candidate_no,
+      email: user.email, classGroup: user.class_group, candidateNo: user.candidate_no,
     },
   });
 });

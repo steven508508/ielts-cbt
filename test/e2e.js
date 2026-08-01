@@ -718,6 +718,197 @@ async function call(method, path, body, token) {
   const bankGone = await call('GET', `/ai/bank?q=${encodeURIComponent(stamp)}`, null, tea);
   ok(bankGone.data.items.length === 0, '刪掉的題組真的不見了');
 
+  // ── 自動組卷 ────────────────────────────────────────────
+  console.log('\n自動組卷');
+  const autoIds = [];
+  const autoItem = async (module, type, n, difficulty) => {
+    const r = await call('POST', '/ai/bank', {
+      module, type, topic: `自動組卷 ${stamp}`, difficulty,
+      payload: {
+        group: {
+          type,
+          instructions: 'Answer the questions below.',
+          wordLimit: type === 'gap_fill' ? 2 : null,
+          questions: Array.from({ length: n }, (_, i) => ({
+            number: i + 1,
+            prompt: `Auto question ${i + 1}`,
+            answers: type === 'tfng' ? ['TRUE'] : ['answer'],
+          })),
+        },
+        passage: module === 'reading' ? '<p>An auto-assembly passage.</p>' : null,
+        transcript: module === 'listening' ? 'Auto transcript.' : null,
+      },
+    }, tea);
+    if (r.data.id) autoIds.push(r.data.id);
+    return r;
+  };
+  for (let i = 0; i < 5; i += 1) await autoItem('reading', 'tfng', 5, 'band 6-7');
+  for (let i = 0; i < 4; i += 1) await autoItem('reading', 'short_answer', 5, 'band 6-7');
+  for (let i = 0; i < 4; i += 1) await autoItem('listening', 'gap_fill', 5, 'band 5-6');
+  ok(autoIds.length === 13, `建立 ${autoIds.length} 個題組當素材`);
+
+  const cov = await call('GET', '/ai/bank/coverage', null, tea);
+  ok(cov.status === 200 && cov.data.coverage.reading?.questions >= 45,
+    `題庫盤點算得出閱讀有幾題（${cov.data.coverage?.reading?.questions}）`);
+  ok(cov.data.coverage.reading?.byType?.tfng >= 25, '盤點會分題型統計');
+  ok(cov.data.coverage.listening?.byDifficulty?.['band 5-6'] >= 20, '盤點會分難度統計');
+  const covStu = await call('GET', '/ai/bank/coverage', null, stu);
+  ok(covStu.status === 403, '學生看不到題庫盤點');
+  // 這一條擋的是路由順序：/bank/:id 若排在前面，coverage 會被當成 id
+  ok(cov.data.coverage !== undefined, 'coverage 沒有被 /bank/:id 吃掉');
+
+  const auto = await call('POST', '/ai/bank/auto', {
+    title: `自動組卷 ${stamp}`, targets: { reading: 40, listening: 20 },
+  }, tea);
+  ok(auto.status === 200 && auto.data.ok === true, '可以自動組出一份合格的試卷');
+  ok(auto.data.stats.reading === 40, `閱讀剛好抽到 40 題（實際 ${auto.data.stats?.reading}）`);
+  ok(auto.data.stats.listening === 20, `聽力剛好抽到 20 題（實際 ${auto.data.stats?.listening}）`);
+  ok(!auto.data.testId, '預設只預覽，不會直接存檔');
+  ok((auto.data.report.picked.reading?.typeMix || []).length >= 2, '同一科會混超過一種題型');
+
+  const rMod = auto.data.paper.modules.find((m) => m.module === 'reading');
+  ok(rMod.sections.length === 3, '閱讀照官方切成 3 篇');
+  ok(auto.data.paper.modules.find((m) => m.module === 'listening').sections.length === 4,
+    '聽力照官方切成 4 節');
+  ok(rMod.sections.every((s) => !!s.passage), '每一篇都有文章，學生不會開天窗');
+  const rNums = rMod.sections.flatMap((s) => s.groups.flatMap((g) => g.questions.map((q) => q.number)));
+  ok(new Set(rNums).size === rNums.length, '題號沒有重複');
+  ok(rNums[0] === 1 && rNums[rNums.length - 1] === rNums.length, '題號從 1 連續編到底');
+
+  const autoShort = await call('POST', '/ai/bank/auto', {
+    title: `缺口測試 ${stamp}`, targets: { reading: 40, writing: 2 },
+  }, tea);
+  ok(autoShort.data.report.shortfall?.writing?.missing === 2,
+    '湊不到的科目會老實回報還差幾題，而不是硬塞');
+
+  const autoSeed1 = await call('POST', '/ai/bank/auto', { targets: { reading: 20 }, seed: 7 }, tea);
+  const autoSeed2 = await call('POST', '/ai/bank/auto', { targets: { reading: 20 }, seed: 7 }, tea);
+  ok(JSON.stringify(autoSeed1.data.report.usedIds) === JSON.stringify(autoSeed2.data.report.usedIds),
+    '同一個 seed 組出來的結果一樣（方便重現）');
+
+  const autoType = await call('POST', '/ai/bank/auto', {
+    targets: { reading: 20 }, types: ['short_answer'],
+  }, tea);
+  ok(autoType.data.paper.modules[0].sections.flatMap((s) => s.groups).every((g) => g.type === 'short_answer'),
+    '指定題型時只會抽那一種');
+
+  const autoSave = await call('POST', '/ai/bank/auto', {
+    title: `自動存檔 ${stamp}`, targets: { reading: 40 }, save: true,
+  }, tea);
+  ok(autoSave.data.testId > 0, '可以直接存成試卷');
+  const autoTest = await call('GET', `/tests/${autoSave.data.testId}`, null, tea);
+  ok(autoTest.status === 200 && autoTest.data.test.published === false,
+    '自動組出來的試卷預設沒有發布（要老師先校對）');
+  await call('DELETE', `/tests/${autoSave.data.testId}`, null, adm);
+
+  const autoStu = await call('POST', '/ai/bank/auto', { targets: { reading: 40 } }, stu);
+  ok(autoStu.status === 403, '學生不能自動組卷');
+  if (!cov.data.coverage.speaking) {
+    const autoNone = await call('POST', '/ai/bank/auto', { targets: { speaking: 3 } }, tea);
+    ok(autoNone.status === 400 && /題庫/.test(autoNone.data.error || ''),
+      '題庫沒有那一科的素材時給得出中文錯誤，不會組出空卷');
+  } else {
+    ok(true, '題庫本來就有口說題組，略過「素材不足」這一項');
+  }
+
+  await call('POST', '/ai/bank/bulk-delete', { ids: autoIds }, tea);
+
+  // ── 通知 ────────────────────────────────────────────────
+  console.log('\n通知');
+  const meStu = await call('GET', '/auth/me', null, stu);
+  const stuUid = meStu.data.user.id;
+
+  await call('POST', '/notifications/read', {}, stu);          // 先清乾淨
+  const n0 = await call('GET', '/notifications/count', null, stu);
+  ok(n0.status === 200 && n0.data.unread === 0, '一開始沒有未讀');
+
+  const nNoTitle = await call('POST', '/notifications/send', { userIds: [stuUid] }, tea);
+  ok(nNoTitle.status === 400, '沒有標題不能發通知');
+  const nNoTarget = await call('POST', '/notifications/send', { title: '嗨' }, tea);
+  ok(nNoTarget.status === 400, '沒有收件者不能發通知');
+  const nStu = await call('POST', '/notifications/send',
+    { title: '學生不該能發', userIds: [stuUid] }, stu);
+  ok(nStu.status === 403, '學生不能發通知給別人');
+
+  const nSend = await call('POST', '/notifications/send',
+    { title: `明天要考試 ${stamp}`, body: '請提早十分鐘到教室。', userIds: [stuUid] }, tea);
+  ok(nSend.status === 200 && nSend.data.sent === 1, '老師可以發通知給指定學生');
+
+  const nList = await call('GET', '/notifications', null, stu);
+  ok(nList.data.unread === 1 && nList.data.items[0].title.includes(stamp), '學生收得到，而且是未讀');
+  ok(nList.data.items[0].body === '請提早十分鐘到教室。', '內文有一起送到');
+
+  const nTea = await call('GET', '/notifications', null, tea);
+  ok(!nTea.data.items.some((i) => i.title.includes(stamp)), '通知不會外洩給沒收到的人');
+
+  const nOne = await call('POST', '/notifications/read', { ids: [nList.data.items[0].id] }, stu);
+  ok(nOne.data.marked === 1, '可以只把指定的一則標成已讀');
+  ok((await call('GET', '/notifications/count', null, stu)).data.unread === 0, '未讀數跟著歸零');
+
+  const nOther = await call('POST', '/notifications/read', { ids: [nList.data.items[0].id] }, tea);
+  ok(nOther.data.marked === 0, '不能把別人的通知標成已讀');
+
+  // 指派考試時要自動通知
+  const nTest = await call('POST', '/tests', {
+    paper: normalizePaper({
+      title: `通知用試卷 ${stamp}`, testType: 'academic',
+      modules: [{ module: 'reading', sections: [{ title: 'Passage 1', passage: 'Text.', groups: [bankGroup(3, 1)] }] }],
+    }),
+  }, tea);
+  const nAssign = await call('POST', '/tests/assignments', {
+    testId: nTest.data.id, userIds: [stuUid], openUntil: '2030-01-01T09:00',
+  }, tea);
+  ok(nAssign.data.ids?.length === 1, '建立一筆指派');
+  const nAfter = await call('GET', '/notifications', null, stu);
+  ok(nAfter.data.items[0]?.type === 'assignment', '指派考試會自動通知學生');
+  ok(nAfter.data.items[0]?.title.includes(stamp), '通知裡看得到是哪一份試卷');
+  ok(nAfter.data.items[0]?.link === '#/', '通知點得進去');
+  await call('DELETE', `/tests/assignments/${nAssign.data.ids[0]}`, null, tea);
+  await call('DELETE', `/tests/${nTest.data.id}`, null, adm);
+  await call('POST', '/notifications/read', {}, stu);
+
+  const nLimit = await call('GET', '/notifications?limit=999', null, stu);
+  ok(nLimit.status === 200 && nLimit.data.items.length <= 100, 'limit 灌大數字不會拖垮查詢');
+
+  // ── Email 設定 ─────────────────────────────────────────
+  console.log('\nEmail 通知設定');
+  const smtpStu = await call('GET', '/notifications/smtp', null, stu);
+  ok(smtpStu.status === 403, '學生看不到寄信設定');
+  const smtpTea = await call('GET', '/notifications/smtp', null, tea);
+  ok(smtpTea.status === 200, '老師看得到寄信設定');
+  const smtpTeaPut = await call('PUT', '/notifications/smtp', { smtp: { host: 'x' } }, tea);
+  ok(smtpTeaPut.status === 403, '老師不能改寄信設定');
+
+  const smtpSave = await call('PUT', '/notifications/smtp', {
+    smtp: {
+      enabled: false, host: 'smtp.invalid.test', port: 587, secure: false,
+      user: 'u@invalid.test', pass: `pw-${stamp}`, from: 'noreply@invalid.test', fromName: '測試寄件人',
+    },
+  }, adm);
+  ok(smtpSave.status === 200 && smtpSave.data.smtp.pass === '••••••', '存完回傳的密碼是遮罩的');
+  ok(smtpSave.data.smtp.hasPass === true, '但會告訴你密碼已經設好了');
+  const smtpGet = await call('GET', '/notifications/smtp', null, adm);
+  ok(smtpGet.data.smtp.pass === '••••••' && !JSON.stringify(smtpGet.data).includes(stamp),
+    '重新讀取也絕對不會把密碼吐回瀏覽器');
+  ok(smtpGet.data.smtp.fromName === '測試寄件人', '中文寄件人名稱存得住');
+  ok(smtpGet.data.smtp.active === false, '沒有啟用時 active 是 false');
+
+  await call('PUT', '/notifications/smtp', { smtp: { host: 'smtp2.invalid.test', pass: '••••••' } }, adm);
+  const smtpKeep = await call('GET', '/notifications/smtp', null, adm);
+  ok(smtpKeep.data.smtp.hasPass === true && smtpKeep.data.smtp.host === 'smtp2.invalid.test',
+    '把遮罩送回來時不會把原本的密碼洗掉');
+
+  const smtpTest = await call('POST', '/notifications/smtp/test', { to: 'nobody@invalid.test' }, adm);
+  ok(smtpTest.status === 502 && /寄不出去/.test(smtpTest.data.error || ''),
+    '寄不出去時給的是看得懂的中文錯誤');
+  const smtpTestTea = await call('POST', '/notifications/smtp/test', { to: 'x@y.z' }, tea);
+  ok(smtpTestTea.status === 403, '老師不能亂寄測試信');
+
+  await call('PUT', '/notifications/smtp', {
+    smtp: { enabled: false, host: '', user: '', pass: '', from: '' },
+  }, adm);
+  ok((await call('GET', '/notifications/smtp', null, adm)).data.smtp.active === false, '測完把設定清乾淨');
+
   // ── 穩定性防線 ──────────────────────────────────────────
   console.log('\n穩定性');
   const hStart = Date.now();

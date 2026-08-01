@@ -357,3 +357,205 @@ test('速率限制的計數表不會無限成長', () => {
   for (let i = 0; i < 50; i += 1) mw({ ip: `10.0.0.${i}`, body: {} }, res, () => {});
   assert.ok(MAX_BUCKETS > 0 && MAX_BUCKETS <= 100_000, '有設上限');
 });
+
+// ── 自動組卷 ───────────────────────────────────────────────────
+const assemble = require('../server/lib/assemble');
+
+function bankItem(id, module, type, count, difficulty = 'band 6-7', start = 1) {
+  const questions = Array.from({ length: count }, (_, i) => ({
+    number: start + i, text: `Q${start + i}`, answers: type === 'tfng' ? ['TRUE'] : ['word'],
+  }));
+  return {
+    id, module, type, difficulty,
+    payload: {
+      group: { type, instructions: 'x', wordLimit: type === 'gap_fill' ? 2 : null, questions },
+      passage: module === 'reading' ? '<p>text</p>' : null,
+      transcript: module === 'listening' ? 'script' : null,
+    },
+  };
+}
+
+test('自動組卷會湊到目標題數', () => {
+  const bank = [];
+  for (let i = 0; i < 8; i += 1) bank.push(bankItem(i + 1, 'reading', i % 2 ? 'tfng' : 'short_answer', 5));
+  const out = assemble.assemble(bank, { targets: { reading: 20 } });
+  assert.equal(out.ok, true, (out.errors || []).join('; '));
+  assert.equal(out.stats.reading, 20, `應該剛好 20 題，實際 ${out.stats.reading}`);
+});
+
+test('自動組卷的題號連續且不重複', () => {
+  const bank = [];
+  // 每一組題號都從 1 開始，組卷時一定要重編
+  for (let i = 0; i < 6; i += 1) bank.push(bankItem(i + 1, 'reading', 'tfng', 4));
+  const out = assemble.assemble(bank, { targets: { reading: 24 } });
+  assert.equal(out.ok, true, (out.errors || []).join('; '));
+  const { flattenQuestions, normalizePaper: np } = require('../server/lib/paper');
+  const nums = flattenQuestions(np(out.paper), 'reading').map((q) => q.number);
+  assert.deepEqual(nums, Array.from({ length: 24 }, (_, i) => i + 1), '題號應該是 1..24');
+});
+
+test('自動組卷會分散題型，不會整份都同一種', () => {
+  const bank = [];
+  for (let i = 0; i < 4; i += 1) bank.push(bankItem(i + 1, 'reading', 'tfng', 5));
+  for (let i = 0; i < 4; i += 1) bank.push(bankItem(i + 10, 'reading', 'short_answer', 5));
+  const out = assemble.assemble(bank, { targets: { reading: 20 }, seed: 7 });
+  const kinds = new Set(out.report.picked.reading.typeMix.map((t) => t.type));
+  assert.ok(kinds.size >= 2, `應該混到至少兩種題型，實際 ${[...kinds].join(',')}`);
+});
+
+test('題庫不夠時老實回報還差幾題，不會硬湊', () => {
+  const bank = [bankItem(1, 'reading', 'tfng', 5), bankItem(2, 'reading', 'tfng', 5)];
+  const out = assemble.assemble(bank, { targets: { reading: 40 } });
+  assert.ok(out.report.shortfall.reading, '應該回報缺口');
+  assert.equal(out.report.shortfall.reading.got, 10);
+  assert.equal(out.report.shortfall.reading.missing, 30);
+  // 不能重複使用同一個題組來湊數
+  const { flattenQuestions, normalizePaper: np } = require('../server/lib/paper');
+  const nums = flattenQuestions(np(out.paper), 'reading').map((q) => q.number);
+  assert.equal(new Set(nums).size, nums.length, '不能有重複題號');
+});
+
+test('指定難度湊不夠時會自動放寬並說明', () => {
+  const bank = [
+    bankItem(1, 'reading', 'tfng', 5, 'band 8-9'),
+    bankItem(2, 'reading', 'tfng', 5, 'band 5-6'),
+    bankItem(3, 'reading', 'tfng', 5, 'band 5-6'),
+  ];
+  const out = assemble.assemble(bank, { targets: { reading: 15 }, difficulty: 'band 8-9' });
+  assert.ok(out.report.relaxed.includes('reading'), '應該標記已放寬難度');
+  assert.equal(out.stats.reading, 15);
+});
+
+test('聽力會分成 4 節、閱讀 3 篇', () => {
+  const bank = [];
+  for (let i = 0; i < 8; i += 1) bank.push(bankItem(i + 1, 'listening', 'gap_fill', 5));
+  for (let i = 0; i < 8; i += 1) bank.push(bankItem(i + 20, 'reading', 'tfng', 5));
+  const out = assemble.assemble(bank, { targets: { listening: 40, reading: 40 } });
+  const l = out.paper.modules.find((m) => m.module === 'listening');
+  const r = out.paper.modules.find((m) => m.module === 'reading');
+  assert.equal(l.sections.length, 4, '聽力 4 節');
+  assert.equal(r.sections.length, 3, '閱讀 3 篇');
+});
+
+test('coverage 算得出題庫夠不夠', () => {
+  const bank = [
+    bankItem(1, 'reading', 'tfng', 5),
+    bankItem(2, 'reading', 'short_answer', 3),
+    bankItem(3, 'listening', 'gap_fill', 10, 'band 5-6'),
+  ];
+  const c = assemble.coverage(bank);
+  assert.equal(c.reading.questions, 8);
+  assert.equal(c.reading.groups, 2);
+  assert.equal(c.listening.questions, 10);
+  assert.equal(c.reading.byType.tfng, 5);
+  assert.equal(c.listening.byDifficulty['band 5-6'], 10);
+});
+
+test('同一個 seed 組出來的結果一樣', () => {
+  const bank = [];
+  for (let i = 0; i < 10; i += 1) bank.push(bankItem(i + 1, 'reading', i % 3 ? 'tfng' : 'short_answer', 4));
+  const a = assemble.assemble(bank, { targets: { reading: 20 }, seed: 42 });
+  const b = assemble.assemble(bank, { targets: { reading: 20 }, seed: 42 });
+  assert.deepEqual(a.report.usedIds, b.report.usedIds, '同 seed 應該挑到同一批題組');
+});
+
+// ── SMTP 客戶端 ───────────────────────────────────────────
+// 這一組是拿假的 SMTP 伺服器實測指令往返，不是只檢查字串組法。
+// 會這樣測是因為手寫的 SMTP 曾經漏掉「STARTTLS／AUTH 之前要先 EHLO」，
+// 對方伺服器會回 503，而單看程式碼很難發現。
+const notify = require('../server/lib/notify');
+const { startFakeSmtp } = require('./helpers/fakeSmtp');
+
+const MAIL = {
+  from: 'noreply@school.edu', fromName: 'IELTS 模擬考',
+  to: ['stu@example.com'], subject: '明天要考雅思囉', text: '同學你好：\n這是一封測試信。',
+};
+
+test('SMTP：EHLO 一定在最前面，指令順序正確', async () => {
+  const s = await startFakeSmtp();
+  try {
+    await notify.smtpSend({ host: '127.0.0.1', port: s.port, secure: false, ...MAIL });
+    assert.deepEqual(s.cmds(), ['EHLO', 'MAIL', 'RCPT', 'DATA', 'QUIT']);
+  } finally { await s.close(); }
+});
+
+test('SMTP：STARTTLS 之前先送 EHLO（不然對方回 503）', async () => {
+  const s = await startFakeSmtp({ offerStartTls: true });
+  try {
+    // 假伺服器不做真的交握，收到 STARTTLS 就斷線；這裡只驗順序
+    await notify.smtpSend({ host: '127.0.0.1', port: s.port, secure: false, ...MAIL }, 3000)
+      .then(() => null, () => null);
+    assert.deepEqual(s.cmds(), ['EHLO', 'STARTTLS']);
+    assert.ok(!s.log.some((x) => x.type === 'cmd' && /503/.test(x.line)));
+  } finally { await s.close(); }
+});
+
+test('SMTP：伺服器沒有 STARTTLS 時不會硬送', async () => {
+  const s = await startFakeSmtp({ offerStartTls: false });
+  try {
+    await notify.smtpSend({ host: '127.0.0.1', port: s.port, secure: false, ...MAIL });
+    assert.ok(!s.cmds().includes('STARTTLS'));
+  } finally { await s.close(); }
+});
+
+test('SMTP：AUTH LOGIN 把帳密照著 base64 送出去', async () => {
+  const s = await startFakeSmtp();
+  try {
+    await notify.smtpSend({
+      host: '127.0.0.1', port: s.port, secure: false, user: 'me@school.edu', pass: 'app-pw', ...MAIL,
+    });
+    assert.equal(s.log.find((x) => x.type === 'user')?.value, 'me@school.edu');
+    assert.equal(s.log.find((x) => x.type === 'pass')?.value, 'app-pw');
+    assert.ok(s.cmds().includes('AUTH'));
+  } finally { await s.close(); }
+});
+
+test('SMTP：沒有帳號就不送 AUTH（內網轉信主機）', async () => {
+  const s = await startFakeSmtp();
+  try {
+    await notify.smtpSend({ host: '127.0.0.1', port: s.port, secure: false, user: '', ...MAIL });
+    assert.ok(!s.cmds().includes('AUTH'));
+  } finally { await s.close(); }
+});
+
+test('SMTP：每個收件者各送一次 RCPT', async () => {
+  const s = await startFakeSmtp();
+  try {
+    await notify.smtpSend({
+      host: '127.0.0.1', port: s.port, secure: false, ...MAIL, to: ['a@x.com', 'b@y.com'],
+    });
+    assert.equal(s.cmds().filter((c) => c === 'RCPT').length, 2);
+  } finally { await s.close(); }
+});
+
+test('SMTP：中文主旨與內文都收得回原文', async () => {
+  const s = await startFakeSmtp();
+  try {
+    await notify.smtpSend({ host: '127.0.0.1', port: s.port, secure: false, ...MAIL });
+    const raw = s.log.find((x) => x.type === 'message').raw;
+    const subj = raw.match(/Subject: =\?UTF-8\?B\?(.+)\?=/)[1];
+    assert.equal(Buffer.from(subj, 'base64').toString(), '明天要考雅思囉');
+    const body = Buffer.from(raw.split('\n\n')[1].replace(/\n/g, ''), 'base64').toString();
+    assert.ok(body.includes('這是一封測試信'));
+  } finally { await s.close(); }
+});
+
+test('SMTP：信裡有 Date 與 Message-ID（少了會被當垃圾信）', () => {
+  const raw = notify.buildMessage({ ...MAIL, date: new Date('2026-08-01T00:00:00Z'), id: 'abc' });
+  assert.match(raw, /^Date: Sat, 01 Aug 2026 00:00:00 \+0000$/m);
+  assert.match(raw, /^Message-ID: <abc@school\.edu>$/m);
+  assert.match(raw, /^From: =\?UTF-8\?B\?.+\?= <noreply@school\.edu>$/m);
+});
+
+test('SMTP：連不到主機時給得出錯誤，而且不會卡住', async () => {
+  const t0 = Date.now();
+  const err = await notify.smtpSend(
+    { host: '127.0.0.1', port: 1, ...MAIL }, 3000).then(() => null, (e) => e.message);
+  assert.ok(err, '應該要 reject');
+  assert.ok(Date.now() - t0 < 4000, `花了 ${Date.now() - t0}ms，太久了`);
+});
+
+test('SMTP：沒有主機或收件者時直接擋下來', async () => {
+  await assert.rejects(() => notify.smtpSend({ ...MAIL, host: '' }), /主機/);
+  await assert.rejects(() => notify.smtpSend({ ...MAIL, host: 'x', to: [] }), /收件者/);
+});
