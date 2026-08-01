@@ -116,6 +116,12 @@ async function migrate() {
     ['attempts', 'archived', 'TINYINT(1) NOT NULL DEFAULT 0'],
     ['attempts', 'speaking_mode', "VARCHAR(20) NOT NULL DEFAULT 'turn'"],
     ['assignments', 'speaking_realtime', 'TINYINT(1) NOT NULL DEFAULT 1'],
+    // v2.1：老師可自訂的考試規則
+    ['assignments', 'duration_overrides', 'TEXT NULL'],
+    ['assignments', 'extra_time_pct', 'INT NOT NULL DEFAULT 0'],
+    ['assignments', 'proctoring', 'TEXT NULL'],
+    ['assignments', 'break_policy', "VARCHAR(20) NOT NULL DEFAULT 'flexible'"],
+    ['assignments', 'break_seconds', 'INT NOT NULL DEFAULT 0'],
   ];
   for (const [t, c, d] of steps) {
     try { if (await ensureColumn(t, c, d)) added.push(`${t}.${c}`); }

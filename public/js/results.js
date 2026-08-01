@@ -40,6 +40,12 @@ const Results = (() => {
     if (D.review.reading) tabs.push({ k: 'reading', label: '閱讀檢討' });
     if (D.writing?.length) tabs.push({ k: 'writing', label: '寫作批改' });
     if (D.speaking?.length) tabs.push({ k: 'speaking', label: '口說評分' });
+    if (D.conduct && (D.conduct.events?.length || D.conduct.leaveCount)) {
+      tabs.push({
+        k: 'conduct',
+        label: D.conduct.leaveCount ? `考試紀律 ⚠ ${D.conduct.leaveCount}` : '考試紀律',
+      });
+    }
 
     const bodyBox = el('div', { id: 'res-body' });
     const tabBar = el('div', { class: 'tabs no-print' }, tabs.map((t) =>
@@ -74,7 +80,59 @@ const Results = (() => {
     if (k === 'listening' || k === 'reading') return objectiveReview(k);
     if (k === 'writing') return writingReview(attemptId);
     if (k === 'speaking') return speakingReview(attemptId);
+    if (k === 'conduct') return conductReview();
     return el('div');
+  }
+
+  // ── 考試紀律（監考事件）────────────────────────────────
+  const EVENT_LABEL = {
+    module_start: ['開始作答', ''],
+    leave: ['離開考試畫面', 'err'],
+    return: ['回到考試畫面', ''],
+    fullscreen_exit: ['離開全螢幕', 'err'],
+    fullscreen_enter: ['進入全螢幕', ''],
+    copy_blocked: ['嘗試複製題目（已擋下）', 'warn'],
+    paste_blocked: ['嘗試貼上內容（已擋下）', 'warn'],
+    auto_submit: ['違規次數超標，自動收卷', 'err'],
+    resize: ['視窗大小改變', ''],
+    devtools: ['疑似開啟開發者工具', 'warn'],
+  };
+
+  function conductReview() {
+    const c = D.conduct || { counts: {}, events: [] };
+    const isStaff = API.user?.role !== 'student';
+    const suspicious = c.leaveCount || c.counts.copy_blocked || c.counts.paste_blocked;
+
+    return el('div', {},
+      el('div', { class: 'card' },
+        el('h3', {}, '考試紀律'),
+        suspicious
+          ? el('p', {}, '這場考試偵測到以下行為，僅供老師參考，系統不會自動判定作弊。')
+          : el('p', {}, '這場考試沒有偵測到任何異常行為。'),
+        el('div', { class: 'row' }, Object.entries(c.counts).map(([k, n]) => {
+          const [label, kind] = EVENT_LABEL[k] || [k, ''];
+          if (k === 'module_start' || k === 'return' || k === 'fullscreen_enter') return null;
+          return el('div', { style: { minWidth: '130px', flex: '0 0 auto' } },
+            el('div', { class: 'small muted' }, label),
+            el('div', {
+              style: { fontSize: '1.6rem', fontWeight: '700', color: kind === 'err' ? 'var(--err)' : kind === 'warn' ? 'var(--warn)' : 'inherit' },
+            }, String(n)));
+        }))),
+
+      isStaff && c.events?.length
+        ? el('div', { class: 'card' },
+            el('h3', {}, `事件時間軸（${c.events.length} 筆）`),
+            el('table', { class: 'data' },
+              el('thead', {}, el('tr', {}, el('th', {}, '時間'), el('th', {}, '科目'), el('th', {}, '事件'), el('th', {}, '備註'))),
+              el('tbody', {}, c.events.map((e) => {
+                const [label, kind] = EVENT_LABEL[e.type] || [e.type, ''];
+                return el('tr', {},
+                  el('td', { class: 'small muted' }, fmtDate(e.created_at)),
+                  el('td', { class: 'small' }, e.module ? (UI.MODULE_LABEL[e.module] || e.module).split(' ')[0] : '—'),
+                  el('td', {}, el('span', { class: `pill ${kind}` }, label)),
+                  el('td', { class: 'small muted' }, e.detail || ''));
+              }))))
+        : el('p', { class: 'small muted' }, isStaff ? '' : '完整的事件明細只有老師看得到。'));
   }
 
   // ── 成績單 ──────────────────────────────────────────────

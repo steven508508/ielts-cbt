@@ -98,7 +98,21 @@ router.get('/:id', async (req, res) => {
 
   const tasks = grade.writingTasks(paper);
 
+  // 考試紀律事件（只有老師看得到明細，學生只看得到自己有沒有被記點）
+  const eventRows = await db.query(
+    'SELECT module, type, detail, created_at FROM exam_events WHERE attempt_id = ? ORDER BY id',
+    [attempt.id]
+  );
+  const eventCounts = {};
+  for (const e of eventRows) eventCounts[e.type] = (eventCounts[e.type] || 0) + 1;
+  const conduct = {
+    counts: eventCounts,
+    leaveCount: (eventCounts.leave || 0) + (eventCounts.fullscreen_exit || 0),
+    events: req.user.role === 'student' ? [] : eventRows,
+  };
+
   res.json({
+    conduct,
     attempt: {
       id: attempt.id, status: attempt.status, modules: attempt.modules.split(','),
       startedAt: attempt.started_at, submittedAt: attempt.submitted_at, gradedAt: attempt.graded_at,

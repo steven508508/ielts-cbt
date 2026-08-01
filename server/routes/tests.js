@@ -10,6 +10,21 @@ router.use(requireAuth);
 // 題型清單（前端編輯器與 AI 出題頁使用）
 router.get('/question-types', (req, res) => res.json({ types: QUESTION_TYPES }));
 
+// 指派畫面用的預設值（官方時間、反作弊預設、休息政策）
+router.get('/exam-rules/presets', (req, res) => {
+  const { PROCTORING_DEFAULT, BREAK_POLICIES } = require('../lib/examRules');
+  const { MODULE_DEFAULTS } = require('../lib/paper');
+  res.json({
+    officialDurations: Object.fromEntries(
+      Object.entries(MODULE_DEFAULTS).map(([k, v]) => [k, v.durationSec + (v.transferSec || 0)])
+    ),
+    proctoringDefault: PROCTORING_DEFAULT,
+    breakPolicies: Object.fromEntries(
+      Object.entries(BREAK_POLICIES).map(([k, v]) => [k, { label: v.label, gapSec: v.gapSec }])
+    ),
+  });
+});
+
 router.get('/', async (req, res) => {
   const staff = req.user.role !== 'student';
   const rows = await db.query(
@@ -113,22 +128,45 @@ router.post('/assignments', requireStaff, async (req, res) => {
     modules = 'listening,reading,writing,speaking',
     speakingGrading = 'ai', writingGrading = 'ai',
     openFrom = null, openUntil = null, maxAttempts = 1,
+    durationOverrides = null,     // { listening: 秒數, … } 留空 = 用試卷預設
+    extraTimePct = 0,             // 無障礙加時（%）
+    proctoring = null,            // 反作弊設定
+    breakPolicy = 'flexible',     // official | timed | flexible
+    breakSeconds = 0,
   } = req.body || {};
   if (!testId) return res.status(400).json({ error: '請選擇試卷' });
+
+  // 只留下有填、且是正整數秒數的科目
+  const cleanOverrides = {};
+  for (const [k, v] of Object.entries(durationOverrides || {})) {
+    const n = Number(v);
+    if (['listening', 'reading', 'writing', 'speaking'].includes(k) && Number.isFinite(n) && n > 0) {
+      cleanOverrides[k] = Math.round(n);
+    }
+  }
+  const overridesJson = Object.keys(cleanOverrides).length ? JSON.stringify(cleanOverrides) : null;
+  const proctoringJson = proctoring ? JSON.stringify(proctoring) : null;
+  const policy = ['official', 'timed', 'flexible'].includes(breakPolicy) ? breakPolicy : 'flexible';
+  const pct = Math.max(0, Math.min(200, Number(extraTimePct) || 0));
+  const brk = Math.max(0, Number(breakSeconds) || 0);
+
+  const COLS = `(test_id, %TARGET%, modules, speaking_grading, writing_grading, open_from, open_until,
+                 max_attempts, duration_overrides, extra_time_pct, proctoring, break_policy, break_seconds, created_by)`;
+  const PLACEHOLDERS = 'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)';
+  const tail = [modules, speakingGrading, writingGrading, openFrom, openUntil, maxAttempts,
+    overridesJson, pct, proctoringJson, policy, brk, req.user.id];
 
   const made = [];
   if (classGroup) {
     made.push(await db.insert(
-      `INSERT INTO assignments (test_id, class_group, modules, speaking_grading, writing_grading, open_from, open_until, max_attempts, created_by)
-       VALUES (?,?,?,?,?,?,?,?,?)`,
-      [testId, classGroup, modules, speakingGrading, writingGrading, openFrom, openUntil, maxAttempts, req.user.id]
+      `INSERT INTO assignments ${COLS.replace('%TARGET%', 'class_group')} ${PLACEHOLDERS}`,
+      [testId, classGroup, ...tail]
     ));
   }
   for (const uid of userIds) {
     made.push(await db.insert(
-      `INSERT INTO assignments (test_id, user_id, modules, speaking_grading, writing_grading, open_from, open_until, max_attempts, created_by)
-       VALUES (?,?,?,?,?,?,?,?,?)`,
-      [testId, uid, modules, speakingGrading, writingGrading, openFrom, openUntil, maxAttempts, req.user.id]
+      `INSERT INTO assignments ${COLS.replace('%TARGET%', 'user_id')} ${PLACEHOLDERS}`,
+      [testId, uid, ...tail]
     ));
   }
   await db.exec('UPDATE tests SET published = 1 WHERE id = ?', [testId]);

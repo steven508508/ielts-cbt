@@ -333,6 +333,91 @@ async function call(method, path, body, token) {
   const mlog = await call('GET', '/manage/log', null, tea);
   ok(Array.isArray(mlog.data.log) && mlog.data.log.length > 0, `維護紀錄有 ${mlog.data.log.length} 筆`);
 
+  // ── 老師自訂的考試規則 ─────────────────────────────────
+  console.log('\n考試規則：時間 / 反作弊 / 休息');
+
+  const presets = await call('GET', '/tests/exam-rules/presets', null, tea);
+  ok(presets.data.officialDurations.listening === 1800 + 0 || presets.data.officialDurations.listening > 0,
+    `取得官方時間預設：聽力 ${presets.data.officialDurations.listening / 60} 分、閱讀 ${presets.data.officialDurations.reading / 60} 分`);
+  ok(Object.keys(presets.data.breakPolicies).length === 3, '三種休息政策：官方連續 / 固定休息 / 自由');
+
+  // 用 student5 開一場「自訂規則」的考試
+  const s5 = await call('POST', '/auth/login', { username: 'student5', password: 'ielts1234' });
+  const stu5 = s5.data.token;
+  const me5 = await call('GET', '/auth/me', null, stu5);
+  const old5 = await call('GET', `/manage/results?userId=${me5.data.user.id}`, null, tea);
+  if (old5.data.results?.length) {
+    await call('POST', '/manage/results/bulk', {
+      action: 'delete', ids: old5.data.results.map((r) => r.id), force: true,
+    }, adm);
+  }
+
+  const ruleAsg = await call('POST', '/tests/assignments', {
+    testId: a.testId, userIds: [me5.data.user.id],
+    modules: 'listening,reading,writing,speaking',
+    maxAttempts: 5,
+    durationOverrides: { listening: 40 * 60 },   // 聽力改成 40 分鐘
+    extraTimePct: 25,                            // 全部再加 25%
+    breakPolicy: 'official',
+    proctoring: { enabled: true, requireFullscreen: true, blockCopy: true, warnOnLeave: true, maxLeaves: 2, onExceed: 'submit' },
+  }, tea);
+  ok(ruleAsg.status === 200 && ruleAsg.data.ids.length === 1, '建立帶有自訂規則的指派');
+
+  const start5 = await call('POST', '/exam/start', { assignmentId: ruleAsg.data.ids[0], testId: a.testId }, stu5);
+  const att5 = start5.data.attemptId;
+  ok(!!att5, '學生開始這場考試');
+
+  const paper5 = await call('GET', `/exam/${att5}`, null, stu5);
+  const RULES = paper5.data.rules;
+  ok(!!R, '考卷帶回考試規則');
+  ok(RULES.durations.listening === Math.round(40 * 60 * 1.25),
+    `聽力 40 分 + 25% 加時 = ${RULES.durations.listening / 60} 分`, `拿到 ${RULES.durations.listening}`);
+  ok(RULES.durations.reading === Math.round(3600 * 1.25),
+    `閱讀沿用試卷的 60 分 + 25% = ${RULES.durations.reading / 60} 分`, `拿到 ${RULES.durations.reading}`);
+  ok(RULES.extraTimePct === 25, '加時百分比正確帶出');
+  ok(RULES.break.policy === 'official' && Array.isArray(RULES.break.chain),
+    `休息政策 = 官方連續，連鎖順序 ${RULES.break.chain.join(' → ')}`);
+  ok(!RULES.break.chain.includes('speaking'), '口說不納入連續作答（官方就是獨立進行）');
+  ok(RULES.proctoring.enabled && RULES.proctoring.requireFullscreen && RULES.proctoring.maxLeaves === 2,
+    '監考設定正確帶出（全螢幕、上限 2 次、超過自動收卷）');
+
+  const ms5 = await call('POST', `/exam/${att5}/module/start`, { module: 'listening' }, stu5);
+  ok(ms5.data.durationSec === Math.round(40 * 60 * 1.25),
+    `伺服器實際發出的時限也是 ${ms5.data.durationSec / 60} 分（前端改不動）`);
+  ok(ms5.data.breakdown.overrideSec === 2400 && ms5.data.breakdown.extraSec === 600,
+    '時間組成拆解正確：覆寫 2400 秒 + 加時 600 秒');
+
+  console.log('\n監考事件');
+  const ev1 = await call('POST', `/exam/${att5}/event`, { type: 'leave', module: 'listening', detail: '切換分頁' }, stu5);
+  ok(ev1.data.leaveCount === 1, `記錄第 1 次離開（目前 ${ev1.data.leaveCount} 次）`);
+  const ev2 = await call('POST', `/exam/${att5}/event`, { type: 'fullscreen_exit', module: 'listening' }, stu5);
+  ok(ev2.data.leaveCount === 2, '離開全螢幕也計入同一個上限');
+  await call('POST', `/exam/${att5}/event`, { type: 'copy_blocked', module: 'listening', detail: '嘗試複製文章' }, stu5);
+  const badEvent = await call('POST', `/exam/${att5}/event`, { type: '亂寫的事件' }, stu5);
+  ok(badEvent.status === 400, '不認識的事件類型會被拒絕');
+
+  const evList = await call('GET', `/exam/${att5}/events`, null, tea);
+  ok(evList.data.counts.leave === 1 && evList.data.counts.fullscreen_exit === 1 && evList.data.counts.copy_blocked === 1,
+    `老師看得到完整事件：${JSON.stringify(evList.data.counts)}`);
+  ok(evList.data.events.some((e) => e.type === 'module_start'), '開始作答本身也會留下紀錄');
+
+  const evStu = await call('GET', `/exam/${att5}/events`, null, stu5);
+  ok(evStu.status === 403, '學生看不到事件明細');
+
+  // 成績頁要帶出紀律摘要
+  await call('POST', `/exam/${att5}/module/finish`, { module: 'listening' }, stu5);
+  const res5 = await call('GET', `/results/${att5}`, null, tea);
+  ok(res5.data.conduct?.leaveCount === 2, `成績頁顯示離開次數 ${res5.data.conduct?.leaveCount}`);
+  ok(res5.data.conduct?.events?.length > 0, '老師在成績頁看得到事件時間軸');
+  const res5stu = await call('GET', `/results/${att5}`, null, stu5);
+  ok(res5stu.data.conduct?.events?.length === 0, '學生在成績頁看不到事件明細');
+
+  console.log('\n預設值（沒特別設定時不應該改變原本行為）');
+  const plain = await call('GET', `/exam/${attemptId}`, null, stu);
+  ok(plain.data.rules.proctoring.enabled === false, '沒開監考時預設關閉');
+  ok(plain.data.rules.break.policy === 'flexible', '沒設休息政策時預設自由');
+  ok(plain.data.rules.durations.listening === 1920, '沒改時間時沿用試卷的 30 分 + 2 分轉答案');
+
   console.log(`\n${'─'.repeat(46)}`);
   console.log(`通過 ${pass}　失敗 ${fail}`);
   process.exit(fail ? 1 : 0);

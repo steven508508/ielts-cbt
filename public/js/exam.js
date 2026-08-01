@@ -69,10 +69,12 @@ const Exam = (() => {
     S = {
       attemptId, attempt: data.attempt, paper: data.paper,
       state: data.state || { modules: {} },
+      // 老師在指派時設定的規則：每科時間、反作弊、休息政策
+      rules: data.rules || { durations: {}, proctoring: { enabled: false }, break: { policy: 'flexible' } },
+      leaveCount: Number(data.leaveCount || 0),
       answers: {}, review: {}, writing: {}, writingDirty: {},
       module: null, section: 0, current: null, endsAt: null,
-      warned: {}, blurCount: Number(data.state?.blurCount || 0),
-      notes: (data.state?.notes || []),
+      warned: {}, notes: (data.state?.notes || []),
       counts: data.counts, savedSpeaking: data.saved.speaking || [],
       timerHidden: false,
     };
@@ -85,7 +87,7 @@ const Exam = (() => {
     }
     for (const w of data.saved.writing || []) S.writing[w.task_no] = w.essay || '';
 
-    watchFocus();
+    setupProctoring();
     const anyStarted = Object.keys(S.state.modules || {}).length > 0;
     if (anyStarted) renderModuleList();
     else renderConfirmDetails();
@@ -93,19 +95,121 @@ const Exam = (() => {
 
   function leave() {
     stopTimer();
+    exitFullscreen();
     document.body.style.overflow = '';
     location.hash = '#/';
   }
 
-  /** 記錄離開視窗的次數（老師可看到，做為考試紀律參考） */
-  function watchFocus() {
-    if (S._focusWatch) return;
-    S._focusWatch = true;
+  // ── 反作弊 ──────────────────────────────────────────────
+  const proc = () => S?.rules?.proctoring || {};
+
+  async function reportEvent(type, detail = '') {
+    try {
+      const r = await API.post(`/exam/${S.attemptId}/event`, { type, module: S.module, detail });
+      if (typeof r.leaveCount === 'number') S.leaveCount = r.leaveCount;
+      return r;
+    } catch { return {}; }
+  }
+
+  function requestFullscreen() {
+    const e = document.documentElement;
+    const fn = e.requestFullscreen || e.webkitRequestFullscreen || e.msRequestFullscreen;
+    return fn ? fn.call(e).catch(() => {}) : Promise.resolve();
+  }
+  function exitFullscreen() {
+    if (!document.fullscreenElement) return;
+    (document.exitFullscreen || document.webkitExitFullscreen || (() => {})).call(document);
+  }
+
+  let violationOpen = false;
+  async function onViolation(type, label) {
+    if (!S || !S.module) return;
+    const p = proc();
+    if (!p.enabled) return;
+    const r = await reportEvent(type, label);
+    const count = r.leaveCount ?? S.leaveCount;
+
+    // 超過上限的處置
+    if (p.maxLeaves > 0 && count >= p.maxLeaves && p.onExceed === 'submit') {
+      await reportEvent('auto_submit', `離開 ${count} 次，超過上限 ${p.maxLeaves}`);
+      await notice('已自動結束這一科', el('div', {},
+        el('p', {}, `你離開考試畫面 ${count} 次，已超過老師設定的上限（${p.maxLeaves} 次）。`),
+        el('p', {}, '這一科已自動收卷，紀錄會提供給老師。')));
+      return finishModule(true);
+    }
+
+    if (!p.warnOnLeave || violationOpen) return;
+    violationOpen = true;
+    const over = p.maxLeaves > 0 ? `（第 ${count} 次，上限 ${p.maxLeaves} 次）` : `（第 ${count} 次）`;
+    await notice('考試紀律提醒', el('div', {},
+      el('p', {}, el('b', {}, `偵測到你${label}${over}`)),
+      el('p', {}, '考試進行中請勿切換分頁、視窗或離開全螢幕，這些行為都會被記錄下來給老師。'),
+      p.maxLeaves > 0 && p.onExceed === 'submit'
+        ? el('p', { style: { color: '#c0392b' } }, `再離開 ${Math.max(0, p.maxLeaves - count)} 次，這一科就會自動收卷。`)
+        : null));
+    violationOpen = false;
+    if (p.requireFullscreen && !document.fullscreenElement) await ensureFullscreen();
+  }
+
+  async function ensureFullscreen() {
+    if (document.fullscreenElement) return true;
+    const ok = await dlg({
+      title: '請回到全螢幕',
+      body: el('div', {},
+        el('p', {}, '這場考試設定為全螢幕作答。'),
+        el('p', {}, '按下方按鈕回到全螢幕就可以繼續。')),
+      actions: [{ label: '回到全螢幕', primary: true, value: true }],
+    });
+    if (ok) { await requestFullscreen(); reportEvent('fullscreen_enter'); }
+    return !!document.fullscreenElement;
+  }
+
+  function setupProctoring() {
+    if (S._proctorBound) return;
+    S._proctorBound = true;
+
     document.addEventListener('visibilitychange', () => {
-      if (!S || !S.module || document.visibilityState !== 'hidden') return;
-      S.blurCount += 1;
-      S.state.blurCount = S.blurCount;
-      API.post(`/exam/${S.attemptId}/state`, { ui: { blurCount: S.blurCount, notes: S.notes } }).catch(() => {});
+      if (!S || !S.module) return;
+      if (document.visibilityState === 'hidden') onViolation('leave', '切換到其他分頁或視窗');
+      else reportEvent('return');
+    });
+
+    window.addEventListener('blur', () => {
+      if (!S || !S.module || document.visibilityState === 'hidden') return;
+      // 只有真的切走才算，點擊 iframe 之類的忽略
+      setTimeout(() => {
+        if (document.hasFocus() || !S.module) return;
+        onViolation('leave', '離開考試視窗');
+      }, 400);
+    });
+
+    document.addEventListener('fullscreenchange', () => {
+      if (!S || !S.module || !proc().enabled || !proc().requireFullscreen) return;
+      if (!document.fullscreenElement) onViolation('fullscreen_exit', '離開全螢幕');
+    });
+
+    // 擋複製：文章與題目區不能複製走
+    document.addEventListener('copy', (e) => {
+      if (!S?.module || !proc().enabled || !proc().blockCopy) return;
+      if (!e.target.closest?.('.cbt-pane, .cbt-passage')) return;
+      if (e.target.matches?.('textarea, input')) return;   // 自己寫的作文可以複製
+      e.preventDefault();
+      reportEvent('copy_blocked', '嘗試複製題目內容');
+      toast('這場考試不允許複製題目內容', 'err');
+    });
+    document.addEventListener('cut', (e) => {
+      if (!S?.module || !proc().enabled || !proc().blockCopy) return;
+      if (e.target.matches?.('textarea, input')) return;
+      e.preventDefault();
+    });
+
+    // 擋貼上：避免把事先寫好的作文貼進來
+    document.addEventListener('paste', (e) => {
+      if (!S?.module || !proc().enabled || !proc().blockCopy) return;
+      if (!e.target.matches?.('textarea, input')) return;
+      e.preventDefault();
+      reportEvent('paste_blocked', '嘗試貼上內容');
+      toast('這場考試不允許貼上，請自己輸入', 'err');
     });
   }
 
@@ -204,6 +308,28 @@ const Exam = (() => {
             el('button', { class: 'cbt-btn', onclick: leave }, '離開')))));
   }
 
+  /** 把老師設定的規則清楚寫給學生看，免得考到一半才發現 */
+  function rulesBanner() {
+    const p = proc();
+    const b = S.rules.break || {};
+    const lines = [];
+    if (S.rules.extraTimePct > 0) lines.push(`⏱ 這場考試有 ${S.rules.extraTimePct}% 的額外作答時間`);
+    if (b.policy === 'official') lines.push('▶ 聽力、閱讀、寫作會連續進行，中間不休息（官方流程）');
+    if (b.policy === 'timed') lines.push(`☕ 每一科之間有 ${Math.round((b.seconds || 0) / 60)} 分鐘休息，時間到自動進入下一科`);
+    if (p.enabled) {
+      const bits = [];
+      if (p.requireFullscreen) bits.push('必須全螢幕作答');
+      if (p.blockCopy) bits.push('不能複製題目、不能貼上');
+      bits.push(p.maxLeaves > 0
+        ? `離開畫面上限 ${p.maxLeaves} 次${p.onExceed === 'submit' ? '，超過自動收卷' : ''}`
+        : '離開畫面會被記錄');
+      lines.push(`🔒 監考模式：${bits.join('、')}`);
+    }
+    if (!lines.length) return null;
+    return el('div', { class: 'info', style: { marginTop: '.8rem' } },
+      lines.map((t) => el('div', { style: { display: 'block' } }, t)));
+  }
+
   const moduleOf = (n) => (S.paper.modules || []).find((m) => m.module === n);
   const mstate = (n) => S.state.modules?.[n] || {};
   const isDone = (n) => { const s = mstate(n); return !!(s.finished || (s.endsAt && Date.now() > s.endsAt)); };
@@ -221,9 +347,13 @@ const Exam = (() => {
           el('h2', {}, S.paper.title),
           el('p', { class: 'small' }, '一次考一科。每一科開始後計時就不會停止，中途關閉頁面時間仍會繼續走。'),
 
+          rulesBanner(),
+
           el('div', { style: { margin: '1.1rem 0' } }, mods.map((m) => {
             const mod = moduleOf(m);
-            const mins = Math.round(((mod?.durationSec || 0) + (mod?.transferSec || 0)) / 60);
+            const secs = S.rules.durations?.[m] ?? ((mod?.durationSec || 0) + (mod?.transferSec || 0));
+            const mins = Math.round(secs / 60);
+            const bd = S.rules.breakdown?.[m];
             const done = isDone(m);
             const started = !!mstate(m).endsAt && !done;
             return el('div', {
@@ -236,6 +366,7 @@ const Exam = (() => {
                 el('b', {}, UI.MODULE_LABEL[m]),
                 el('div', { class: 'small', style: { opacity: '.7' } },
                   `${mins} 分鐘`,
+                  bd?.extraSec ? `（含加時 ${Math.round(bd.extraSec / 60)} 分）` : '',
                   m === 'listening' ? ` · ${mod.sections.length} 個 Part` : '',
                   m === 'reading' ? ` · ${mod.sections.length} 篇文章` : '')),
               done
@@ -304,6 +435,12 @@ const Exam = (() => {
   }
 
   async function startModule(name) {
+    // 監考模式要求全螢幕：趁著使用者這一次點擊（瀏覽器只允許在點擊時進全螢幕）
+    if (proc().enabled && proc().requireFullscreen && name !== 'speaking') {
+      await requestFullscreen();
+      reportEvent('fullscreen_enter', '進入全螢幕');
+    }
+
     let info;
     try {
       info = await API.post(`/exam/${S.attemptId}/module/start`, { module: name });
@@ -380,6 +517,13 @@ const Exam = (() => {
     const qs = flat(name);
     const answered = qs.filter((q) => String(S.answers[name]?.[q.number] ?? '').trim()).length;
 
+    // 依老師設定的休息政策決定接下來怎麼走
+    const b = S.rules.break || { policy: 'flexible' };
+    const chain = b.chain || null;
+    const nextInChain = chain
+      ? chain.find((m) => m !== name && chain.indexOf(m) > chain.indexOf(name) && !isDone(m))
+      : null;
+
     shell(
       topBar({ withTools: false }),
       el('div', { class: 'cbt-center' },
@@ -391,7 +535,55 @@ const Exam = (() => {
             : el('p', {}, '你的作文已儲存。'),
           el('p', { class: 'small', style: { opacity: '.7' } }, '成績要等全部科目考完、正式交卷後才會公布。'),
           el('div', { class: 'cbt-actions' },
-            el('button', { class: 'cbt-btn primary', onclick: renderModuleList }, '回到科目清單 →')))));
+            nextInChain
+              ? el('button', {
+                  class: 'cbt-btn primary',
+                  onclick: () => renderBreak(nextInChain, 0),
+                }, `繼續 ${UI.MODULE_LABEL[nextInChain]} →`)
+              : el('button', { class: 'cbt-btn primary', onclick: renderModuleList }, '回到科目清單 →')))));
+
+    // 官方流程／固定休息：不讓學生停在這一頁，自動往下走
+    if (nextInChain) {
+      const wait = b.policy === 'official' ? (b.seconds || 15) : (b.seconds || 0);
+      setTimeout(() => { if (!S.module) renderBreak(nextInChain, wait); }, 1500);
+    }
+  }
+
+  /** 科目之間的過場／休息畫面，倒數結束自動進入下一科 */
+  function renderBreak(nextModule, seconds) {
+    const official = (S.rules.break?.policy) === 'official';
+    let left = Math.max(0, Number(seconds) || 0);
+
+    const go = () => { clearInterval(t); startModule(nextModule); };
+
+    shell(
+      topBar({ withTools: false }),
+      el('div', { class: 'cbt-center' },
+        el('div', { class: 'cbt-card', style: { textAlign: 'center' } },
+          el('h2', {}, official ? '下一科即將開始' : '休息時間　Break'),
+          el('p', {}, '接下來是 ', el('b', {}, UI.MODULE_LABEL[nextModule]),
+            `，時限 ${Math.round((S.rules.durations?.[nextModule] || 0) / 60)} 分鐘。`),
+          official
+            ? el('p', { class: 'small', style: { opacity: '.75' } },
+                '依照雅思官方流程，聽力、閱讀、寫作之間不安排休息，請留在座位上。')
+            : el('p', { class: 'small', style: { opacity: '.75' } },
+                '休息時間結束會自動開始下一科，請不要離開電腦。'),
+          left > 0
+            ? el('div', { class: 'cbt-bigtimer', id: 'break-timer' }, fmtTime(left))
+            : null,
+          el('div', { class: 'cbt-actions', style: { justifyContent: 'center' } },
+            el('button', { class: 'cbt-btn primary', onclick: go }, '現在就開始 →')))));
+
+    const t = setInterval(() => {
+      left -= 1;
+      const n = $('#break-timer');
+      if (n) {
+        n.textContent = fmtTime(Math.max(0, left));
+        n.className = 'cbt-bigtimer' + (left <= 10 ? ' danger' : left <= 60 ? ' warn' : '');
+      }
+      if (left <= 0) go();
+    }, 1000);
+    if (left <= 0) setTimeout(go, 1200);
   }
 
   async function submitAll() {
@@ -402,6 +594,7 @@ const Exam = (() => {
     try {
       await API.post(`/exam/${S.attemptId}/submit`, {});
       stopTimer();
+      exitFullscreen();
       document.body.style.overflow = '';
       location.hash = `#/result/${S.attemptId}`;
     } catch (e) { notice('交卷失敗', e.message); }
@@ -675,7 +868,7 @@ const Exam = (() => {
 
   function persistNotes() {
     S.notes = $$('mark.hl[data-note]').map((m) => ({ text: m.textContent.slice(0, 60), note: m.dataset.note }));
-    API.post(`/exam/${S.attemptId}/state`, { ui: { notes: S.notes, blurCount: S.blurCount } }).catch(() => {});
+    API.post(`/exam/${S.attemptId}/state`, { ui: { notes: S.notes } }).catch(() => {});
   }
 
   // ── 寫作 ────────────────────────────────────────────────

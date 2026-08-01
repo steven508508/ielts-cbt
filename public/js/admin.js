@@ -484,9 +484,11 @@ const Admin = (() => {
 
   // ── 指派考試 ────────────────────────────────────────────
   async function assign(mount, params) {
-    const [{ tests: list }, { users }, { classes }, { assignments }] = await Promise.all([
-      API.get('/tests'), API.get('/users?role=student'), API.get('/users/classes'), API.get('/tests/assignments/all'),
+    const [{ tests: list }, { users }, { classes }, { assignments }, presets] = await Promise.all([
+      API.get('/tests'), API.get('/users?role=student'), API.get('/users/classes'),
+      API.get('/tests/assignments/all'), API.get('/tests/exam-rules/presets'),
     ]);
+    const MODS = ['listening', 'reading', 'writing', 'speaking'];
 
     const f = {};
     const studentBox = el('div', {
@@ -522,11 +524,101 @@ const Admin = (() => {
           el('label', { class: 'field' }, el('span', {}, '開放時間'), (f.openFrom = el('input', { type: 'datetime-local' }))),
           el('label', { class: 'field' }, el('span', {}, '截止時間'), (f.openUntil = el('input', { type: 'datetime-local' }))),
           el('label', { class: 'field' }, el('span', {}, '可考次數'), (f.maxAttempts = el('input', { type: 'number', value: 1, min: 1, max: 10 })))),
+        // ── 考試時間 ────────────────────────────────────────
+        el('details', { style: { marginBottom: '.8rem' } },
+          el('summary', {}, el('b', {}, '⏱ 考試時間'),
+            el('span', { class: 'small muted' }, '　留空 = 用試卷預設（官方時間）')),
+          el('div', { style: { paddingTop: '.7rem' } },
+            el('div', { class: 'row' }, MODS.map((m) => {
+              const mins = Math.round((presets.officialDurations[m] || 0) / 60);
+              return el('label', { class: 'field' },
+                el('span', {}, `${UI.MODULE_LABEL[m].split(' ')[0]}（分鐘）`),
+                (f[`dur_${m}`] = el('input', { type: 'number', min: 1, max: 300, placeholder: `官方 ${mins}` })));
+            })),
+            el('div', { class: 'row' },
+              el('label', { class: 'field' },
+                el('span', {}, '額外時間（%）'),
+                (f.extraTimePct = el('input', { type: 'number', min: 0, max: 200, value: 0 })),
+                el('span', { class: 'small muted' }, '無障礙加時。填 25 就是每一科都多 25%，會疊加在上面的設定之上')),
+              el('div', { class: 'field' },
+                el('span', {}, '快速設定'),
+                el('div', { style: { display: 'flex', gap: '.4rem', flexWrap: 'wrap' } },
+                  [['官方標準', 0], ['+25% 加時', 25], ['+50% 加時', 50]].map(([label, pct]) =>
+                    el('button', {
+                      class: 'btn sm', type: 'button',
+                      onclick: () => {
+                        MODS.forEach((m) => { f[`dur_${m}`].value = ''; });
+                        f.extraTimePct.value = String(pct);
+                        toast(pct ? `已套用 +${pct}% 加時` : '已回到官方標準時間', 'ok');
+                      },
+                    }, label)))))),
+
+        // ── 休息流程 ────────────────────────────────────────
+        el('details', { style: { marginBottom: '.8rem' } },
+          el('summary', {}, el('b', {}, '☕ 科目之間的休息')),
+          el('div', { style: { paddingTop: '.7rem' } },
+            el('div', { class: 'row' },
+              el('label', { class: 'field' }, el('span', {}, '休息政策'),
+                (f.breakPolicy = el('select', {
+                  onchange: (e) => { f._breakWrap.style.display = e.target.value === 'timed' ? '' : 'none'; },
+                },
+                  el('option', { value: 'flexible' }, '自由 — 學生自己決定何時開始下一科（預設）'),
+                  el('option', { value: 'official' }, '官方流程 — 聽讀寫連續不中斷'),
+                  el('option', { value: 'timed' }, '固定休息 — 每科之間休息幾分鐘')))),
+              (f._breakWrap = el('label', { class: 'field', style: { display: 'none' } },
+                el('span', {}, '休息幾分鐘'),
+                (f.breakMinutes = el('input', { type: 'number', min: 1, max: 60, value: 10 })),
+                el('span', { class: 'small muted' }, '倒數結束自動進入下一科')))),
+            el('p', { class: 'small muted' },
+              '雅思官方在聽力、閱讀、寫作之間是不安排休息的；口說一律獨立進行，不受這裡影響。'))),
+
+        // ── 監考／反作弊 ────────────────────────────────────
+        el('details', { style: { marginBottom: '.8rem' } },
+          el('summary', {}, el('b', {}, '🔒 監考／反作弊')),
+          el('div', { style: { paddingTop: '.7rem' } },
+            el('label', { class: 'field' }, el('span', {},
+              (f.procEnabled = el('input', {
+                type: 'checkbox', style: { width: 'auto', marginRight: '.4rem' },
+                onchange: (e) => { f._procWrap.style.display = e.target.checked ? '' : 'none'; },
+              })),
+              el('b', {}, '啟用監考模式'))),
+            (f._procWrap = el('div', { style: { display: 'none', paddingLeft: '1.2rem' } },
+              el('label', { class: 'field' }, el('span', {},
+                (f.requireFullscreen = el('input', { type: 'checkbox', checked: true, style: { width: 'auto', marginRight: '.4rem' } })),
+                '強制全螢幕作答（離開全螢幕會被要求回去並記錄）')),
+              el('label', { class: 'field' }, el('span', {},
+                (f.blockCopy = el('input', { type: 'checkbox', checked: true, style: { width: 'auto', marginRight: '.4rem' } })),
+                '禁止複製題目內容、禁止把外部文字貼進作文')),
+              el('label', { class: 'field' }, el('span', {},
+                (f.warnOnLeave = el('input', { type: 'checkbox', checked: true, style: { width: 'auto', marginRight: '.4rem' } })),
+                '切換分頁或離開視窗時立刻跳出警告')),
+              el('div', { class: 'row' },
+                el('label', { class: 'field' }, el('span', {}, '允許離開畫面幾次'),
+                  (f.maxLeaves = el('input', { type: 'number', min: 0, max: 50, value: 0 })),
+                  el('span', { class: 'small muted' }, '0 = 不設上限，只記錄不處置')),
+                el('label', { class: 'field' }, el('span', {}, '超過上限時'),
+                  (f.onExceed = el('select', {},
+                    el('option', { value: 'warn' }, '只警告（建議）'),
+                    el('option', { value: 'submit' }, '自動結束該科'))),
+                  el('span', { class: 'small muted' }, '選「自動結束」前請三思：網路或瀏覽器出狀況也可能誤觸'))),
+              el('p', { class: 'small muted' },
+                '所有事件都會記錄，考完可以在成績頁的「考試紀律」看到完整時間軸。',
+                el('br'),
+                '這是瀏覽器端的防護，能擋掉大部分隨手作弊，但擋不了第二台裝置或手機。')))),
+
         el('button', {
           class: 'btn primary',
           onclick: async () => {
             const userIds = [...studentBox.querySelectorAll('input:checked')].map((i) => Number(i.value));
             if (!userIds.length && !f.classGroup.value) return UI.alert('請選擇班級或至少一位學生');
+
+            const durationOverrides = {};
+            for (const m of MODS) {
+              const v = Number(f[`dur_${m}`].value);
+              if (Number.isFinite(v) && v > 0) durationOverrides[m] = Math.round(v * 60);
+            }
+            const policy = f.breakPolicy.value;
+
             try {
               await API.post('/tests/assignments', {
                 testId: Number(f.testId.value), userIds, classGroup: f.classGroup.value || null,
@@ -535,6 +627,18 @@ const Admin = (() => {
                 openFrom: f.openFrom.value ? f.openFrom.value.replace('T', ' ') + ':00' : null,
                 openUntil: f.openUntil.value ? f.openUntil.value.replace('T', ' ') + ':00' : null,
                 maxAttempts: Number(f.maxAttempts.value),
+                durationOverrides,
+                extraTimePct: Number(f.extraTimePct.value) || 0,
+                breakPolicy: policy,
+                breakSeconds: policy === 'timed' ? (Number(f.breakMinutes.value) || 0) * 60 : 0,
+                proctoring: f.procEnabled.checked ? {
+                  enabled: true,
+                  requireFullscreen: f.requireFullscreen.checked,
+                  blockCopy: f.blockCopy.checked,
+                  warnOnLeave: f.warnOnLeave.checked,
+                  maxLeaves: Number(f.maxLeaves.value) || 0,
+                  onExceed: f.onExceed.value,
+                } : { enabled: false },
               });
               toast('已指派並自動發布試卷', 'ok');
               assign(mount, params);
@@ -546,17 +650,29 @@ const Admin = (() => {
         el('h3', {}, '已指派'),
         assignments.length === 0 ? el('p', { class: 'muted' }, '尚未指派任何考試。')
           : el('table', { class: 'data' },
-              el('thead', {}, el('tr', {}, el('th', {}, '試卷'), el('th', {}, '對象'), el('th', {}, '科目'), el('th', {}, '評分'), el('th', {}, '期間'), el('th', {}, ''))),
+              el('thead', {}, el('tr', {}, el('th', {}, '試卷'), el('th', {}, '對象'), el('th', {}, '科目'),
+                el('th', {}, '評分'), el('th', {}, '考試規則'), el('th', {}, '期間'), el('th', {}, ''))),
               el('tbody', {}, assignments.map((a) => el('tr', {},
                 el('td', {}, a.test_title),
                 el('td', {}, a.class_group ? `班級：${a.class_group}` : a.student_name || '—'),
                 el('td', { class: 'small' }, a.modules.split(',').map((m) => UI.MODULE_LABEL[m]?.split(' ')[0]).join('、')),
                 el('td', { class: 'small' }, `寫作 ${a.writing_grading === 'ai' ? 'AI' : '人工'} / 口說 ${a.speaking_grading === 'ai' ? 'AI' : '人工'}`),
+                el('td', { class: 'small' }, (() => {
+                  const bits = [];
+                  const ov = (() => { try { return JSON.parse(a.duration_overrides || 'null'); } catch { return null; } })();
+                  if (ov) bits.push(Object.entries(ov).map(([m, s]) => `${UI.MODULE_LABEL[m]?.[0] || m}${Math.round(s / 60)}分`).join(' '));
+                  if (Number(a.extra_time_pct) > 0) bits.push(`加時 +${a.extra_time_pct}%`);
+                  const pr = (() => { try { return JSON.parse(a.proctoring || 'null'); } catch { return null; } })();
+                  if (pr?.enabled) bits.push('🔒 監考');
+                  if (a.break_policy === 'official') bits.push('官方連續');
+                  if (a.break_policy === 'timed') bits.push(`休息 ${Math.round((a.break_seconds || 0) / 60)} 分`);
+                  return bits.length ? bits.join('、') : el('span', { class: 'muted' }, '預設');
+                })()),
                 el('td', { class: 'small muted' }, a.open_from ? `${fmtDate(a.open_from)} ~ ${fmtDate(a.open_until)}` : '不限'),
                 el('td', {}, el('button', {
                   class: 'btn sm danger',
                   onclick: async () => { await API.del(`/tests/assignments/${a.id}`); assign(mount, params); },
-                }, '取消'))))))));
+                }, '取消'))))))))));
   }
 
   // ── 成績總覽 ────────────────────────────────────────────

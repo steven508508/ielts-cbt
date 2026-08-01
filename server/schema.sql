@@ -217,3 +217,16 @@ CREATE TABLE IF NOT EXISTS maintenance_log (
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_maint_time (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ── v2.1：考試規則事件紀錄（反作弊／考試紀律）────────────────
+CREATE TABLE IF NOT EXISTS exam_events (
+  id         INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  attempt_id INT UNSIGNED NOT NULL,
+  module     VARCHAR(20)  NULL,
+  type       VARCHAR(40)  NOT NULL,
+  detail     VARCHAR(255) NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_ev_attempt (attempt_id),
+  INDEX idx_ev_type (type),
+  CONSTRAINT fk_ev_att FOREIGN KEY (attempt_id) REFERENCES attempts(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
