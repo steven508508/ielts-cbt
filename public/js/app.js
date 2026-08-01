@@ -212,9 +212,12 @@
         el('div', { class: 'brand' }, 'IELTS 模擬考'),
         el('nav', { class: 'app-nav' }, links.map(([href, label]) =>
           el('a', { href, class: href === active ? 'active' : '' }, label))),
-        el('div', { style: { flex: 1 } }),
-        el('span', { class: 'small muted' }, API.user?.name || ''),
-        el('button', { class: 'btn sm ghost', onclick: () => { location.hash = '#/account'; } }, '⚙'),
+        el('div', { class: 'spacer' }),
+        el('span', { class: 'small muted who', title: API.user?.name || '' }, API.user?.name || ''),
+        el('button', {
+          class: 'btn sm ghost', title: '我的帳號', 'aria-label': '我的帳號',
+          onclick: () => { location.hash = '#/account'; },
+        }, '⚙'),
         el('button', { class: 'btn sm', onclick: () => API.logout() }, '登出')),
       main);
     return main;
@@ -222,13 +225,13 @@
 
   // ── 學生首頁 ────────────────────────────────────────────
   async function studentHome(mount) {
-    UI.render(mount, el('div', { class: 'empty' }, '載入中…'));
+    UI.render(mount, UI.loading('載入你的考試…', 2));
     const { available } = await API.get('/exam/available');
 
     UI.render(mount, 
       el('h2', {}, `${API.user?.name}，你好`),
       available.length === 0
-        ? el('div', { class: 'card' }, el('div', { class: 'empty' }, '目前沒有指派給你的考試。'))
+        ? el('div', { class: 'card' }, UI.emptyState('目前沒有指派給你的考試', { label: '去練習 →', href: '#/practice' }, '老師指派之後就會出現在這裡。想先自己練可以到「練習」。'))
         : available.map((a) => el('div', { class: 'card' },
             el('div', { style: { display: 'flex', gap: '1rem', alignItems: 'flex-start', flexWrap: 'wrap' } },
               el('div', { style: { flex: '1 1 260px' } },
@@ -267,8 +270,8 @@
     UI.render(mount, 
       el('h2', {}, '我的成績'),
       el('div', { class: 'card' },
-        attempts.length === 0 ? el('div', { class: 'empty' }, '還沒有考試紀錄。')
-          : el('table', { class: 'data' },
+        attempts.length === 0 ? UI.emptyState('還沒有考試紀錄', { label: '看看有沒有考試 →', href: '#/' })
+          : UI.dataTable(
               el('thead', {}, el('tr', {},
                 el('th', {}, '試卷'), el('th', {}, '日期'), el('th', {}, '狀態'),
                 el('th', {}, 'L'), el('th', {}, 'R'), el('th', {}, 'W'), el('th', {}, 'S'),
@@ -300,7 +303,7 @@
         onclick: (e) => {
           [...bar.children].forEach((c) => c.classList.remove('active'));
           e.target.classList.add('active');
-          UI.render(holder, el('div', { class: 'empty' }, '載入中…'));
+          UI.render(holder, UI.loading());
           fn(holder);
         },
       }, label)));
@@ -365,7 +368,7 @@
         r.summary_zh && el('p', { style: { marginTop: '.8rem' } }, el('b', {}, '總評：'), r.summary_zh),
         r.corrections?.length && el('details', { open: true },
           el('summary', {}, el('b', {}, `逐句修改建議（${r.corrections.length} 處）`)),
-          el('table', { class: 'data' },
+          UI.dataTable(
             el('thead', {}, el('tr', {}, el('th', {}, '原句'), el('th', {}, '建議'), el('th', {}, '問題'))),
             el('tbody', {}, r.corrections.map((c) => el('tr', {},
               el('td', {}, el('span', { class: 'diff-del' }, c.original)),
@@ -538,7 +541,7 @@
       for (const [k, v] of Object.entries(filter)) if (v) qs.set(k, v);
       let d;
       try { d = await API.get(`/practice/wrong?${qs}`); }
-      catch (e) { return UI.render(box, el('div', { class: 'empty' }, `讀不到錯題：${e.message}`)); }
+      catch (e) { return UI.render(box, UI.errorState(e.message, load)); }
 
       UI.render(summary,
         d.byType.length
@@ -574,7 +577,7 @@
               el('div', {}, el('span', { class: 'small muted' }, '你的答案　'),
                 el('b', { style: { color: 'var(--err)' } }, it.yourAnswer || '（空白）')),
               el('div', {}, el('span', { class: 'small muted' }, '正確答案　'),
-                el('b', { style: { color: '#2e7d32' } }, it.expected || '—'))),
+                el('b', { style: { color: 'var(--ok)' } }, it.expected || '—'))),
             it.explanation
               ? el('details', { style: { marginTop: '.4rem' } },
                   el('summary', { class: 'small' }, '看解析'),
@@ -651,11 +654,11 @@
           if (!res) return null;
           return el('div', { style: { padding: '.5rem 0', borderBottom: '1px solid var(--line-2)' } },
             el('div', {},
-              el('b', { style: { color: res.correct ? '#2e7d32' : 'var(--err)' } }, res.correct ? '✓ ' : '✗ '),
+              el('b', { style: { color: res.correct ? 'var(--ok)' : 'var(--err)' } }, res.correct ? '✓ ' : '✗ '),
               it.text || `第 ${it.number} 題`),
             el('div', { class: 'small' },
               '你填：', el('b', {}, res.yourAnswer || '（空白）'),
-              '　正解：', el('b', { style: { color: '#2e7d32' } }, res.expected)),
+              '　正解：', el('b', { style: { color: 'var(--ok)' } }, res.expected)),
             res.explanation
               ? el('div', { class: 'small muted', style: { marginTop: '.2rem' } }, res.explanation) : null);
         })),
@@ -719,31 +722,33 @@
 
     const mount = shell(active);
     try {
-      if (resultMatch) return Results.render(Number(resultMatch[1]), mount);
-      if (editMatch) return Admin.editPaper(mount, Number(editMatch[1]));
+      // 一定要 await。`return promise` 不會讓 rejection 走到下面的 catch，
+      // 所以任何一頁載入失敗都只會留下一片空白，連錯誤訊息都沒有。
+      if (resultMatch) return await Results.render(Number(resultMatch[1]), mount);
+      if (editMatch) return await Admin.editPaper(mount, Number(editMatch[1]));
       switch (path) {
-        case '/': return staff ? Admin.results(mount) : studentHome(mount);
-        case '/my-results': return myResults(mount);
-        case '/practice': return practice(mount, params);
-        case '/account': return account(mount);
-        case '/admin/tests': return Admin.tests(mount);
-        case '/admin/import': return Admin.importPage(mount);
-        case '/admin/generate': return Admin.generate(mount);
-        case '/admin/bank': return Admin.bank(mount);
-        case '/admin/members': return Admin.members(mount);
+        case '/': return await (staff ? Admin.results(mount) : studentHome(mount));
+        case '/my-results': return await myResults(mount);
+        case '/practice': return await practice(mount, params);
+        case '/account': return await account(mount);
+        case '/admin/tests': return await Admin.tests(mount);
+        case '/admin/import': return await Admin.importPage(mount);
+        case '/admin/generate': return await Admin.generate(mount);
+        case '/admin/bank': return await Admin.bank(mount);
+        case '/admin/members': return await Admin.members(mount);
         case '/admin/students': location.hash = '#/admin/members'; return;
-        case '/admin/assign': return Admin.assign(mount, params);
-        case '/admin/results': return Admin.results(mount);
-        case '/admin/files': return Admin.files(mount);
-        case '/admin/data': return Admin.data(mount);
-        case '/admin/monitor': return Admin.monitor(mount);
-        case '/admin/settings': return Admin.settings(mount);
+        case '/admin/assign': return await Admin.assign(mount, params);
+        case '/admin/results': return await Admin.results(mount);
+        case '/admin/files': return await Admin.files(mount);
+        case '/admin/data': return await Admin.data(mount);
+        case '/admin/monitor': return await Admin.monitor(mount);
+        case '/admin/settings': return await Admin.settings(mount);
         default:
           UI.render(mount, el('div', { class: 'empty' }, '找不到這個頁面。'));
       }
     } catch (e) {
-      UI.render(mount, el('div', { class: 'card' },
-        el('h3', {}, '發生錯誤'), el('p', {}, e.message)));
+      console.error('[route]', path, e);
+      UI.render(mount, UI.errorState(e.message, () => route()));
     }
   }
 

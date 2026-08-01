@@ -122,6 +122,8 @@ async function migrate() {
     ['assignments', 'proctoring', 'TEXT NULL'],
     ['assignments', 'break_policy', "VARCHAR(20) NOT NULL DEFAULT 'flexible'"],
     ['assignments', 'break_seconds', 'INT NOT NULL DEFAULT 0'],
+    // v2.8：批改失敗時把原因記下來，才知道為什麼要重跑
+    ['attempts', 'grade_error', 'TEXT NULL'],
   ];
   for (const [t, c, d] of steps) {
     try { if (await ensureColumn(t, c, d)) added.push(`${t}.${c}`); }

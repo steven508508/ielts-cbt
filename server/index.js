@@ -49,16 +49,17 @@ api('/api/manage', './routes/manage');
 api('/api/practice', './routes/practice');
 
 app.get('/api/health', async (req, res) => {
-  try {
-    await db.query('SELECT 1');
-    res.json({
-      ok: true, time: Date.now(),
-      version: require('../package.json').version,
-      uptime: Math.round(process.uptime()),
-    });
-  } catch (e) {
-    res.status(503).json({ ok: false, error: e.message });
-  }
+  // 健康檢查自己不能被資料庫拖住。連線池滿的時候查詢會排隊，
+  // 沒有這個逾時的話健康檢查也會一起卡死，外面就永遠看不出有問題。
+  const probe = db.query('SELECT 1').then(() => null, (e) => e);
+  const timeout = new Promise((r) => setTimeout(() => r(new Error('資料庫在 3 秒內沒有回應（連線池可能已滿）')), 3000));
+  const err = await Promise.race([probe, timeout]);
+  if (err) return res.status(503).json({ ok: false, error: err.message });
+  res.json({
+    ok: true, time: Date.now(),
+    version: require('../package.json').version,
+    uptime: Math.round(process.uptime()),
+  });
 });
 
 // SPA 後備路由
@@ -104,13 +105,18 @@ async function start() {
   const server = http.createServer(app);
 
   // 口說即時語音對話（WebSocket）
-  require('./lib/realtime').attach(server);
+  const realtime = require('./lib/realtime');
+  const wss = realtime.attach(server);
 
   // 自動清理逾期資料
-  require('./lib/retention').schedule();
+  const retention = require('./lib/retention');
+  retention.schedule();
 
   // 上次關機時還在跑的 AI 背景工作其實早就沒了，標記成中斷免得永遠轉圈
   await require('./lib/jobs').reapStale();
+
+  // 卡住的批改要撿回來，否則學生的成績頁會永遠轉圈
+  require('./lib/grade').scheduleSweep();
 
   server.listen(config.port, config.host, () => {
     console.log(`IELTS 模擬考系統已啟動 → http://localhost:${config.port}`);
@@ -124,6 +130,12 @@ async function start() {
     shuttingDown = true;
     console.log(`\n收到 ${signal}，正在關閉…`);
     const force = setTimeout(() => { console.log('逾時，強制結束'); process.exit(1); }, 15000);
+    // server.close() 只會停止接受新連線，已建立的 WebSocket 會一直開著，
+    // 不主動收掉的話 callback 永遠不會被呼叫，每次重新部署都要等滿 15 秒
+    // 然後以 exit code 1 結束（systemd／Docker 會判讀成當掉）。
+    try { realtime.closeAll(wss); } catch {}
+    try { retention.stop(); } catch {}
+    try { require('./lib/grade').stopSweep(); } catch {}
     server.close(async () => {
       await db.close();
       clearTimeout(force);
@@ -134,10 +146,16 @@ async function start() {
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('unhandledRejection', (e) => console.error('[unhandledRejection]', e));
+  process.on('uncaughtException', (e) => {
+    // 記下來但不要直接死掉：考試進行中被一個非致命例外整個打掉最糟
+    console.error('[uncaughtException]', e);
+  });
 
   return server;
 }
 
-if (require.main === module) start();
+if (require.main === module) {
+  start().catch((e) => { console.error('啟動失敗：', e); process.exit(1); });
+}
 
 module.exports = { app, start };

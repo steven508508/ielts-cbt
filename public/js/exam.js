@@ -1062,7 +1062,7 @@ const Exam = (() => {
       width: '560px',
       body: rows.length
         ? el('div', {}, rows.map(({ si, rec }) => el('div', {
-            style: { padding: '.5rem 0', borderBottom: '1px solid #ddd', cursor: 'pointer' },
+            style: { padding: '.5rem 0', borderBottom: '1px solid var(--c-line-soft, #ddd)', cursor: 'pointer' },
             onclick: () => {
               $$('.modal-back').forEach((b) => b.remove());
               if (S.section !== si) { S.section = si; renderExam(); }

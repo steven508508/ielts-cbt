@@ -6,6 +6,8 @@ const { requireAuth, requireStaff } = require('../middleware/auth');
 const { validatePaper, normalizePaper } = require('../lib/paper');
 const tabular = require('../lib/tabular');
 const aiTasks = require('../lib/aiTasks');
+const { rateLimit } = require('../middleware/rateLimit');
+const aiLimit = rateLimit({ key: 'ai', by: 'user', windowMs: 60_000, max: 8, message: 'AI 請求太頻繁' });
 
 const router = express.Router();
 const memUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 30 * 1024 * 1024 } });
@@ -58,7 +60,7 @@ router.post('/spreadsheet', memUpload.single('file'), async (req, res) => {
 });
 
 /** ③ 貼上原文，交給 AI 解析 */
-router.post('/parse', async (req, res) => {
+router.post('/parse', aiLimit, async (req, res) => {
   const { text, moduleHint, answerKey, title, testType } = req.body || {};
   if (!text || String(text).trim().length < 30)
     return res.status(400).json({ error: '請貼上完整的題目內容' });

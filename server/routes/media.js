@@ -6,8 +6,10 @@ const multer = require('multer');
 const db = require('../db');
 const config = require('../config');
 const { requireAuth, requireStaff } = require('../middleware/auth');
+const { rateLimit } = require('../middleware/rateLimit');
 
 const router = express.Router();
+const uploadLimit = rateLimit({ key: 'upload', by: 'user', windowMs: 60_000, max: 10, message: '上傳太頻繁' });
 
 function kindOf(mime, name) {
   if (/^audio\//.test(mime) || /\.(mp3|wav|m4a|ogg|aac|webm)$/i.test(name)) return 'audio';
@@ -46,7 +48,7 @@ router.get('/', requireStaff, async (req, res) => {
   });
 });
 
-router.post('/', requireStaff, upload.array('files', 30), async (req, res) => {
+router.post('/', requireStaff, uploadLimit, upload.array('files', 20), async (req, res) => {
   const out = [];
   for (const f of req.files || []) {
     const kind = kindOf(f.mimetype, f.originalname);

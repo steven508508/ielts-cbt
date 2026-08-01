@@ -303,7 +303,70 @@ async function gradeAttempt(attemptId, { speakingMode = 'ai', writingMode = 'ai'
   return out;
 }
 
+/**
+ * 撿回卡住的批改。
+ *
+ * 兩種情況會卡住：
+ *   ① 批改到一半伺服器重啟 → 場次永遠停在 'grading'
+ *   ② AI 暫時出錯 → 退回 'submitted' 但沒有人會再處理
+ * 兩種都會讓學生的成績頁一直轉圈。這裡在開機時與之後每 5 分鐘掃一次。
+ */
+let sweeping = false;
+async function requeueStuck({ olderThanMin = 3, limit = 20 } = {}) {
+  if (sweeping) return { picked: 0 };
+  sweeping = true;
+  try {
+    // 重啟後還掛著 'grading' 的其實早就沒有在跑了
+    await db.exec(
+      "UPDATE attempts SET status='submitted' WHERE status='grading' AND updated_at < DATE_SUB(NOW(), INTERVAL ? MINUTE)",
+      [olderThanMin]
+    ).catch(() => {});
+
+    const rows = await db.query(
+      `SELECT a.id, a.assignment_id FROM attempts a
+        WHERE a.status = 'submitted'
+          AND a.submitted_at < DATE_SUB(NOW(), INTERVAL ? MINUTE)
+        ORDER BY a.submitted_at ASC LIMIT ?`,
+      [olderThanMin, Math.min(50, limit)]
+    );
+    if (!rows.length) return { picked: 0 };
+
+    console.log(`[grade] 撿回 ${rows.length} 場卡住的批改`);
+    for (const r of rows) {
+      const asg = r.assignment_id
+        ? await db.one('SELECT speaking_grading, writing_grading FROM assignments WHERE id = ?', [r.assignment_id])
+        : null;
+      try {
+        await gradeAttempt(r.id, {
+          speakingMode: asg?.speaking_grading || 'ai',
+          writingMode: asg?.writing_grading || 'ai',
+        });
+        await db.exec('UPDATE attempts SET grade_error = NULL WHERE id = ?', [r.id]).catch(() => {});
+      } catch (e) {
+        console.warn(`[grade] 場次 ${r.id} 重試仍然失敗：`, e.message);
+        await db.exec(
+          "UPDATE attempts SET status='submitted', grade_error=? WHERE id=?",
+          [String(e.message || '').slice(0, 500), r.id]
+        ).catch(() => {});
+      }
+    }
+    return { picked: rows.length };
+  } finally {
+    sweeping = false;
+  }
+}
+
+let sweepTimer = null;
+function scheduleSweep() {
+  clearInterval(sweepTimer);
+  sweepTimer = setInterval(() => { requeueStuck().catch((e) => console.warn('[grade] 掃描失敗：', e.message)); }, 5 * 60_000);
+  sweepTimer.unref?.();
+  setTimeout(() => { requeueStuck().catch(() => {}); }, 20_000).unref?.();
+  return sweepTimer;
+}
+function stopSweep() { clearInterval(sweepTimer); sweepTimer = null; }
+
 module.exports = {
   gradeAttempt, gradeObjectiveModule, gradeWritingModule, gradeSpeakingModule,
-  recomputeAttempt, writingTasks,
+  recomputeAttempt, writingTasks, requeueStuck, scheduleSweep, stopSweep,
 };

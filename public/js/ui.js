@@ -128,5 +128,59 @@ const UI = (() => {
 
   const MODULE_LABEL = { listening: '聽力 Listening', reading: '閱讀 Reading', writing: '寫作 Writing', speaking: '口說 Speaking' };
 
-  return { $, $$, el, render, esc, sanitize, toast, modal, confirm, alert, fmtTime, fmtDate, band, debounce, download, MODULE_LABEL };
+  /* ── 狀態元件 ────────────────────────────────────────────
+     以前「載入中」「沒有資料」「載入失敗」長得一模一樣，
+     都是一行灰字，而且失敗時連重試的按鈕都沒有。 */
+
+  /** 骨架畫面。rows = 幾條假的內容列 */
+  function skeleton(rows = 3) {
+    return el('div', { class: 'skeleton' },
+      Array.from({ length: rows }, (_, i) => el('div', {
+        class: 'sk-line', style: { width: `${[100, 82, 91, 74, 88][i % 5]}%` },
+      })));
+  }
+
+  /** 載入中 */
+  function loading(text = '載入中…', rows = 3) {
+    return el('div', { class: 'state state-loading' },
+      el('div', { class: 'state-msg' }, el('span', { class: 'spinner' }), text),
+      skeleton(rows));
+  }
+
+  /** 載入失敗，一定要給重試 */
+  function errorState(message, onRetry) {
+    return el('div', { class: 'state state-error' },
+      el('div', { class: 'state-icon' }, '⚠'),
+      el('div', { class: 'state-title' }, '載入失敗'),
+      el('div', { class: 'state-msg' }, message || '發生未預期的錯誤'),
+      onRetry ? el('button', { class: 'btn sm', onclick: onRetry }, '重新載入') : null);
+  }
+
+  /** 真的沒有資料。action = { label, href } 或 { label, onclick } */
+  function emptyState(message, action, hint) {
+    return el('div', { class: 'state state-empty' },
+      el('div', { class: 'state-icon' }, '📭'),
+      el('div', { class: 'state-title' }, message),
+      hint ? el('div', { class: 'state-msg' }, hint) : null,
+      action
+        ? (action.href
+            ? el('a', { class: 'btn primary sm', href: action.href }, action.label)
+            : el('button', { class: 'btn primary sm', onclick: action.onclick }, action.label))
+        : null);
+  }
+
+  /**
+   * 資料表格。外面一定要包一層可橫向捲動的容器，不然手機上直接爆版。
+   * 用法和原本的 el('table', { class: 'data' }, thead, tbody) 一樣，
+   * 只是換成 UI.dataTable(thead, tbody)。
+   */
+  function dataTable(...children) {
+    return el('div', { class: 'table-wrap' }, el('table', { class: 'data' }, ...children));
+  }
+
+  return {
+    $, $$, el, render, esc, sanitize, toast, modal, confirm, alert,
+    fmtTime, fmtDate, band, debounce, download, MODULE_LABEL,
+    skeleton, loading, errorState, emptyState, dataTable,
+  };
 })();

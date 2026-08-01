@@ -308,3 +308,52 @@ test('wrapRouter 不會去動錯誤處理中介層', () => {
   assert.notEqual(once, normal, '一般中介層要被包起來');
   assert.equal(wrap(once), once, '已經包過的不會再包一層');
 });
+
+// ── 速率限制 ───────────────────────────────────────────────────
+// 舊版把 req.body.username 放進計數 key，等於「每換一個帳號就重新給
+// 一整份額度」——拿一份學生名單就能無限次嘗試密碼。
+test('速率限制不會因為換帳號就重新給額度', () => {
+  const { rateLimit, _clear } = require('../server/middleware/rateLimit');
+  _clear();
+  const mw = rateLimit({ key: 't1', windowMs: 60_000, max: 3 });
+  const run = (username) => {
+    const req = { ip: '1.2.3.4', body: { username } };
+    let status = 200;
+    const res = { setHeader() {}, status(s) { status = s; return this; }, json() { return this; } };
+    let passed = false;
+    mw(req, res, () => { passed = true; });
+    return { status, passed };
+  };
+  assert.equal(run('alice').passed, true, '第 1 次放行');
+  assert.equal(run('bob').passed, true, '第 2 次放行');
+  assert.equal(run('carol').passed, true, '第 3 次放行');
+  const fourth = run('dave');
+  assert.equal(fourth.passed, false, '第 4 次要被擋下，即使換了帳號');
+  assert.equal(fourth.status, 429);
+});
+
+test('速率限制可以依使用者計數（已登入的端點用）', () => {
+  const { rateLimit, _clear } = require('../server/middleware/rateLimit');
+  _clear();
+  const mw = rateLimit({ key: 't2', by: 'user', windowMs: 60_000, max: 2 });
+  const run = (uid) => {
+    const req = { ip: '1.2.3.4', user: { id: uid }, body: {} };
+    const res = { setHeader() {}, status() { return this; }, json() { return this; } };
+    let passed = false;
+    mw(req, res, () => { passed = true; });
+    return passed;
+  };
+  assert.equal(run(1), true);
+  assert.equal(run(1), true);
+  assert.equal(run(1), false, '同一個使用者第 3 次被擋');
+  assert.equal(run(2), true, '不同使用者有自己的額度（同一個 IP 也一樣）');
+});
+
+test('速率限制的計數表不會無限成長', () => {
+  const { rateLimit, _clear, MAX_BUCKETS } = require('../server/middleware/rateLimit');
+  _clear();
+  const mw = rateLimit({ key: 't3', windowMs: 60_000, max: 1000 });
+  const res = { setHeader() {}, status() { return this; }, json() { return this; } };
+  for (let i = 0; i < 50; i += 1) mw({ ip: `10.0.0.${i}`, body: {} }, res, () => {});
+  assert.ok(MAX_BUCKETS > 0 && MAX_BUCKETS <= 100_000, '有設上限');
+});

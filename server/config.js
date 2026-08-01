@@ -27,6 +27,13 @@ module.exports = {
     charset: 'utf8mb4',
     connectionLimit: Number(process.env.DB_POOL || 10),
     waitForConnections: true,
+    // 一定要設 queueLimit。預設 0 = 無上限排隊，連線用完之後
+    // 每一個請求都會「永遠」等下去 —— 沒有錯誤、沒有日誌，
+    // 連 /api/health 也一起卡住，Docker 因此永遠不會判定要重啟。
+    queueLimit: Number(process.env.DB_QUEUE_LIMIT || 60),
+    connectTimeout: Number(process.env.DB_CONNECT_TIMEOUT || 10_000),
+    enableKeepAlive: true,
+    keepAliveInitialDelay: 30_000,
     multipleStatements: false,
     dateStrings: true,
   },

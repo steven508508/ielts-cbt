@@ -93,11 +93,11 @@ const Speaking = (() => {
     try {
       const s = await navigator.mediaDevices.getUserMedia({ audio: true });
       box.textContent = '✓ 麥克風正常';
-      box.style.color = '#1e7d3c';
+      box.style.color = 'var(--c-ok, #1e7d3c)';
       s.getTracks().forEach((t) => t.stop());
     } catch (e) {
       box.textContent = `✗ 無法使用麥克風：${e.message}。請確認網址是 https:// 或 localhost，並允許麥克風權限。`;
-      box.style.color = '#c0392b';
+      box.style.color = 'var(--c-danger, #c0392b)';
     }
   }
 

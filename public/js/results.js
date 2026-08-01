@@ -8,10 +8,10 @@ const Results = (() => {
 
   async function render(attemptId, mount) {
     clearInterval(pollTimer);
-    UI.render(mount, el('div', { class: 'empty' }, '載入成績中…'));
+    UI.render(mount, UI.loading('載入成績單…', 5));
     try {
       D = await API.get(`/results/${attemptId}`);
-    } catch (e) { return UI.render(mount, el('div', { class: 'empty' }, e.message)); }
+    } catch (e) { return UI.render(mount, UI.errorState(e.message, () => render(attemptId, mount))); }
 
     if (['submitted', 'grading'].includes(D.attempt.status)) {
       renderGrading(attemptId, mount);
@@ -122,7 +122,7 @@ const Results = (() => {
       isStaff && c.events?.length
         ? el('div', { class: 'card' },
             el('h3', {}, `事件時間軸（${c.events.length} 筆）`),
-            el('table', { class: 'data' },
+            UI.dataTable(
               el('thead', {}, el('tr', {}, el('th', {}, '時間'), el('th', {}, '科目'), el('th', {}, '事件'), el('th', {}, '備註'))),
               el('tbody', {}, c.events.map((e) => {
                 const [label, kind] = EVENT_LABEL[e.type] || [e.type, ''];
@@ -364,7 +364,7 @@ const Results = (() => {
 
       fb.corrections?.length && el('div', { class: 'card' },
         el('h3', {}, '表達修正'),
-        el('table', { class: 'data' },
+        UI.dataTable(
           el('thead', {}, el('tr', {}, el('th', {}, '你說的'), el('th', {}, '更自然的說法'), el('th', {}, '問題'))),
           el('tbody', {}, fb.corrections.map((c) => el('tr', {},
             el('td', {}, el('span', { class: 'diff-del' }, c.original)),

@@ -13,6 +13,9 @@ const { normalizePaper, flattenQuestions, QUESTION_TYPES } = require('../lib/pap
 const { checkAnswer } = require('../lib/answers');
 const ai = require('../lib/ai');
 const aiTasks = require('../lib/aiTasks');
+const { rateLimit } = require('../middleware/rateLimit');
+const aiLimit = rateLimit({ key: 'ai', by: 'user', windowMs: 60_000, max: 8, message: 'AI 請求太頻繁' });
+const drillLimit = rateLimit({ key: 'drill', by: 'user', windowMs: 60_000, max: 20 });
 
 const router = express.Router();
 const memUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 30 * 1024 * 1024 } });
@@ -50,7 +53,7 @@ async function collectWrong(userId, { module: mod, type, limit = 200 } = {}) {
       WHERE a.user_id = ? AND a.status = 'graded' AND an.correct = 0
         ${mod ? 'AND an.module = ?' : ''}
       ORDER BY a.submitted_at DESC, an.module, an.q_number
-      LIMIT ${Math.min(500, Number(limit) || 200)}`,
+      LIMIT ${Math.min(500, Math.max(1, Number(limit) || 200))}`,
     mod ? [userId, mod] : [userId]
   );
 
@@ -115,7 +118,7 @@ router.get('/wrong', async (req, res) => {
 });
 
 /** 重做：抽題目出來，但不給答案 */
-router.post('/drill', async (req, res) => {
+router.post('/drill', drillLimit, async (req, res) => {
   const uid = targetUser(req);
   const count = Math.min(50, Math.max(1, Number(req.body?.count) || 10));
   let pool = await collectWrong(uid, { module: req.body?.module, type: req.body?.type, limit: 500 });
@@ -187,7 +190,7 @@ const FALLBACK_TOPICS = {
 };
 
 /** 出一題口說 */
-router.post('/speaking/question', async (req, res) => {
+router.post('/speaking/question', aiLimit, async (req, res) => {
   const part = [1, 2, 3].includes(Number(req.body?.part)) ? Number(req.body.part) : 2;
   const topic = String(req.body?.topic || '').slice(0, 100);
 
@@ -234,7 +237,7 @@ router.post('/speaking/question', async (req, res) => {
 });
 
 /** 批改一次口說練習：可以送錄音檔，也可以直接送逐字稿 */
-router.post('/speaking/grade', memUpload.single('audio'), async (req, res) => {
+router.post('/speaking/grade', aiLimit, memUpload.single('audio'), async (req, res) => {
   const part = Number(req.body?.part || 1);
   const question = String(req.body?.question || '').slice(0, 2000);
   const duration = Number(req.body?.duration || 0);

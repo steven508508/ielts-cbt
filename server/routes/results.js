@@ -6,7 +6,10 @@ const { normalizePaper, flattenQuestions } = require('../lib/paper');
 const bands = require('../lib/bands');
 const grade = require('../lib/grade');
 
+const { rateLimit } = require('../middleware/rateLimit');
+
 const router = express.Router();
+const regradeLimit = rateLimit({ key: 'regrade', by: 'user', windowMs: 60_000, max: 5, message: '重新批改太頻繁' });
 router.use(requireAuth);
 
 function safeParse(s, fallback = null) {
@@ -187,7 +190,7 @@ router.post('/:id/grade', requireStaff, async (req, res) => {
 });
 
 /** 老師：重新批改（例如改了答案卷之後） */
-router.post('/:id/regrade', requireStaff, async (req, res) => {
+router.post('/:id/regrade', regradeLimit, requireStaff, async (req, res) => {
   try {
     const out = await grade.gradeAttempt(req.params.id, {
       speakingMode: req.body?.speakingMode || 'ai',

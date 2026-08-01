@@ -37,18 +37,21 @@
   --c-line:#6a6a4a; --c-line-soft:#3d3d33; --c-rubric:#2b2b22;
   --c-accent:#ffe95c; --c-accent-fg:#1a1a1a;
   --c-answered:#ffe95c; --c-answered-fg:#1a1a1a; --c-hl:#7a6a00; --c-note:#2f5133;
+  --c-ok:#7ddc9a; --c-warn:#ffc76b; --c-danger:#ff8a80;
 }
 .cbt[data-scheme="white-black"]{
   --c-bg:#1a1a1a; --c-fg:#f5f5f5; --c-bar:#2b2b2b; --c-bar-fg:#f5f5f5;
   --c-line:#5c5c5c; --c-line-soft:#3a3a3a; --c-rubric:#262626;
   --c-accent:#7fc4ea; --c-accent-fg:#12222b;
   --c-answered:#f5f5f5; --c-answered-fg:#1a1a1a; --c-hl:#5c5320; --c-note:#26482a;
+  --c-ok:#7ddc9a; --c-warn:#ffc76b; --c-danger:#ff8a80;
 }
 .cbt[data-scheme="black-yellow"]{
   --c-bg:#fff9c4; --c-fg:#1a1a1a; --c-bar:#f4ecab; --c-bar-fg:#1a1a1a;
   --c-line:#b3a95e; --c-line-soft:#ddd39a; --c-rubric:#f7f0bd;
   --c-accent:#004a70; --c-accent-fg:#ffffff;
   --c-answered:#1a1a1a; --c-answered-fg:#fff9c4; --c-hl:#ffd54f; --c-note:#a5d6a7;
+  --c-ok:#1e7d3c; --c-warn:#b36b00; --c-danger:#c0392b;
 }
 
 .cbt input, .cbt select, .cbt textarea{
@@ -188,7 +191,7 @@ mark.hl.has-note{background:var(--c-note); border-bottom:2px dotted currentColor
   font-size:.85em; border-top:1px solid var(--c-line-soft); margin-top:.4rem;
 }
 .cbt-wc b{font-size:1.15em}
-.cbt-wc .under{color:#c0392b}
+.cbt-wc .under{color:var(--c-danger,#c0392b)}
 
 /* ── 聽力播放器 ─────────────────────────────────────────── */
 .cbt-audio{
@@ -306,19 +309,19 @@ mark.hl.has-note{background:var(--c-note); border-bottom:2px dotted currentColor
   transition:border-color .2s, box-shadow .2s;
 }
 .cbt-orb.examiner{border-color:var(--c-accent); box-shadow:0 0 0 8px rgba(0,92,138,.12)}
-.cbt-orb.candidate{border-color:#1e7d3c; box-shadow:0 0 0 8px rgba(30,125,60,.15)}
+.cbt-orb.candidate{border-color:var(--c-ok,#1e7d3c); box-shadow:0 0 0 8px rgba(30,125,60,.15)}
 .cbt-orb .ring{
   position:absolute; inset:-14px; border-radius:50%; border:2px solid currentColor;
   opacity:0; transform:scale(.9);
 }
-.cbt-orb.candidate .ring{animation:orbPulse 1.4s infinite; color:#1e7d3c}
+.cbt-orb.candidate .ring{animation:orbPulse 1.4s infinite; color:var(--c-ok,#1e7d3c)}
 .cbt-orb.examiner .ring{animation:orbPulse 1.6s infinite; color:var(--c-accent)}
 @keyframes orbPulse{0%{opacity:.5;transform:scale(.92)}100%{opacity:0;transform:scale(1.18)}}
 
 .cbt-level{width:240px; height:6px; background:var(--c-line-soft); margin:.8rem auto 0; overflow:hidden; border-radius:99px}
-.cbt-level i{display:block; height:100%; width:0; background:#1e7d3c; transition:width .07s}
+.cbt-level i{display:block; height:100%; width:0; background:var(--c-ok,#1e7d3c); transition:width .07s}
 .cbt-bigtimer{font-size:2.6rem; font-weight:700; font-variant-numeric:tabular-nums; margin:.4rem 0}
-.cbt-bigtimer.warn{color:#b36b00} .cbt-bigtimer.danger{color:#c0392b}
+.cbt-bigtimer.warn{color:var(--c-warn,#b36b00)} .cbt-bigtimer.danger{color:var(--c-danger,#c0392b)}
 .cbt-cue{
   text-align:left; border:2px solid var(--c-fg); padding:1.1rem 1.3rem; max-width:520px;
   margin:1rem auto; line-height:1.8; background:var(--c-bg);
@@ -342,3 +345,15 @@ mark.hl.has-note{background:var(--c-note); border-bottom:2px dotted currentColor
   .cbt-split{display:none}
   .cbt-top{height:auto; padding:.4rem .6rem; flex-wrap:wrap}
 }
+
+/* 考試中的一般彈窗（例如「我的註記」）也要跟著配色走，
+   不然在黑底配色下會突然跳出一個白色卡片 */
+.exam-body .modal{background:var(--c-bg); color:var(--c-fg); border:1px solid var(--c-line)}
+.exam-body .modal header{background:var(--c-rubric); color:var(--c-fg); border-bottom-color:var(--c-line-soft)}
+.exam-body .modal footer{border-top-color:var(--c-line-soft)}
+.exam-body .modal .btn{background:var(--c-bg); color:var(--c-fg); border-color:var(--c-line)}
+.exam-body .modal .btn.primary{background:var(--c-accent); color:var(--c-accent-fg); border-color:var(--c-accent)}
+.exam-body .modal .small.muted,.exam-body .modal .muted{color:var(--c-muted)}
+
+/* 提示訊息不要蓋在底部的題號列與上下題按鈕上 */
+.exam-body #toasts{bottom:calc(var(--foot-h, 56px) + 14px)}

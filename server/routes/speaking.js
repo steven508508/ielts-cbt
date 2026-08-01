@@ -12,7 +12,11 @@ const bands = require('../lib/bands');
 
 const realtime = require('../lib/realtime');
 
+const { rateLimit } = require('../middleware/rateLimit');
+
 const router = express.Router();
+const sttLimit = rateLimit({ key: 'stt', by: 'user', windowMs: 60_000, max: 20, message: '上傳太頻繁' });
+const scoreLimit = rateLimit({ key: 'sp-score', by: 'user', windowMs: 60_000, max: 10, message: '評分請求太頻繁' });
 router.use(requireAuth);
 
 /** 目前設定是否支援即時語音對話 */
@@ -63,7 +67,7 @@ router.get('/monitor/active', requireStaff, async (req, res) => {
 const memUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 60 * 1024 * 1024 } });
 
 /** 考官語音（TTS）。失敗時前端會自動改用瀏覽器內建語音。 */
-router.post('/tts', async (req, res) => {
+router.post('/tts', sttLimit, async (req, res) => {
   const { text, voice } = req.body || {};
   if (!text) return res.status(400).json({ error: '沒有文字' });
   try {
@@ -77,7 +81,7 @@ router.post('/tts', async (req, res) => {
 });
 
 /** 上傳一題的錄音，順便做語音轉文字 */
-router.post('/:attemptId/response', memUpload.single('audio'), async (req, res) => {
+router.post('/:attemptId/response', sttLimit, memUpload.single('audio'), async (req, res) => {
   const attempt = await db.one('SELECT * FROM attempts WHERE id = ?', [req.params.attemptId]);
   if (!attempt) return res.status(404).json({ error: '找不到這場考試' });
   if (attempt.user_id !== req.user.id && req.user.role === 'student')
@@ -146,7 +150,7 @@ router.post('/:attemptId/recording', memUpload.single('audio'), async (req, res)
 });
 
 /** 輪替模式的即時評分：每答完一題呼叫一次 */
-router.post('/:attemptId/score-now', async (req, res) => {
+router.post('/:attemptId/score-now', scoreLimit, async (req, res) => {
   const attempt = await db.one('SELECT * FROM attempts WHERE id = ?', [req.params.attemptId]);
   if (!attempt) return res.status(404).json({ error: '找不到這場考試' });
   if (attempt.user_id !== req.user.id && req.user.role === 'student')
@@ -226,7 +230,7 @@ router.post('/:attemptId/finalize', async (req, res) => {
 });
 
 /** 依考生回答動態追問（Part 1 / Part 3） */
-router.post('/:attemptId/follow-up', async (req, res) => {
+router.post('/:attemptId/follow-up', scoreLimit, async (req, res) => {
   const { part, topic, history } = req.body || {};
   try {
     const question = await aiTasks.speakingFollowUp({

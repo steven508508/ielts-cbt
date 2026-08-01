@@ -165,20 +165,21 @@ router.get('/media', async (req, res) => {
   if (q) { where.push('(original_name LIKE ? OR label LIKE ? OR tags LIKE ?)'); params.push(`%${q}%`, `%${q}%`, `%${q}%`); }
   const rows = await db.query(
     `SELECT m.*, u.name AS uploader FROM media m LEFT JOIN users u ON u.id = m.uploaded_by
-     ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY m.created_at DESC`,
+     ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY m.created_at DESC LIMIT 2000`,
     params
   );
 
-  // 標記哪些檔案有被試卷引用
-  const tests = await db.query('SELECT id, title, content FROM tests');
+  // 標記哪些檔案有被試卷引用。
+  // 舊寫法把每一份試卷的 content（LONGTEXT，整份試卷）全撈進記憶體，
+  // 再跑 O(試卷數 × 檔案數) 的字串比對 —— 幾百份試卷就是幾十 MB 的字串。
+  // 改成讓資料庫去比對，一個檔案一次查詢，而且只回傳 id 與標題。
   const usage = new Map();
-  for (const t of tests) {
-    for (const m of rows) {
-      if (t.content.includes(m.filename)) {
-        if (!usage.has(m.id)) usage.set(m.id, []);
-        usage.get(m.id).push({ id: t.id, title: t.title });
-      }
-    }
+  for (const m of rows) {
+    const hits = await db.query(
+      "SELECT id, title FROM tests WHERE content LIKE CONCAT('%', ?, '%') LIMIT 5",
+      [m.filename]
+    );
+    if (hits.length) usage.set(m.id, hits.map((t) => ({ id: t.id, title: t.title })));
   }
 
   let media = rows.map((m) => ({
@@ -311,7 +312,7 @@ function resultFilterSql(q) {
 
 router.get('/results', async (req, res) => {
   const { clause, params } = resultFilterSql(req.query);
-  const limit = Math.min(2000, Number(req.query.limit) || 500);
+  const limit = Math.min(2000, Math.max(1, Number(req.query.limit) || 500));
   const rows = await db.query(
     `SELECT a.id, a.status, a.archived, a.started_at, a.submitted_at, a.modules,
             a.listening_band, a.reading_band, a.writing_band, a.speaking_band, a.overall_band,

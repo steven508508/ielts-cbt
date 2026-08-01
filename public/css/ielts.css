@@ -24,6 +24,11 @@ body{
 a{color:var(--accent)}
 button{font-family:inherit}
 h1,h2,h3,h4{margin:0 0 .5em; font-weight:600; line-height:1.3}
+/* UA 預設的 h4 和內文一樣大，副標題看起來就跟粗體段落沒兩樣 */
+h1{font-size:1.6rem}
+h2{font-size:1.3rem}
+h3{font-size:1.08rem}
+h4{font-size:.95rem; color:var(--ink-2)}
 
 /* ── 通用元件 ─────────────────────────────────────────── */
 .btn{
@@ -45,7 +50,7 @@ h1,h2,h3,h4{margin:0 0 .5em; font-weight:600; line-height:1.3}
 .field{display:block; margin-bottom:.85rem}
 .field > span{display:block; font-size:.82rem; color:var(--ink-2); margin-bottom:.28rem; font-weight:600}
 input[type=text],input[type=password],input[type=number],input[type=date],input[type=datetime-local],
-input[type=email],select,textarea{
+input[type=email],input[type=search],input[type=tel],input[type=url],select,textarea{
   width:100%; padding:.5rem .6rem; border:1px solid var(--line); border-radius:var(--radius);
   font-family:inherit; font-size:.95rem; background:#fff; color:var(--ink);
 }
@@ -55,7 +60,7 @@ input:focus,select:focus,textarea:focus{outline:2px solid #b9d9ea; outline-offse
 .row > *{flex:1 1 180px}
 .muted{color:var(--muted)}
 .small{font-size:.85rem}
-.pill{display:inline-block; padding:.12em .55em; border-radius:99px; font-size:.75rem; font-weight:600; background:#eceff1; color:var(--ink-2)}
+.pill{white-space:nowrap; display:inline-block; padding:.12em .55em; border-radius:99px; font-size:.75rem; font-weight:600; background:#eceff1; color:var(--ink-2)}
 .pill.ok{background:#e4f4e8; color:var(--ok)}
 .pill.warn{background:#fdf2dc; color:var(--warn)}
 .pill.err{background:#fbeae7; color:var(--err)}
@@ -151,25 +156,6 @@ table.data tr:hover td{background:#fbfbfb}
 .diff-del{background:#fadbd8; text-decoration:line-through; color:#8b3a30}
 
 /* 口說 */
-.speak-stage{max-width:820px; margin:0 auto; padding:1.5rem 1rem; text-align:center}
-.speak-part{font-size:.8rem; letter-spacing:.12em; color:var(--muted); text-transform:uppercase; margin-bottom:.4rem}
-.speak-q{font-size:1.35rem; line-height:1.55; margin:1rem 0 1.6rem; font-weight:500}
-.cuecard{
-  text-align:left; border:1px solid var(--ink); border-radius:6px; padding:1.2rem 1.4rem;
-  background:#fffdf7; max-width:560px; margin:1rem auto; line-height:1.8;
-}
-.cuecard ul{margin:.5rem 0 0; padding-left:1.3rem}
-.mic{
-  width:96px; height:96px; border-radius:50%; border:3px solid var(--line); background:#fff;
-  display:grid; place-items:center; font-size:2rem; cursor:pointer; margin:0 auto; transition:.15s;
-}
-.mic.rec{border-color:var(--err); background:#fdecea; animation:pulse 1.1s infinite}
-.mic:disabled{opacity:.45; cursor:not-allowed}
-.level{width:220px; height:6px; background:#e6e6e6; border-radius:99px; margin:1rem auto 0; overflow:hidden}
-.level i{display:block; height:100%; width:0; background:var(--ok); transition:width .08s}
-.speak-timer{font-size:2.4rem; font-weight:700; font-variant-numeric:tabular-nums; margin:.6rem 0}
-.speak-timer.warn{color:var(--warn)} .speak-timer.danger{color:var(--err)}
-.transcript-box{text-align:left; background:#f7f7f7; border:1px solid var(--line-2); border-radius:4px; padding:.7rem .9rem; font-size:.9rem; line-height:1.7; margin-top:1rem; max-height:180px; overflow:auto}
 
 /* 進度條 */
 .progress{height:6px; background:#e6e6e6; border-radius:99px; overflow:hidden; margin:.6rem 0}
@@ -193,17 +179,120 @@ table.data tr:hover td{background:#fbfbfb}
   .rev-q{break-inside:avoid}
 }
 
-@media(max-width:820px){
-  .exam-stage{flex-direction:column}
-  .pane.left{border-right:none; border-bottom:1px solid var(--line); flex:0 0 40%}
-  .splitter{display:none}
-  .trf{padding:1.2rem}
-  .trf-grid{grid-template-columns:1fr}
-  .trf-scores{grid-template-columns:repeat(2,1fr)}
-  .trf-scores .col .s{font-size:1.5rem}
-}
 
 /* 題庫 */
 table.data tr.warn-row td{background:#fffaf0}
 .qb-preview li{margin-bottom:.7rem}
 .qb-preview li > div:first-child{font-weight:500}
+
+/* ═══ 狀態元件：載入 / 錯誤 / 空 ═══════════════════════════ */
+.state{padding:2rem 1rem; text-align:center; color:var(--muted)}
+.state-icon{font-size:1.7rem; line-height:1; margin-bottom:.5rem; opacity:.65}
+.state-title{font-size:1rem; font-weight:600; color:var(--ink-2); margin-bottom:.3rem}
+.state-msg{font-size:.88rem; line-height:1.7; margin-bottom:.7rem; word-break:break-word}
+.state-error{color:var(--err)}
+.state-error .state-title{color:var(--err)}
+.state-loading{text-align:left; padding:1.2rem 0}
+.state-loading .state-msg{display:flex; align-items:center; gap:.5rem; color:var(--muted); margin-bottom:.9rem}
+
+.spinner{
+  width:14px; height:14px; flex:0 0 14px; border-radius:50%;
+  border:2px solid var(--line); border-top-color:var(--brand);
+  animation:spin .7s linear infinite;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+.skeleton{display:flex; flex-direction:column; gap:.6rem}
+.sk-line{
+  height:14px; border-radius:4px;
+  background:linear-gradient(90deg,#eee 25%,#f6f6f6 37%,#eee 63%);
+  background-size:400% 100%;
+  animation:shimmer 1.3s ease-in-out infinite;
+}
+@keyframes shimmer{0%{background-position:100% 0}100%{background-position:0 0}}
+@media (prefers-reduced-motion:reduce){
+  .sk-line,.spinner{animation:none}
+  .sk-line{background:#eee}
+}
+
+/* ═══ 表格在窄螢幕要能橫向捲動，不要把版面撐爆 ═══════════ */
+.table-wrap{
+  overflow-x:auto; -webkit-overflow-scrolling:touch;
+  /* 捲得到底之前，右邊給一點陰影提示還有內容 */
+  background:
+    linear-gradient(to right,#fff 30%,rgba(255,255,255,0)) left/24px 100% no-repeat,
+    linear-gradient(to left,#fff 30%,rgba(255,255,255,0)) right/24px 100% no-repeat,
+    linear-gradient(to right,rgba(0,0,0,.09),rgba(0,0,0,0)) left/10px 100% no-repeat,
+    linear-gradient(to left,rgba(0,0,0,.09),rgba(0,0,0,0)) right/10px 100% no-repeat;
+  background-attachment:local,local,scroll,scroll;
+}
+.table-wrap > table.data{min-width:100%}
+
+/* 手機：導覽列可橫向捲、卡片內距縮小、按鈕好按一點 */
+@media (max-width:720px){
+  .app-main{padding:1rem .8rem}
+  /* 頁首在窄螢幕改成兩層：品牌與帳號一層，導覽列自己一層可以左右滑。
+     不這樣做的話「示範老師」會被擠成一個字一行。 */
+  .app-header{
+    height:auto; flex-wrap:wrap; gap:.5rem; padding:.5rem .8rem;
+    align-items:center; row-gap:.4rem;
+  }
+  .app-header .brand{font-size:1rem}
+  .app-header .who{
+    max-width:7.5rem; overflow:hidden; text-overflow:ellipsis;
+    white-space:nowrap; font-size:.85rem;
+  }
+  .app-nav{
+    order:3; flex:1 0 100%; overflow-x:auto; -webkit-overflow-scrolling:touch;
+    scrollbar-width:none; padding-bottom:.15rem;
+  }
+  .app-nav::-webkit-scrollbar{display:none}
+  .app-nav a{white-space:nowrap; padding:.4rem .6rem; font-size:.86rem}
+  .card{padding:.9rem}
+  .toolbar{gap:.4rem}
+  .row{gap:.5rem}
+  .row > *{flex:1 1 100%}
+  .btn{min-height:38px}
+  /* 表格寧可橫向捲，也不要每一格都擠成直的 */
+  .table-wrap > table.data{min-width:760px}
+  table.data th,table.data td{padding:.45rem .5rem}
+  table.data td{min-width:5.5rem}
+  table.data td:first-child{min-width:9rem}
+  /* 勾選欄不需要那麼寬（:has 在現行瀏覽器都支援，不支援也只是欄位寬一點） */
+  table.data th:has(> input[type=checkbox]),
+  table.data td:has(> input[type=checkbox]){min-width:0; width:2.4rem}
+  #toasts{left:12px; right:12px; bottom:12px}
+  .toast{width:auto}
+  .state{padding:1.5rem .8rem}
+}
+
+/* JS 有用到但一直沒有樣式的幾個 class */
+.bodyhtml{line-height:1.85}
+.bodyhtml table{border-collapse:collapse; margin:.5rem 0; width:100%}
+.bodyhtml th,.bodyhtml td{border:1px solid var(--line-2); padding:.35rem .5rem; text-align:left}
+.bodyhtml ul,.bodyhtml ol{padding-left:1.4rem}
+.instructions{background:var(--bg-2, #fafafa); border:1px solid var(--line-2);
+  padding:.5rem .65rem; border-radius:var(--radius); font-size:.9rem; line-height:1.6; margin-bottom:.6rem}
+.passage-preview{white-space:pre-wrap; line-height:1.85; font-size:.95rem}
+.warn-row td{background:#fffaf0}
+
+/* 統一常用的排版工具，取代散在 JS 裡的行內樣式 */
+.spacer{flex:1}
+.stack{display:flex; flex-direction:column; gap:.5rem}
+.inline{display:flex; align-items:center; gap:.5rem; flex-wrap:wrap}
+.check{width:auto; margin-right:.4rem; vertical-align:middle}
+.prose{line-height:1.85}
+.mt{margin-top:.8rem}
+
+/* 篩選列：下拉依內容寬、搜尋框吃剩下的空間、按鈕不要被撐開。
+   用 .row 會讓每個小工具都變成 180px 起跳的區塊，用 .toolbar 又會
+   因為 input/select 的 width:100% 而每個各佔一行。 */
+.filterbar{display:flex; flex-wrap:wrap; gap:.5rem; align-items:center; margin-bottom:.75rem}
+.filterbar > select{width:auto; min-width:8.5rem; flex:0 0 auto}
+.filterbar > input[type=search],.filterbar > input[type=text]{flex:1 1 220px; width:auto; min-width:11rem}
+.filterbar > .btn,.filterbar > button{flex:0 0 auto}
+.filterbar > .spacer{flex:1 1 auto; min-width:0}
+@media (max-width:720px){
+  .filterbar > select{flex:1 1 45%; min-width:0}
+  .filterbar > input[type=search]{flex:1 1 100%}
+}

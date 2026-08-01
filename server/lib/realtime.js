@@ -393,7 +393,7 @@ class Session {
     this.setPhase('end');
     this.send({ type: 'finishing' });
 
-    setTimeout(async () => {
+    this.finishTimer = setTimeout(async () => {
       try {
         const responses = await db.query(
           'SELECT part, q_index, question, transcript, duration_sec FROM speaking_responses WHERE attempt_id = ? ORDER BY part, q_index',
@@ -419,10 +419,15 @@ class Session {
   }
 
   close() {
+    if (this.closed) return;
     this.closed = true;
     clearTimeout(this.phaseTimer);
+    clearTimeout(this.finishTimer);
     try { this.upstream?.close(); } catch {}
-    sessions.delete(this.attempt.id);
+    try { this.ws?.close(); } catch {}
+    // 只刪掉「自己」。同一場考試若已經有新的連線接手，
+    // 舊連線關閉時不能把新的那一個從 map 裡刪掉。
+    if (sessions.get(this.attempt.id) === this) sessions.delete(this.attempt.id);
   }
 }
 
@@ -431,7 +436,11 @@ function attach(server) {
   const wss = new WebSocketServer({ noServer: true });
 
   server.on('upgrade', (req, socket, head) => {
-    if (!req.url.startsWith(PATH)) return;
+    if (!req.url.startsWith(PATH)) {
+      // 不 destroy 的話，每一個打錯路徑的 upgrade 都會留下一個開著的 socket
+      socket.destroy();
+      return;
+    }
     wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
   });
 
@@ -460,9 +469,17 @@ function attach(server) {
 
       const cfg = await realtimeConfig();
       session = new Session({ ws, user, attempt, paper, cfg });
+
+      // 連上游可能會丟出例外（金鑰錯、逾時）。先 set 再 connect 的話，
+      // 失敗時會直接 return，下面的 close 監聽根本沒註冊到，
+      // 這筆 session（連同整份試卷 JSON）就永遠留在 map 裡。
+      await session.connectUpstream();
+
+      // 同一場考試若已經有連線，先把舊的收掉再接手
+      const prev = sessions.get(attemptId);
+      if (prev && prev !== session) { try { prev.close(); } catch {} }
       sessions.set(attemptId, session);
 
-      await session.connectUpstream();
       await db.exec("UPDATE attempts SET speaking_mode='realtime' WHERE id=?", [attemptId]);
       await db.exec(
         `INSERT INTO speaking_live (attempt_id, status) VALUES (?, 'live')
@@ -470,6 +487,7 @@ function attach(server) {
         [attemptId]
       );
     } catch (e) {
+      try { session?.close(); } catch {}
       return fail(e.message);
     }
 
@@ -501,7 +519,33 @@ function attach(server) {
     ws.on('error', () => session?.close());
   });
 
+  // 心跳。學生直接闔上筆電時 TCP 是半開的，不會有 close 事件，
+  // session、上游連線與計時器會一直留著（而且還在計費）。
+  wss.on('connection', (ws) => {
+    ws.isAlive = true;
+    ws.on('pong', () => { ws.isAlive = true; });
+  });
+  const beat = setInterval(() => {
+    for (const ws of wss.clients) {
+      if (ws.isAlive === false) { try { ws.terminate(); } catch {} continue; }
+      ws.isAlive = false;
+      try { ws.ping(); } catch {}
+    }
+  }, 30_000);
+  beat.unref?.();
+  wss.on('close', () => clearInterval(beat));
+
   return wss;
+}
+
+/** 關機時把所有連線收乾淨，否則 server.close() 的 callback 永遠不會被呼叫 */
+function closeAll(wss) {
+  for (const s of [...sessions.values()]) { try { s.close(); } catch {} }
+  sessions.clear();
+  if (wss) {
+    for (const ws of wss.clients) { try { ws.close(1001, 'server shutting down'); } catch {} }
+    try { wss.close(); } catch {}
+  }
 }
 
 /** 從系統設定推導出 Realtime 端點 */
@@ -530,4 +574,4 @@ async function isAvailable() {
   }
 }
 
-module.exports = { attach, isAvailable, realtimeConfig, buildScript, examinerInstructions, sessions };
+module.exports = { attach, closeAll, isAvailable, realtimeConfig, buildScript, examinerInstructions, sessions };

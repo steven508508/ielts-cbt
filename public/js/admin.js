@@ -7,7 +7,7 @@ const Admin = (() => {
 
   // ── 試卷管理 ────────────────────────────────────────────
   async function tests(mount) {
-    UI.render(mount, el('div', { class: 'empty' }, '載入中…'));
+    UI.render(mount, UI.loading('載入試卷…', 4));
     const { tests: list } = await API.get('/tests');
     UI.render(mount, 
       el('div', { class: 'toolbar' },
@@ -17,8 +17,8 @@ const Admin = (() => {
         el('a', { class: 'btn primary', href: '#/admin/generate' }, '✨ AI 出題')),
       el('div', { class: 'card' },
         list.length === 0
-          ? el('div', { class: 'empty' }, '還沒有試卷。先到「匯入題目」上傳，或用 AI 產生一份。')
-          : el('table', { class: 'data' },
+          ? UI.emptyState('還沒有試卷', { label: '＋ 匯入題目', href: '#/admin/import' }, '也可以用「AI 出題」直接產生一份完整試卷。')
+          : UI.dataTable(
               el('thead', {}, el('tr', {},
                 el('th', {}, '標題'), el('th', {}, '類型'), el('th', {}, '狀態'),
                 el('th', {}, '建立者'), el('th', {}, '更新時間'), el('th', {}, ''))),
@@ -408,7 +408,7 @@ const Admin = (() => {
             el('option', { value: 'band 8-9' }, 'Band 8–9')))),
         el('label', { class: 'field' }, el('span', {}, '起始題號'), (f.startNumber = el('input', { type: 'number', value: 1, min: 1 })))),
       el('label', { class: 'field' },
-        el('span', {}, el('input', { type: 'checkbox', id: 'withPassage', checked: true, style: { width: 'auto', marginRight: '.4rem' } }), '同時產生文章／聽力逐字稿')),
+        el('span', {}, el('input', { type: 'checkbox', id: 'withPassage', checked: true, class: 'check' }), '同時產生文章／聽力逐字稿')),
       el('label', { class: 'field' }, el('span', {}, '已有文章或逐字稿？貼在這裡（AI 會只依這段內容出題）'),
         (f.passage = el('textarea', { rows: 5 }))),
       el('label', { class: 'field' }, el('span', {}, '額外要求'), (f.extra = el('input', { type: 'text', placeholder: '例：至少 2 題是 NOT GIVEN' }))),
@@ -511,7 +511,7 @@ const Admin = (() => {
         STEP_NAMES.map((name, i) => {
           const done = i < job.doneSteps;
           const current = i === job.doneSteps && job.status === 'running';
-          return el('li', { style: { color: done ? '#2e7d32' : current ? 'var(--ink)' : 'var(--muted)' } },
+          return el('li', { style: { color: done ? 'var(--ok)' : current ? 'var(--ink)' : 'var(--muted)' } },
             done ? '✓ ' : current ? '▶ ' : '· ', name,
             current ? el('span', { class: 'muted' }, ' …產生中') : null);
         }));
@@ -629,7 +629,7 @@ const Admin = (() => {
         r.transcript && el('details', {}, el('summary', { class: 'small muted' }, '聽力逐字稿'),
           el('pre', { style: { whiteSpace: 'pre-wrap', fontSize: '.85rem' } }, r.transcript)),
         el('div', { class: 'rubric small' }, group?.instructions || ''),
-        el('table', { class: 'data' },
+        UI.dataTable(
           el('thead', {}, el('tr', {}, el('th', {}, '#'), el('th', {}, '題目'), el('th', {}, '答案'), el('th', {}, '解析'))),
           el('tbody', {}, (group?.questions || []).map((q) => el('tr', {},
             el('td', {}, String(q.number)),
@@ -732,7 +732,7 @@ const Admin = (() => {
 
       UI.render(box, d.users.length === 0
         ? el('div', { class: 'empty' }, '沒有符合條件的成員。')
-        : el('table', { class: 'data' },
+        : UI.dataTable(
             el('thead', {}, el('tr', {},
               el('th', {}, el('input', {
                 type: 'checkbox',
@@ -1005,7 +1005,7 @@ const Admin = (() => {
       await UI.alert(el('div', {},
         el('p', {}, `成功建立 ${r.created.length} 位。`),
         r.skipped.length ? el('p', { style: { color: 'var(--warn)' } }, `略過 ${r.skipped.length} 位：${r.skipped.join('、')}`) : null,
-        el('table', { class: 'data' },
+        UI.dataTable(
           el('thead', {}, el('tr', {}, el('th', {}, '姓名'), el('th', {}, '帳號'), el('th', {}, '密碼'))),
           el('tbody', {}, r.created.map((c) => el('tr', {}, el('td', {}, c.name), el('td', {}, c.username), el('td', {}, c.password))))),
         el('button', {
@@ -1028,7 +1028,7 @@ const Admin = (() => {
     const studentBox = el('div', {
       style: { maxHeight: '220px', overflow: 'auto', border: '1px solid var(--line)', borderRadius: '4px', padding: '.5rem' },
     }, users.map((u) => el('label', { style: { display: 'block', padding: '.15rem 0' } },
-      el('input', { type: 'checkbox', value: u.id, style: { width: 'auto', marginRight: '.4rem' } }),
+      el('input', { type: 'checkbox', value: u.id, class: 'check' }),
       `${u.name}（${u.username}）`, u.class_group ? el('span', { class: 'muted small' }, ` · ${u.class_group}`) : null)));
 
     UI.render(mount, 
@@ -1112,19 +1112,19 @@ const Admin = (() => {
           el('div', { style: { paddingTop: '.7rem' } },
             el('label', { class: 'field' }, el('span', {},
               (f.procEnabled = el('input', {
-                type: 'checkbox', style: { width: 'auto', marginRight: '.4rem' },
+                type: 'checkbox', class: 'check',
                 onchange: (e) => { f._procWrap.style.display = e.target.checked ? '' : 'none'; },
               })),
               el('b', {}, '啟用監考模式'))),
             (f._procWrap = el('div', { style: { display: 'none', paddingLeft: '1.2rem' } },
               el('label', { class: 'field' }, el('span', {},
-                (f.requireFullscreen = el('input', { type: 'checkbox', checked: true, style: { width: 'auto', marginRight: '.4rem' } })),
+                (f.requireFullscreen = el('input', { type: 'checkbox', checked: true, class: 'check' })),
                 '強制全螢幕作答（離開全螢幕會被要求回去並記錄）')),
               el('label', { class: 'field' }, el('span', {},
-                (f.blockCopy = el('input', { type: 'checkbox', checked: true, style: { width: 'auto', marginRight: '.4rem' } })),
+                (f.blockCopy = el('input', { type: 'checkbox', checked: true, class: 'check' })),
                 '禁止複製題目內容、禁止把外部文字貼進作文')),
               el('label', { class: 'field' }, el('span', {},
-                (f.warnOnLeave = el('input', { type: 'checkbox', checked: true, style: { width: 'auto', marginRight: '.4rem' } })),
+                (f.warnOnLeave = el('input', { type: 'checkbox', checked: true, class: 'check' })),
                 '切換分頁或離開視窗時立刻跳出警告')),
               el('div', { class: 'row' },
                 el('label', { class: 'field' }, el('span', {}, '允許離開畫面幾次'),
@@ -1183,7 +1183,7 @@ const Admin = (() => {
       el('div', { class: 'card' },
         el('h3', {}, '已指派'),
         assignments.length === 0 ? el('p', { class: 'muted' }, '尚未指派任何考試。')
-          : el('table', { class: 'data' },
+          : UI.dataTable(
               el('thead', {}, el('tr', {}, el('th', {}, '試卷'), el('th', {}, '對象'), el('th', {}, '科目'),
                 el('th', {}, '評分'), el('th', {}, '考試規則'), el('th', {}, '期間'), el('th', {}, ''))),
               el('tbody', {}, assignments.map((a) => el('tr', {},
@@ -1226,7 +1226,7 @@ const Admin = (() => {
       el('div', { class: 'card' },
         el('h3', {}, '所有考試紀錄'),
         el('div', { style: { overflowX: 'auto' } },
-          el('table', { class: 'data' },
+          UI.dataTable(
             el('thead', {}, el('tr', {},
               el('th', {}, '學生'), el('th', {}, '班級'), el('th', {}, '試卷'), el('th', {}, '狀態'),
               el('th', {}, 'L'), el('th', {}, 'R'), el('th', {}, 'W'), el('th', {}, 'S'), el('th', {}, '總分'),
@@ -1350,7 +1350,7 @@ const Admin = (() => {
           ' 免費新增一個 Widget，把網域填成你的考試網址，就會拿到 Site Key 與 Secret Key。'),
         el('label', { class: 'field' }, el('span', {},
           (t.enabled = el('input', {
-            type: 'checkbox', checked: ts.turnstile.enabled, style: { width: 'auto', marginRight: '.4rem' },
+            type: 'checkbox', checked: ts.turnstile.enabled, class: 'check',
           })),
           '啟用登入人機驗證')),
         el('div', { class: 'row' },
@@ -1363,7 +1363,7 @@ const Admin = (() => {
             })))),
         el('label', { class: 'field' }, el('span', {},
           (t.failOpen = el('input', {
-            type: 'checkbox', checked: ts.turnstile.failOpen, style: { width: 'auto', marginRight: '.4rem' },
+            type: 'checkbox', checked: ts.turnstile.failOpen, class: 'check',
           })),
           '連不到 Cloudflare 時仍允許登入（建議勾選）'),
           el('span', { class: 'small muted' },
@@ -1434,13 +1434,13 @@ const Admin = (() => {
       el('div', { class: 'card' },
         el('h3', {}, '批改規則'),
         el('label', { class: 'field' }, el('span', {},
-          (f.allowSpellingVariants = el('input', { type: 'checkbox', checked: s.marking.allowSpellingVariants, style: { width: 'auto', marginRight: '.4rem' } })),
+          (f.allowSpellingVariants = el('input', { type: 'checkbox', checked: s.marking.allowSpellingVariants, class: 'check' })),
           '接受英式／美式拼法差異（colour = color、centre = center）')),
         el('label', { class: 'field' }, el('span', {},
-          (f.hyphenEqualsSpace = el('input', { type: 'checkbox', checked: s.marking.hyphenEqualsSpace, style: { width: 'auto', marginRight: '.4rem' } })),
+          (f.hyphenEqualsSpace = el('input', { type: 'checkbox', checked: s.marking.hyphenEqualsSpace, class: 'check' })),
           '連字號與空白視為相同（well-known = well known）')),
         el('label', { class: 'field' }, el('span', {},
-          (f.expandContractions = el('input', { type: 'checkbox', checked: s.marking.expandContractions, style: { width: 'auto', marginRight: '.4rem' } })),
+          (f.expandContractions = el('input', { type: 'checkbox', checked: s.marking.expandContractions, class: 'check' })),
           '縮寫與完整寫法視為相同（don\'t = do not）')),
         el('p', { class: 'small muted' }, '大小寫、句尾標點、前後空白一律忽略；括號內文字視為可有可無；超過字數限制一律不給分（官方規則）。')),
 
@@ -1511,7 +1511,7 @@ const Admin = (() => {
       UI.render(box,
         d.media.length === 0
           ? el('div', { class: 'empty' }, '沒有符合條件的檔案。')
-          : el('table', { class: 'data' },
+          : UI.dataTable(
               el('thead', {}, el('tr', {},
                 el('th', {}, el('input', {
                   type: 'checkbox',
@@ -1658,7 +1658,7 @@ const Admin = (() => {
 
   const panes = {
     async overview(host) {
-      UI.render(host, el('div', { class: 'empty' }, '載入中…'));
+      UI.render(host, UI.loading());
       const d = await API.get('/manage/overview');
       const p = d.policy;
       const f = {};
@@ -1677,7 +1677,7 @@ const Admin = (() => {
             el('h3', {}, dryRun ? '試算結果（沒有真的刪除）' : '清理完成'),
             report.items.length === 0
               ? el('p', { class: 'muted' }, '目前沒有符合條件的資料。')
-              : el('table', { class: 'data' },
+              : UI.dataTable(
                   el('thead', {}, el('tr', {}, el('th', {}, '項目'), el('th', {}, '筆數'), el('th', {}, '空間'), el('th', {}, '條件'))),
                   el('tbody', {}, report.items.map((i) => el('tr', {},
                     el('td', {}, i.action), el('td', {}, String(i.count)),
@@ -1726,7 +1726,7 @@ const Admin = (() => {
           el('h3', {}, '自動清理設定'),
           el('p', { class: 'small muted' }, '填 0 代表「永久保留、不自動刪除」。刪除無法復原，建議先按「試算」看看會刪掉什麼。'),
           el('label', { class: 'field' }, el('span', {},
-            (f.enabled = el('input', { type: 'checkbox', checked: p.enabled, style: { width: 'auto', marginRight: '.4rem' } })),
+            (f.enabled = el('input', { type: 'checkbox', checked: p.enabled, class: 'check' })),
             '啟用每天自動清理')),
           el('div', { class: 'row' },
             num('keepResultsMonths', '成績保留（月）', '超過就連同作答、錄音一起刪除'),
@@ -1780,7 +1780,7 @@ const Admin = (() => {
           + (d.truncated ? '（只顯示前 500 筆）' : '');
         UI.render(box, d.results.length === 0
           ? el('div', { class: 'empty' }, '沒有符合條件的成績。')
-          : el('table', { class: 'data' },
+          : UI.dataTable(
               el('thead', {}, el('tr', {},
                 el('th', {}, el('input', {
                   type: 'checkbox',
@@ -1876,7 +1876,7 @@ const Admin = (() => {
 
       async function load() {
         const { tests: list } = await API.get('/manage/tests');
-        UI.render(box, el('table', { class: 'data' },
+        UI.render(box, UI.dataTable(
           el('thead', {}, el('tr', {},
             el('th', {}, el('input', {
               type: 'checkbox',
@@ -1946,7 +1946,7 @@ const Admin = (() => {
         el('h3', {}, '維護紀錄'),
         log.length === 0
           ? el('div', { class: 'empty' }, '目前沒有紀錄。')
-          : el('table', { class: 'data' },
+          : UI.dataTable(
               el('thead', {}, el('tr', {}, el('th', {}, '時間'), el('th', {}, '動作'),
                 el('th', {}, '筆數'), el('th', {}, '釋放空間'), el('th', {}, '執行者'), el('th', {}, '明細'))),
               el('tbody', {}, log.map((r) => el('tr', {},
@@ -2042,7 +2042,7 @@ const Admin = (() => {
 
     const box = el('div');
     const counter = el('span', { class: 'small muted' });
-    const bar = el('div', { class: 'row', style: { alignItems: 'center', gap: '.5rem', marginBottom: '.6rem' } });
+    const bar = el('div', { class: 'filterbar' });
     const typeSel = el('select', {
       onchange: (e) => { filter.type = e.target.value; load(); },
     }, el('option', { value: '' }, '全部題型'));
@@ -2057,7 +2057,7 @@ const Admin = (() => {
       for (const [k, v] of Object.entries(filter)) if (v) qs.set(k, v);
       let d;
       try { d = await API.get(`/ai/bank?${qs}`); }
-      catch (e) { UI.render(box, el('div', { class: 'empty' }, `讀取題庫失敗：${e.message}`)); return; }
+      catch (e) { UI.render(box, UI.errorState(e.message, load)); return; }
 
       const stats = d.stats || [];
       counter.textContent = `題庫共 ${d.total} 個題組`
@@ -2090,7 +2090,7 @@ const Admin = (() => {
         return;
       }
 
-      UI.render(box, el('table', { class: 'data' },
+      UI.render(box, UI.dataTable(
         el('thead', {}, el('tr', {},
           el('th', { style: { width: '2.2rem' } }, el('input', {
             type: 'checkbox',
@@ -2216,7 +2216,7 @@ const Admin = (() => {
           el('div', {}, q.prompt || q.text || '（無題幹）'),
           q.options?.length ? el('div', { class: 'small muted' },
             q.options.map((o, i) => `${o.key || String.fromCharCode(65 + i)}. ${o.text ?? o}`).join('　')) : null,
-          el('div', { class: 'small', style: { color: '#2e7d32' } },
+          el('div', { class: 'small', style: { color: 'var(--ok)' } },
             '答案：', (() => {
               const a = q.answers ?? q.answer;
               if (Array.isArray(a)) return a.length ? a.join('　/　') : '—';
@@ -2317,10 +2317,10 @@ const Admin = (() => {
   };
 
   async function editPaper(mount, id) {
-    UI.render(mount, el('div', { class: 'empty' }, '載入中…'));
+    UI.render(mount, UI.loading('載入試卷內容…', 6));
     let d;
     try { d = await API.get(`/tests/${id}`); }
-    catch (e) { return UI.render(mount, el('div', { class: 'empty' }, `讀不到這份試卷：${e.message}`)); }
+    catch (e) { return UI.render(mount, UI.errorState(e.message, () => editPaper(mount, id))); }
 
     const { types } = await API.get('/tests/question-types');
     const paper = d.paper;

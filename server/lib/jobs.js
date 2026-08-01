@@ -56,7 +56,7 @@ async function listFor(userId, { limit = 20, kind = null } = {}) {
     `SELECT id, kind, status, step, done_steps, total_steps, error, created_at, updated_at
        FROM ai_jobs
       WHERE created_by = ? ${kind ? 'AND kind = ?' : ''}
-      ORDER BY id DESC LIMIT ${Number(limit) || 20}`,
+      ORDER BY id DESC LIMIT ${Math.min(100, Math.max(1, Number(limit) || 20))}`,
     kind ? [userId, kind] : [userId]
   );
   // 清單刻意不含 params / result / partial —— 結果可能好幾百 KB
@@ -94,7 +94,9 @@ async function cancel(id) {
   const handle = running.get(id);
   if (handle) handle.cancelled = true;
   await db.exec("UPDATE ai_jobs SET status = 'cancelled', step = '已取消' WHERE id = ? AND status IN ('queued','running')", [id]);
-  running.delete(id);
+  // 這裡「不能」delete —— 一刪 isCancelled() 就永遠回 false，
+  // ctx.check() 檢查不到取消，工作會繼續跑完，最後還把狀態蓋回 done。
+  // 交給 run() 的收尾流程移除。
   return get(id);
 }
 

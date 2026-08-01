@@ -5,11 +5,24 @@ const { requireAuth, requireStaff, requireRole } = require('../middleware/auth')
 const ai = require('../lib/ai');
 const aiTasks = require('../lib/aiTasks');
 const jobs = require('../lib/jobs');
+const { rateLimit } = require('../middleware/rateLimit');
 const bands = require('../lib/bands');
 const { validatePaper, normalizePaper } = require('../lib/paper');
 
 const router = express.Router();
 router.use(requireAuth);
+
+/* AI 端點每一次呼叫都在燒錢，一定要有速率限制。
+   注意 /grade-writing 是「學生的寫作練習」在用的，不能加 requireStaff，
+   否則練習功能會整個壞掉 —— 這裡改用「依使用者」計數。 */
+const aiLimit = rateLimit({
+  key: 'ai', by: 'user', windowMs: 60_000, max: 8,
+  message: 'AI 請求太頻繁',
+});
+const aiHeavyLimit = rateLimit({
+  key: 'ai-heavy', by: 'user', windowMs: 60 * 60_000, max: 12,
+  message: '這類請求很耗資源，每小時最多 12 次',
+});
 
 // ── 設定 ───────────────────────────────────────────────────────
 router.get('/settings', requireStaff, async (req, res) => {
@@ -44,7 +57,7 @@ router.put('/settings', requireRole('admin'), async (req, res) => {
   res.json({ ok: true, ai: ai.maskConfig(cfg) });
 });
 
-router.post('/test', requireStaff, async (req, res) => {
+router.post('/test', requireStaff, aiLimit, async (req, res) => {
   try {
     res.json(await ai.testConnection(req.body?.role || 'chat'));
   } catch (e) {
@@ -58,7 +71,7 @@ router.get('/logs', requireStaff, async (req, res) => {
 });
 
 // ── 出題 ───────────────────────────────────────────────────────
-router.post('/generate', requireStaff, async (req, res) => {
+router.post('/generate', requireStaff, aiLimit, async (req, res) => {
   try {
     const out = await aiTasks.generateQuestions(req.body || {}, req.user.id);
     res.json({ ok: true, ...out });
@@ -73,7 +86,7 @@ router.post('/generate', requireStaff, async (req, res) => {
  * （本系統 180 秒、反向代理、Cloudflare 橘雲的 100 秒硬上限），
  * 所以改成背景工作：這裡立刻回 jobId，前端輪詢 /ai/jobs/:id。
  */
-router.post('/generate-paper', requireStaff, async (req, res) => {
+router.post('/generate-paper', requireStaff, aiHeavyLimit, async (req, res) => {
   const testType = req.body?.testType === 'general' ? 'general' : 'academic';
   const theme = String(req.body?.theme || '').slice(0, 200);
 
@@ -336,7 +349,7 @@ router.post('/bank/to-test', requireStaff, async (req, res) => {
 });
 
 // ── 單篇寫作立即批改（練習模式，不必整場考試）────────────────
-router.post('/grade-writing', async (req, res) => {
+router.post('/grade-writing', aiLimit, aiHeavyLimit, async (req, res) => {
   const { taskNo = 2, prompt, essay, testType = 'academic', minWords } = req.body || {};
   if (!essay || String(essay).trim().length < 20) return res.status(400).json({ error: '請貼上作文內容' });
   try {

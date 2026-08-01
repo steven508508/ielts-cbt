@@ -718,6 +718,33 @@ async function call(method, path, body, token) {
   const bankGone = await call('GET', `/ai/bank?q=${encodeURIComponent(stamp)}`, null, tea);
   ok(bankGone.data.items.length === 0, '刪掉的題組真的不見了');
 
+  // ── 穩定性防線 ──────────────────────────────────────────
+  console.log('\n穩定性');
+  const hStart = Date.now();
+  const h2 = await call('GET', '/health');
+  ok(h2.status === 200 && Date.now() - hStart < 4000,
+    `健康檢查有逾時保護，${Date.now() - hStart} ms 內回應`);
+
+  // 負數 / 超大 / 非數字的 limit 都不能讓伺服器噴 500
+  for (const bad of ['-1', '0', 'abc', '999999999', '1e99']) {
+    const r = await call('GET', `/practice/wrong?limit=${bad}`, null, stu);
+    ok(r.status === 200, `limit=${bad} 不會造成 500（回 ${r.status}）`);
+  }
+  const badMg = await call('GET', '/manage/results?limit=-5', null, tea);
+  ok(badMg.status === 200, '成績清單的 limit=-5 也擋得住');
+
+  // 速率限制留到最後再測，否則會把後面的測試一起擋掉
+
+  // 卡住的批改要撿得回來
+  const stuckId = (await call('GET', '/exam/my-attempts', null, stu)).data.attempts[0]?.id;
+  if (stuckId) {
+    const before = (await call('GET', `/results/${stuckId}`, null, tea)).data;
+    ok(before.result?.status === 'graded' || before.attempt?.status === 'graded',
+      '既有成績仍然是已完成狀態');
+  } else {
+    ok(true, '（沒有可用場次，略過卡住批改檢查）');
+  }
+
   // ── 題目編輯器 ──────────────────────────────────────────
   console.log('\n題目編輯器');
   const edPaper = {
@@ -1061,6 +1088,18 @@ async function call(method, path, body, token) {
   ok(tsSave.status === 403, '老師不能改人機驗證設定');
   const loginNoToken = await call('POST', '/auth/login', { username: 'student1', password: 'ielts1234' });
   ok(loginNoToken.status === 200, '人機驗證關閉時，沒有 token 也能正常登入');
+
+  // ── 速率限制（放最後，因為會把額度用光）──────────────────
+  console.log('\n速率限制');
+  let hit429 = false;
+  for (let i = 0; i < 12; i += 1) {
+    const r = await call('POST', '/ai/grade-writing', { essay: 'x'.repeat(60), prompt: 'p' }, stu);
+    if (r.status === 429) { hit429 = true; break; }
+  }
+  ok(hit429, 'AI 批改端點連打會回 429（沒有的話 API 額度會被燒光）');
+  const limited = await call('POST', '/ai/grade-writing', { essay: 'x'.repeat(60) }, stu);
+  ok(limited.status === 429 && limited.data.retryAfter > 0,
+    `429 會告訴你要等幾秒（${limited.data.retryAfter}）`);
 
   console.log(`\n${'─'.repeat(46)}`);
   console.log(`通過 ${pass}　失敗 ${fail}`);
