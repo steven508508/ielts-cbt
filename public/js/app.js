@@ -123,7 +123,7 @@
     const staff = API.user?.role !== 'student';
     const links = staff
       ? [['#/admin/results', '成績總覽'], ['#/admin/monitor', '即時監看'], ['#/admin/tests', '試卷'],
-         ['#/admin/import', '匯入題目'], ['#/admin/generate', 'AI 出題'], ['#/admin/students', '學生'],
+         ['#/admin/import', '匯入題目'], ['#/admin/generate', 'AI 出題'], ['#/admin/members', '成員'],
          ['#/admin/assign', '指派考試'], ['#/admin/files', '檔案'], ['#/admin/data', '資料管理'],
          ['#/admin/settings', '系統設定']]
       : [['#/', '我的考試'], ['#/my-results', '我的成績'], ['#/practice', '寫作練習']];
@@ -330,7 +330,8 @@
         case '/admin/tests': return Admin.tests(mount);
         case '/admin/import': return Admin.importPage(mount);
         case '/admin/generate': return Admin.generate(mount);
-        case '/admin/students': return Admin.students(mount);
+        case '/admin/members': return Admin.members(mount);
+        case '/admin/students': location.hash = '#/admin/members'; return;
         case '/admin/assign': return Admin.assign(mount, params);
         case '/admin/results': return Admin.results(mount);
         case '/admin/files': return Admin.files(mount);

@@ -393,74 +393,301 @@ const Admin = (() => {
       bar, el('div', { class: 'card' }, holder), result);
   }
 
-  // ── 學生管理 ────────────────────────────────────────────
-  async function students(mount) {
-    const { users } = await API.get('/users?role=student');
-    const rows = el('tbody', {}, users.map((u) => el('tr', {},
-      el('td', {}, el('b', {}, u.name), el('div', { class: 'small muted' }, u.username)),
-      el('td', {}, u.class_group || '—'),
-      el('td', {}, u.candidate_no || '—'),
-      el('td', {}, u.active ? el('span', { class: 'pill ok' }, '啟用') : el('span', { class: 'pill err' }, '停用')),
-      el('td', { style: { whiteSpace: 'nowrap' } },
-        el('button', { class: 'btn sm', onclick: () => editStudent(u, mount) }, '編輯'),
-        ' ',
-        el('button', {
-          class: 'btn sm',
-          onclick: async () => {
-            const p = prompt(`為 ${u.name} 設定新密碼`);
-            if (!p) return;
-            await API.put(`/users/${u.id}`, { password: p });
-            toast('密碼已更新', 'ok');
-          },
-        }, '重設密碼')))));
+  // ══ 成員管理（學生 / 老師 / 管理員）══════════════════════
+  const ROLE_LABEL = { admin: '管理員', teacher: '老師', student: '學生' };
+  const ROLE_PILL = { admin: 'err', teacher: 'info', student: '' };
 
-    UI.render(mount, 
+  async function members(mount) {
+    const filter = { role: '', q: '', classGroup: '', active: '' };
+    const selected = new Set();
+    const me = API.user;
+    const isAdmin = me?.role === 'admin';
+
+    const box = el('div');
+    const counter = el('span', { class: 'small muted' });
+    const roleTabs = el('div', { class: 'tabs' });
+
+    async function load() {
+      const qs = new URLSearchParams();
+      for (const [k, v] of Object.entries(filter)) if (v) qs.set(k, v);
+      const d = await API.get(`/users?${qs}`);
+
+      const s = d.summary || {};
+      const total = (r) => (s[r] ? `${s[r].active}/${s[r].total}` : '0');
+      counter.textContent =
+        `管理員 ${total('admin')}　老師 ${total('teacher')}　學生 ${total('student')}　（啟用/總數）`;
+
+      UI.render(roleTabs, [['', '全部'], ['admin', '管理員'], ['teacher', '老師'], ['student', '學生']]
+        .map(([v, label]) => el('button', {
+          class: filter.role === v ? 'active' : '',
+          onclick: () => { filter.role = v; selected.clear(); load(); },
+        }, label)));
+
+      UI.render(box, d.users.length === 0
+        ? el('div', { class: 'empty' }, '沒有符合條件的成員。')
+        : el('table', { class: 'data' },
+            el('thead', {}, el('tr', {},
+              el('th', {}, el('input', {
+                type: 'checkbox',
+                onchange: (e) => {
+                  selected.clear();
+                  if (e.target.checked) d.users.forEach((u) => { if (u.id !== me.id) selected.add(u.id); });
+                  load();
+                },
+              })),
+              el('th', {}, '姓名 / 帳號'), el('th', {}, '角色'), el('th', {}, '班級'),
+              el('th', {}, '考試紀錄'), el('th', {}, '狀態'), el('th', {}, ''))),
+            el('tbody', {}, d.users.map((u) => {
+              const self = u.id === me.id;
+              const canTouch = isAdmin || u.role === 'student';
+              return el('tr', { style: u.active ? {} : { opacity: '.55' } },
+                el('td', {}, el('input', {
+                  type: 'checkbox', checked: selected.has(u.id), disabled: self || !canTouch,
+                  title: self ? '不能對自己批次操作' : '',
+                  onchange: (e) => { e.target.checked ? selected.add(u.id) : selected.delete(u.id); },
+                })),
+                el('td', {},
+                  el('b', {}, u.name),
+                  self ? el('span', { class: 'pill info', style: { marginLeft: '.4rem' } }, '這是你') : null,
+                  el('div', { class: 'small muted' }, u.username, u.email ? ` · ${u.email}` : '')),
+                el('td', {}, el('span', { class: `pill ${ROLE_PILL[u.role]}` }, ROLE_LABEL[u.role] || u.role)),
+                el('td', { class: 'small' }, u.class_group || '—',
+                  u.candidate_no ? el('div', { class: 'small muted' }, `編號 ${u.candidate_no}`) : null),
+                el('td', { class: 'small' },
+                  Number(u.attempts) > 0
+                    ? el('a', { href: `#/admin/data` }, `${u.attempts} 場`)
+                    : el('span', { class: 'muted' }, '—')),
+                el('td', {}, u.active
+                  ? el('span', { class: 'pill ok' }, '啟用')
+                  : el('span', { class: 'pill' }, '已停用')),
+                el('td', { style: { whiteSpace: 'nowrap' } },
+                  canTouch ? el('button', { class: 'btn sm', onclick: () => editMember(u, mount) }, '編輯') : null,
+                  ' ',
+                  canTouch ? el('button', {
+                    class: 'btn sm',
+                    onclick: async () => {
+                      const p = prompt(`為「${u.name}」設定新密碼（至少 6 字元）`);
+                      if (!p) return;
+                      try { await API.put(`/users/${u.id}`, { password: p }); toast('密碼已更新', 'ok'); }
+                      catch (e) { UI.alert(e.message); }
+                    },
+                  }, '重設密碼') : null,
+                  ' ',
+                  canTouch && !self ? el('button', {
+                    class: 'btn sm',
+                    onclick: async () => {
+                      try {
+                        await API.put(`/users/${u.id}`, { active: !u.active });
+                        toast(u.active ? '已停用' : '已啟用', 'ok'); load();
+                      } catch (e) { UI.alert(e.message); }
+                    },
+                  }, u.active ? '停用' : '啟用') : null,
+                  ' ',
+                  isAdmin && !self ? el('button', {
+                    class: 'btn sm danger', onclick: () => removeMember(u, load),
+                  }, '刪除') : null));
+            }))));
+    }
+
+    UI.render(mount,
       el('div', { class: 'toolbar' },
-        el('h2', { style: { margin: 0 } }, `學生管理（${users.length} 人）`),
+        el('h2', { style: { margin: 0 } }, '成員管理'),
         el('span', { style: { flex: 1 } }),
-        el('button', { class: 'btn', onclick: () => bulkAdd(mount) }, '批次新增'),
-        el('button', { class: 'btn primary', onclick: () => editStudent(null, mount) }, '＋ 新增學生')),
+        counter),
+
       el('div', { class: 'card' },
-        users.length === 0 ? el('div', { class: 'empty' }, '還沒有學生，先按「批次新增」貼上名單。')
-          : el('table', { class: 'data' },
-              el('thead', {}, el('tr', {}, el('th', {}, '姓名 / 帳號'), el('th', {}, '班級'), el('th', {}, '考生編號'), el('th', {}, '狀態'), el('th', {}, ''))),
-              rows)));
+        roleTabs,
+        el('div', { class: 'toolbar' },
+          el('input', {
+            type: 'text', placeholder: '搜尋姓名／帳號／Email／考生編號', style: { maxWidth: '260px' },
+            oninput: UI.debounce((e) => { filter.q = e.target.value; load(); }, 350),
+          }),
+          el('select', { onchange: (e) => { filter.active = e.target.value; load(); } },
+            el('option', { value: '' }, '啟用與停用都顯示'),
+            el('option', { value: '1' }, '只看啟用中'),
+            el('option', { value: '0' }, '只看已停用')),
+          el('span', { style: { flex: 1 } }),
+          el('button', { class: 'btn', onclick: () => bulkAddStudents(mount) }, '批次新增學生'),
+          el('button', { class: 'btn primary', onclick: () => editMember(null, mount) }, '＋ 新增成員')),
+
+        el('div', { class: 'toolbar' },
+          el('span', { class: 'small muted' }, '勾選後可批次處理：'),
+          el('button', {
+            class: 'btn sm',
+            onclick: () => bulkAction('activate', '啟用', selected, load),
+          }, '啟用'),
+          el('button', {
+            class: 'btn sm',
+            onclick: () => bulkAction('deactivate', '停用', selected, load),
+          }, '停用'),
+          isAdmin ? el('button', {
+            class: 'btn sm danger',
+            onclick: () => bulkAction('delete', '刪除', selected, load),
+          }, '刪除') : null),
+
+        box,
+
+        el('p', { class: 'small muted', style: { marginTop: '.8rem' } },
+          isAdmin
+            ? '「停用」保留所有資料，只是不能登入，隨時可以再啟用 —— 學生畢業或老師離職建議用停用。「刪除」會連同這個人的所有考試紀錄、作文與口說錄音一起移除，無法復原。'
+            : '你是老師，可以管理學生；老師與管理員帳號的新增、修改、刪除只有管理員能做。')));
+
+    load();
   }
 
-  async function editStudent(u, mount) {
+  /** 新增或編輯一位成員 */
+  async function editMember(u, mount) {
+    const isAdmin = API.user?.role === 'admin';
+    const isSelf = u && u.id === API.user?.id;
     const f = {};
+
+    const roleSel = el('select', { disabled: !isAdmin || isSelf },
+      el('option', { value: 'student', selected: !u || u.role === 'student' }, '學生'),
+      el('option', { value: 'teacher', selected: u?.role === 'teacher' }, '老師'),
+      el('option', { value: 'admin', selected: u?.role === 'admin' }, '管理員'));
+    f.role = roleSel;
+
+    const studentFields = el('div', {},
+      el('div', { class: 'row' },
+        el('label', { class: 'field' }, el('span', {}, '班級'),
+          (f.classGroup = el('input', { type: 'text', value: u?.class_group || '' }))),
+        el('label', { class: 'field' }, el('span', {}, '考生編號'),
+          (f.candidateNo = el('input', { type: 'text', value: u?.candidate_no || '' })))),
+      el('div', { class: 'row' },
+        el('label', { class: 'field' }, el('span', {}, '出生日期'),
+          (f.dateOfBirth = el('input', { type: 'date', value: u?.date_of_birth || '' }))),
+        el('label', { class: 'field' }, el('span', {}, '國籍'),
+          (f.nationality = el('input', { type: 'text', value: u?.nationality || '' })))));
+
+    const syncRoleFields = () => {
+      studentFields.style.display = roleSel.value === 'student' ? '' : 'none';
+    };
+    roleSel.addEventListener('change', syncRoleFields);
+
     const body = el('div', {},
       el('div', { class: 'row' },
-        el('label', { class: 'field' }, el('span', {}, '姓名 *'), (f.name = el('input', { type: 'text', value: u?.name || '' }))),
-        el('label', { class: 'field' }, el('span', {}, '帳號 *'), (f.username = el('input', { type: 'text', value: u?.username || '', disabled: !!u })))),
-      !u && el('label', { class: 'field' }, el('span', {}, '密碼 *'), (f.password = el('input', { type: 'text', value: 'ielts1234' }))),
+        el('label', { class: 'field' }, el('span', {}, '姓名 *'),
+          (f.name = el('input', { type: 'text', value: u?.name || '' }))),
+        el('label', { class: 'field' }, el('span', {}, '角色'),
+          roleSel,
+          !isAdmin ? el('span', { class: 'small muted' }, '只有管理員能指定老師或管理員')
+            : isSelf ? el('span', { class: 'small muted' }, '不能改自己的角色') : null)),
       el('div', { class: 'row' },
-        el('label', { class: 'field' }, el('span', {}, '班級'), (f.classGroup = el('input', { type: 'text', value: u?.class_group || '' }))),
-        el('label', { class: 'field' }, el('span', {}, '考生編號'), (f.candidateNo = el('input', { type: 'text', value: u?.candidate_no || '' })))),
-      el('div', { class: 'row' },
-        el('label', { class: 'field' }, el('span', {}, '出生日期'), (f.dateOfBirth = el('input', { type: 'date', value: u?.date_of_birth || '' }))),
-        el('label', { class: 'field' }, el('span', {}, '國籍'), (f.nationality = el('input', { type: 'text', value: u?.nationality || '' })))));
+        el('label', { class: 'field' }, el('span', {}, '帳號 *'),
+          (f.username = el('input', { type: 'text', value: u?.username || '', disabled: u && !isAdmin }))),
+        el('label', { class: 'field' }, el('span', {}, u ? '新密碼（不改就留空）' : '密碼 *'),
+          (f.password = el('input', { type: 'text', value: u ? '' : 'ielts1234' })))),
+      el('label', { class: 'field' }, el('span', {}, 'Email（選填）'),
+        (f.email = el('input', { type: 'email', value: u?.email || '' }))),
+      studentFields);
+    syncRoleFields();
 
     const ok = await UI.modal({
-      title: u ? `編輯 ${u.name}` : '新增學生', body,
+      title: u ? `編輯成員：${u.name}` : '新增成員', width: '640px', body,
       actions: [{ label: '取消', value: false }, { label: '儲存', class: 'primary', value: true }],
     });
     if (!ok) return;
-    const payload = Object.fromEntries(Object.entries(f).map(([k, v]) => [k, v.value]));
+
+    const payload = {
+      name: f.name.value.trim(),
+      email: f.email.value.trim(),
+      role: roleSel.value,
+      classGroup: f.classGroup.value.trim(),
+      candidateNo: f.candidateNo.value.trim(),
+      dateOfBirth: f.dateOfBirth.value || null,
+      nationality: f.nationality.value.trim(),
+    };
+    if (!payload.name) return UI.alert('請填姓名');
+    if (f.password.value) payload.password = f.password.value;
+
     try {
-      if (u) await API.put(`/users/${u.id}`, payload);
-      else await API.post('/users', { ...payload, role: 'student' });
-      toast('已儲存', 'ok'); students(mount);
+      if (u) {
+        if (isAdmin) payload.username = f.username.value.trim();
+        await API.put(`/users/${u.id}`, payload);
+      } else {
+        if (!f.username.value.trim()) return UI.alert('請填帳號');
+        if (!f.password.value) return UI.alert('請填密碼');
+        payload.username = f.username.value.trim();
+        await API.post('/users', payload);
+      }
+      toast('已儲存', 'ok');
+      members(mount);
     } catch (e) { UI.alert(e.message); }
   }
 
-  async function bulkAdd(mount) {
+  /** 刪除一位成員（先問清楚會失去什麼） */
+  async function removeMember(u, reload) {
+    let impact = null;
+    try { impact = await API.get(`/users/${u.id}/impact`); } catch { /* 拿不到就用保守說法 */ }
+
+    const ok = await UI.modal({
+      title: `刪除成員：${u.name}`,
+      body: el('div', {},
+        el('p', {}, '確定要刪除 ', el('b', {}, `${u.name}（${u.username}）`), ' 嗎？'),
+        impact ? el('div', { class: 'card', style: { background: '#fdf7f6', borderColor: '#f0c8c2' } },
+          el('p', { style: { margin: 0 } }, el('b', {}, '會一併永久刪除：')),
+          el('ul', { style: { margin: '.4rem 0 0', lineHeight: '1.8' } },
+            el('li', {}, `${impact.attempts} 場考試紀錄`,
+              impact.attempts ? '（含逐題作答、作文、口說錄音）' : ''),
+            el('li', {}, `${impact.assignments} 筆指派`)),
+          impact.testsCreated
+            ? el('p', { class: 'small', style: { marginBottom: 0 } },
+                `他建立的 ${impact.testsCreated} 份試卷會保留，只是「建立者」欄位會變成空白。`)
+            : null) : null,
+        el('p', { class: 'small muted' },
+          '如果只是學生畢業或老師離職，建議改用「停用」——資料會完整保留，隨時可以再啟用。')),
+      actions: [
+        { label: '取消', value: false },
+        { label: '改用停用', value: 'deactivate' },
+        { label: '確定永久刪除', class: 'danger', value: true },
+      ],
+    });
+
+    if (ok === 'deactivate') {
+      try { await API.put(`/users/${u.id}`, { active: false }); toast('已停用', 'ok'); reload(); }
+      catch (e) { UI.alert(e.message); }
+      return;
+    }
+    if (!ok) return;
+
+    try {
+      const r = await API.del(`/users/${u.id}`);
+      toast(`已刪除，連同 ${r.deletedAttempts} 場考試紀錄`, 'ok');
+      reload();
+    } catch (e) { UI.alert(e.message); }
+  }
+
+  async function bulkAction(action, label, selected, reload) {
+    if (!selected.size) return UI.alert('請先勾選成員');
+    if (action === 'delete') {
+      const ok = await UI.confirm(
+        `確定要刪除這 ${selected.size} 位成員嗎？他們的所有考試紀錄也會一併移除，無法復原。`, '確定刪除');
+      if (!ok) return;
+    }
+    try {
+      const r = await API.post('/users/bulk-action', { action, ids: [...selected] });
+      toast(`已${label} ${r.affected ?? r.deleted} 位成員`, 'ok');
+    } catch (e) {
+      if (e.details?.needsForce) {
+        const ok = await UI.confirm(`${e.message}\n\n再次確認要刪除嗎？`, '仍要刪除');
+        if (!ok) return;
+        const r = await API.post('/users/bulk-action', { action, ids: [...selected], force: true });
+        toast(`已刪除 ${r.deleted} 位成員`, 'ok');
+      } else return UI.alert(e.message);
+    }
+    selected.clear();
+    reload();
+  }
+
+  /** 批次貼名單建立學生 */
+  async function bulkAddStudents(mount) {
     const ta = el('textarea', { rows: 10, placeholder: '王小明,ming01,pass1234,A班,0001\n陳大文,wen02\n李美美' });
     const cls = el('input', { type: 'text', placeholder: '沒填班級的人統一放這班' });
     const ok = await UI.modal({
       title: '批次新增學生', width: '640px',
       body: el('div', {},
-        el('p', { class: 'small muted' }, '一行一位，格式：姓名, 帳號, 密碼, 班級, 考生編號。後面欄位可以省略；沒填帳號會自動產生，沒填密碼預設 ielts1234。'),
+        el('p', { class: 'small muted' },
+          '一行一位，格式：姓名, 帳號, 密碼, 班級, 考生編號。後面欄位可以省略；沒填帳號會自動產生，沒填密碼預設 ielts1234。'),
         el('label', { class: 'field' }, el('span', {}, '預設班級'), cls),
         ta),
       actions: [{ label: '取消', value: false }, { label: '建立', class: 'primary', value: true }],
@@ -476,9 +703,9 @@ const Admin = (() => {
           el('tbody', {}, r.created.map((c) => el('tr', {}, el('td', {}, c.name), el('td', {}, c.username), el('td', {}, c.password))))),
         el('button', {
           class: 'btn sm', onclick: () => UI.download('students.csv',
-            '姓名,帳號,密碼,班級\n' + r.created.map((c) => `${c.name},${c.username},${c.password},${c.classGroup || ''}`).join('\n'), 'text/csv'),
+            '﻿姓名,帳號,密碼,班級\n' + r.created.map((c) => `${c.name},${c.username},${c.password},${c.classGroup || ''}`).join('\n'), 'text/csv'),
         }, '下載帳密清單 CSV')), '建立結果');
-      students(mount);
+      members(mount);
     } catch (e) { UI.alert(e.message); }
   }
 
@@ -1467,5 +1694,5 @@ const Admin = (() => {
     monitorTimer = setInterval(load, 4000);
   }
 
-  return { tests, importPage, generate, students, assign, results, settings, files, data, monitor };
+  return { tests, importPage, generate, members, assign, results, settings, files, data, monitor };
 })();

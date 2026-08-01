@@ -478,6 +478,119 @@ async function call(method, path, body, token) {
   const back = await call('POST', '/auth/login', { username: 'student1', password: 'ielts1234' });
   ok(back.status === 200, '關閉後不帶 token 也能正常登入');
 
+  // ── 成員管理 ───────────────────────────────────────────
+  console.log('\n成員管理');
+  const stamp = Date.now().toString(36);
+
+  const list0 = await call('GET', '/users', null, tea);
+  ok(list0.data.summary?.student?.total >= 5,
+    `成員清單帶回統計：管理員 ${list0.data.summary.admin?.total} 老師 ${list0.data.summary.teacher?.total} 學生 ${list0.data.summary.student?.total}`);
+  ok(list0.data.users.every((u) => 'attempts' in u), '每位成員都帶出考試場次數（刪除前才知道會失去什麼）');
+  ok(typeof list0.data.adminCount === 'number', `目前啟用中的管理員 ${list0.data.adminCount} 位`);
+
+  const multi = await call('GET', '/users?role=admin,teacher', null, tea);
+  ok(multi.data.users.every((u) => u.role !== 'student'), '可以一次篩選多個角色（?role=admin,teacher）');
+
+  // 老師只能管學生
+  const teaMakeTeacher = await call('POST', '/users', {
+    username: `t_${stamp}`, password: 'pw123456', name: '老師想建老師', role: 'teacher',
+  }, tea);
+  ok(teaMakeTeacher.status === 403, '老師不能建立老師帳號');
+
+  const teaMakeStudent = await call('POST', '/users', {
+    username: `s_${stamp}`, password: 'pw123456', name: '老師建的學生', role: 'student', classGroup: '測試班',
+  }, tea);
+  ok(teaMakeStudent.status === 200, '老師可以建立學生');
+  const stuId = teaMakeStudent.data.id;
+
+  // 管理員可以建立任何角色
+  const newTeacher = await call('POST', '/users', {
+    username: `nt_${stamp}`, password: 'pw123456', name: '新老師', role: 'teacher', email: 'nt@x.com',
+  }, adm);
+  ok(newTeacher.status === 200, '管理員可以建立老師');
+  const teaId = newTeacher.data.id;
+
+  const newAdmin = await call('POST', '/users', {
+    username: `na_${stamp}`, password: 'pw123456', name: '第二管理員', role: 'admin',
+  }, adm);
+  ok(newAdmin.status === 200, '管理員可以建立另一位管理員');
+  const admId = newAdmin.data.id;
+
+  const dup = await call('POST', '/users', {
+    username: `nt_${stamp}`, password: 'pw123456', name: '重複帳號', role: 'teacher',
+  }, adm);
+  ok(dup.status === 409, '帳號重複會被擋下');
+
+  // 老師不能改老師
+  const teaEditTeacher = await call('PUT', `/users/${teaId}`, { name: '亂改' }, tea);
+  ok(teaEditTeacher.status === 403, '老師不能修改其他老師的資料');
+
+  // 停用 / 啟用
+  await call('PUT', `/users/${stuId}`, { active: false }, tea);
+  const offList = await call('GET', '/users?active=0', null, tea);
+  ok(offList.data.users.some((u) => u.id === stuId), '停用後可以用 ?active=0 篩出來');
+  await call('PUT', `/users/${stuId}`, { active: true }, tea);
+
+  // 最後一位管理員的防呆（此時有 admin 與第二管理員兩位，先刪掉第二位再測）
+  const impactAdm = await call('GET', `/users/${admId}/impact`, null, adm);
+  ok(impactAdm.data.isLastAdmin === false, '還有其他管理員時，不會被標成「最後一位」');
+
+  await call('DELETE', `/users/${admId}`, null, adm);
+  const impactLast = await call('GET', '/users/1/impact', null, adm);
+  ok(impactLast.data.isLastAdmin === true, '刪掉第二位管理員後，原管理員被標成最後一位');
+
+  const selfDel = await call('DELETE', '/users/1', null, adm);
+  ok(selfDel.status === 400, '不能刪除自己');
+
+  // 用第二位管理員來測「不能停用最後一位管理員」
+  const adm2 = await call('POST', '/users', {
+    username: `na2_${stamp}`, password: 'pw123456', name: '暫時管理員', role: 'admin',
+  }, adm);
+  const adm2Token = (await call('POST', '/auth/login', { username: `na2_${stamp}`, password: 'pw123456' })).data.token;
+  await call('PUT', '/users/1', { active: false }, adm2Token);   // 先把原管理員停用
+  const lastOff = await call('PUT', `/users/${adm2.data.id}`, { active: false }, adm2Token);
+  ok(lastOff.status === 400 && /最後一位/.test(lastOff.data.error), '不能停用最後一位管理員');
+  const lastDemote = await call('PUT', `/users/${adm2.data.id}`, { role: 'teacher' }, adm2Token);
+  ok(lastDemote.status === 400, '也不能把最後一位管理員降級成老師');
+  await call('PUT', '/users/1', { active: true }, adm2Token);    // 還原
+  await call('DELETE', `/users/${adm2.data.id}`, null, adm);
+
+  // 刪除老師：會帶回影響
+  const teaImpact = await call('GET', `/users/${teaId}/impact`, null, adm);
+  ok(typeof teaImpact.data.attempts === 'number' && typeof teaImpact.data.testsCreated === 'number',
+    '刪除前可以查到會失去幾場考試、幾份試卷會變成無主');
+  const delTea = await call('DELETE', `/users/${teaId}`, null, adm);
+  ok(delTea.status === 200, '管理員可以刪除老師');
+
+  const teaDelStudent = await call('DELETE', `/users/${stuId}`, null, tea);
+  ok(teaDelStudent.status === 403, '老師不能刪除成員（只能停用）');
+
+  // 批次操作
+  const b1 = await call('POST', '/users/bulk-action', { action: 'deactivate', ids: [stuId] }, tea);
+  ok(b1.data.affected === 1, '老師可以批次停用學生');
+  const b2 = await call('POST', '/users/bulk-action', { action: 'activate', ids: [stuId] }, tea);
+  ok(b2.data.affected === 1, '批次啟用');
+
+  const bSelf = await call('POST', '/users/bulk-action', { action: 'deactivate', ids: [1] }, adm);
+  ok(bSelf.status === 400, '批次操作不能包含自己');
+
+  // 用管理員（id 1）當目標，確定不是「操作自己」那條規則先擋下來
+  const bStaff = await call('POST', '/users/bulk-action', { action: 'deactivate', ids: [1] }, tea);
+  ok(bStaff.status === 403, '老師不能批次操作老師或管理員');
+
+  const bDelTea = await call('POST', '/users/bulk-action', { action: 'delete', ids: [stuId] }, tea);
+  ok(bDelTea.status === 403, '老師不能批次刪除');
+
+  const bDel = await call('POST', '/users/bulk-action', { action: 'delete', ids: [stuId] }, adm);
+  ok(bDel.data.deleted === 1, '管理員可以批次刪除，並回報連帶刪掉幾場考試');
+
+  const gone = await call('GET', `/users?q=${stamp}`, null, adm);
+  ok(gone.data.users.length === 0, '刪掉的成員真的不見了');
+
+  const mlog2 = await call('GET', '/manage/log', null, tea);
+  ok(mlog2.data.log.some((r) => r.action === 'user_delete' || r.action === 'users_delete'),
+    '刪除成員會留下維護紀錄');
+
   console.log(`\n${'─'.repeat(46)}`);
   console.log(`通過 ${pass}　失敗 ${fail}`);
   process.exit(fail ? 1 : 0);
