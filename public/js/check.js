@@ -34,7 +34,7 @@ window.Check = (() => {
   }
 
   // ── 單項檢查 ──────────────────────────────────────────────
-  const R = (status, note = '') => ({ status, note });
+  const R = (status, note = '', kind = '') => ({ status, note, kind });
 
   function checkBrowser() {
     const ua = navigator.userAgent;
@@ -149,27 +149,62 @@ window.Check = (() => {
     }
   }
 
-  /** 麥克風：不只要權限，還要真的收得到聲音 */
+  /** 這個瀏覽器的麥克風設定藏在哪裡 */
+  function micSettingsPath() {
+    const b = String(S.browser || '');
+    if (/Edge/.test(b)) return { url: 'edge://settings/content/microphone', how: '網址列貼上 edge://settings/content/microphone' };
+    if (/Firefox/.test(b)) return { url: 'about:preferences#privacy', how: '網址列貼上 about:preferences#privacy，往下找「權限 → 麥克風 → 設定」' };
+    if (/Safari/.test(b)) return { url: '', how: '上方選單「Safari → 設定 → 網站 → 麥克風」，把這個網站改成「允許」' };
+    if (/Opera/.test(b)) return { url: 'opera://settings/content/microphone', how: '網址列貼上 opera://settings/content/microphone' };
+    return { url: 'chrome://settings/content/microphone', how: '網址列貼上 chrome://settings/content/microphone' };
+  }
+
+  /** 瀏覽器有沒有記住「已封鎖」——記住的話點不點網址列圖示都沒用，要去設定裡解 */
+  async function micPermissionState() {
+    try {
+      const st = await navigator.permissions.query({ name: 'microphone' });
+      return st.state;                    // granted | denied | prompt
+    } catch { return 'unknown'; }         // Firefox 舊版與 Safari 查不到
+  }
+
+  /**
+   * 麥克風：不只要權限，還要真的收得到聲音。
+   * 失敗時給的必須是「照著做就能解決」的步驟，不是一句「權限被拒絕」。
+   */
   async function checkMic(onLevel) {
     if (!navigator.mediaDevices?.getUserMedia) {
-      return R('fail', '這個瀏覽器不支援錄音');
+      return R('fail', '這個瀏覽器不支援錄音，請改用 Chrome 或 Edge');
     }
+
+    // 最常見的坑：用 http:// 加 IP 直連。這種情況瀏覽器連問都不會問，
+    // 直接丟 NotAllowedError —— 這時候叫學生去點網址列的鎖頭是白費工，
+    // 那裡根本沒有「麥克風」這個選項。
+    if (!window.isSecureContext) {
+      return R('fail', `這個網址（${location.origin}）不是安全連線，瀏覽器不會給麥克風權限。`
+        + '這不是瀏覽器設定的問題，要請老師或管理員替考試網站加上 HTTPS。', 'insecure');
+    }
+
     let stream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch (e) {
       const name = e.name || '';
       if (name === 'NotAllowedError' || name === 'SecurityError') {
-        return R('fail', '權限被拒絕。請點網址列左邊的圖示，把「麥克風」改成允許，再重新整理這一頁');
+        const state = await micPermissionState();
+        return R('fail', state === 'denied'
+          ? `這個網站（${location.origin}）被瀏覽器記成「封鎖麥克風」了。點網址列左邊的圖示改成允許，或到瀏覽器設定裡把它移出封鎖清單。`
+          : '剛剛的權限詢問被關掉或按了封鎖。按下面的「再測一次麥克風」，這次請選「允許」。',
+        state === 'denied' ? 'blocked' : 'dismissed');
       }
       if (name === 'NotFoundError' || name === 'OverconstrainedError') {
-        return R('fail', '找不到麥克風。請把耳機或麥克風插上去再試一次');
+        return R('fail', '找不到麥克風。請把耳機或麥克風插上去，或到系統的音效設定確認有輸入裝置，再測一次');
       }
       if (name === 'NotReadableError') {
-        return R('fail', '麥克風被其他程式占用（視訊軟體、錄音程式），請先關掉它們');
+        return R('fail', '麥克風被其他程式占用（視訊軟體、錄音程式、線上會議），請先關掉它們再測一次');
       }
       if (name === 'NotSupportedError') {
-        return R('fail', '這台電腦的系統或瀏覽器政策不允許錄音（常見於學校／公司統一管理的電腦）。請換一台電腦，或請資訊組協助開放');
+        return R('fail', '這台電腦的系統或瀏覽器政策不允許錄音（常見於學校／公司統一管理的電腦）。'
+          + '請換一台電腦，或請資訊組協助開放', 'policy');
       }
       // 認不出來的錯誤也要給學生一條路走，不要只丟一行英文
       return R('fail', `無法使用麥克風。建議改用 Chrome 或 Edge 再試一次；還是不行的話，把這段訊息給老師：${name || 'Error'} / ${e.message}`);
@@ -341,18 +376,9 @@ window.Check = (() => {
         return heard ? R('pass', '聽得到') : R('fail', '聽不到聲音。請檢查音量、耳機有沒有插好，或換一個播放裝置');
       });
 
-      // 麥克風：權限 + 實際收音
-      await step('mic', async () => {
-        const meter = el('div', { class: 'chk-meter' }, el('i'));
-        const hint = el('div', { class: 'small muted' }, '請對著麥克風說話，例如唸「一、二、三」');
-        UI.render(rows.mic.extra, el('div', {}, hint, meter));
-        const r = await checkMic((level, peak) => {
-          meter.firstChild.style.width = `${Math.round(level * 100)}%`;
-          meter.firstChild.className = peak > 0.06 ? 'ok' : '';
-        });
-        UI.render(rows.mic.extra);
-        return r;
-      });
+      // 麥克風：權限 + 實際收音。失敗的話直接把「怎麼解」畫在這一列底下，
+      // 並給一顆只重測麥克風的按鈕 —— 為了一項失敗把整份重跑一次太浪費。
+      await step('mic', runMicStep);
 
       await step('ws', checkWs);
       await step('turnstile', checkTurnstile);
@@ -361,6 +387,70 @@ window.Check = (() => {
       runBtn.disabled = false;
       runBtn.textContent = '重新檢查';
       await finish();
+    }
+
+    /** 跑麥克風那一項；失敗時附上可以照做的步驟與重測鈕 */
+    async function runMicStep() {
+      const meter = el('div', { class: 'chk-meter' }, el('i'));
+      UI.render(rows.mic.extra,
+        el('div', {},
+          el('div', { class: 'small muted' }, '請對著麥克風說話，例如唸「一、二、三」'),
+          meter));
+
+      const r = await checkMic((level, peak) => {
+        meter.firstChild.style.width = `${Math.round(level * 100)}%`;
+        meter.firstChild.className = peak > 0.06 ? 'ok' : '';
+      });
+
+      if (r.status === 'pass') { UI.render(rows.mic.extra); return r; }
+
+      const retry = el('button', {
+        class: 'btn sm primary',
+        onclick: async (e) => {
+          e.target.disabled = true;
+          e.target.textContent = '測試中…';
+          const again = await step('mic', runMicStep);
+          if (again.status === 'pass') await finish();
+        },
+      }, '🎙 再測一次麥克風');
+
+      const p = micSettingsPath();
+      const steps = r.kind === 'insecure'
+        ? el('div', {},
+            el('p', {}, '這一項不是學生自己能解決的，請把下面這段給老師或管理員：'),
+            el('ol', {},
+              el('li', {}, '瀏覽器規定只有 ', el('code', {}, 'https://'), ' 或 ',
+                el('code', {}, 'localhost'), ' 才給麥克風權限，這是安全規範，沒有例外或開關可以繞過。'),
+              el('li', {}, '目前的考試網址是 ', el('code', {}, location.origin),
+                '，請替它加上 HTTPS（Nginx／Caddy 反向代理 + Let\'s Encrypt 憑證）。'),
+              /^(localhost|127\.|\[::1\])/.test(location.hostname) ? null
+                : el('li', {}, '臨時要在跑系統的那台機器上先測的話，可以改用 ',
+                  el('code', {}, `http://localhost:${location.port || 80}`), ' 開啟。')))
+        : r.kind === 'blocked'
+          ? el('div', {},
+              el('p', {}, '瀏覽器已經記住「封鎖」了，所以不會再跳出詢問視窗。兩個方法擇一：'),
+              el('ol', {},
+                el('li', {}, '點網址列最左邊的圖示（鎖頭 🔒 或 ⓘ 或滑桿），找到「麥克風」改成「允許」。'),
+                el('li', {}, p.how, p.url ? el('span', {}, '，把 ',
+                  el('code', { style: { userSelect: 'all' } }, location.origin),
+                  ' 從「不允許」清單移除') : '')),
+              el('p', { class: 'small muted' }, '改好之後不用重新整理，直接按下面的按鈕就好。'))
+          : r.kind === 'policy'
+            ? el('div', {},
+                el('p', {}, '這台電腦被系統層級擋住了，學生自己改不了。請把下面這段給資訊組：'),
+                el('ol', {},
+                  el('li', {}, '檢查作業系統的麥克風隱私設定有沒有整個關掉（Windows：設定 → 隱私權與安全性 → 麥克風）。'),
+                  el('li', {}, '檢查有沒有群組原則／MDM 停用了瀏覽器的媒體擷取（如 Chrome 的 ',
+                    el('code', {}, 'AudioCaptureAllowed'), ' 政策）。'),
+                  el('li', {}, '把 ', el('code', { style: { userSelect: 'all' } }, location.origin),
+                    ' 加進 ', el('code', {}, 'AudioCaptureAllowedUrls'), ' 允許清單。')))
+            : el('div', {},
+                el('p', {}, '按下面的按鈕，瀏覽器會再問一次 —— 這次請選「允許」。'),
+                el('p', { class: 'small muted' },
+                  '詢問視窗會出現在網址列下方，有時候會被忽略。如果沒看到，先確認瀏覽器視窗是不是被其他程式蓋住了。'));
+
+      UI.render(rows.mic.extra, el('div', { class: 'chk-fix' }, steps, el('div', { class: 'toolbar' }, retry)));
+      return r;
     }
 
     async function finish() {

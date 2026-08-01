@@ -400,3 +400,17 @@ table.data tr.warn-row td{background:#fffaf0}
   .diff-line { flex-wrap: wrap; }
   .diff-mod { flex-basis: 100%; }
 }
+
+/* 環境檢查：失敗時的排除步驟 */
+.chk-fix {
+  margin-top: .5rem; padding: .6rem .8rem; border-radius: 4px;
+  background: #fdf4f3; border: 1px solid #f0c9c3; font-size: .85rem; line-height: 1.7;
+}
+.chk-fix p { margin: .2rem 0; }
+.chk-fix ol { margin: .3rem 0 .3rem 1.2rem; padding: 0; }
+.chk-fix li { margin: .25rem 0; }
+.chk-fix code {
+  background: #fff; border: 1px solid var(--line-2); border-radius: 3px;
+  padding: 0 .25rem; font-size: .95em; word-break: break-all;
+}
+.chk-fix .toolbar { margin-top: .5rem; }
