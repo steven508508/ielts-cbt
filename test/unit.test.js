@@ -919,3 +919,24 @@ test('Realtime：sessionPayload 兩種協定各自正確', () => {
   assert.ok(!ga.session.modalities && !ga.session.input_audio_format,
     'GA 不能夾帶舊欄位，夾了會被端點拒絕');
 });
+
+// ── 通知的容量控制 ────────────────────────────────────────
+// 通知只會長不會短：未讀的照設計一律保留，而每晚的自動清理預設是關的。
+// 一個不再登入的學生會永遠累積下去，所以寫入時就要順手修剪。
+const notifyLib = require('../server/lib/notify');
+
+test('通知：每人上限與硬保留天數是明確的常數，不是散在 SQL 裡', () => {
+  assert.equal(typeof notifyLib.KEEP_PER_USER, 'number');
+  assert.equal(typeof notifyLib.HARD_KEEP_DAYS, 'number');
+  assert.ok(notifyLib.KEEP_PER_USER >= 50, '上限不能小到把有用的通知也刪掉');
+  assert.ok(notifyLib.HARD_KEEP_DAYS >= 90, '已讀的至少留一個學期');
+  assert.equal(typeof notifyLib.trim, 'function');
+});
+
+test('通知：修剪不使用視窗函式（MySQL 5.7 沒有）', () => {
+  const src = require('fs').readFileSync(require.resolve('../server/lib/notify'), 'utf8');
+  const trimSrc = src.slice(src.indexOf('async function trim('), src.indexOf('async function listFor('));
+  assert.ok(!/ROW_NUMBER|OVER\s*\(/i.test(trimSrc),
+    'README 寫的最低需求是 MySQL 5.7，那個版本沒有視窗函式');
+  assert.match(trimSrc, /LIMIT 500/, '一次刪除要有上限，不能拖慢送通知');
+});

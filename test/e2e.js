@@ -884,6 +884,18 @@ async function call(method, path, body, token) {
   const nLimit = await call('GET', '/notifications?limit=999', null, stu);
   ok(nLimit.status === 200 && nLimit.data.items.length <= 100, 'limit 灌大數字不會拖垮查詢');
 
+  // 一個已刪除的學生會害同一批的另外 199 人收不到通知 ——
+  // 多筆 INSERT 是一句 SQL，撞到外鍵就整批失敗，而回傳值還說成功
+  const nGhost = await call('POST', '/notifications/send',
+    { title: `混壞 id ${stamp}`, userIds: [stuUid, 99999999] }, tea);
+  ok(nGhost.status === 200 && nGhost.data.sent === 1,
+    `壞掉的收件者被略過，其他人照樣收得到（sent=${nGhost.data.sent}）`);
+  ok(nGhost.data.skipped === 1, '而且會回報略過了幾個，老師才知道有人沒收到');
+  const nGhostGot = await call('GET', '/notifications', null, stu);
+  ok(nGhostGot.data.items.some((x) => x.title.includes(`混壞 id ${stamp}`)),
+    '學生真的收到了那一則');
+  await call('POST', '/notifications/read', {}, stu);
+
   // ── Email 設定 ─────────────────────────────────────────
   console.log('\nEmail 通知設定');
   const smtpStu = await call('GET', '/notifications/smtp', null, stu);

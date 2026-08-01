@@ -71,10 +71,27 @@ function maskSmtp(c) {
  * @param {{type:string,title:string,body?:string,link?:string,email?:boolean}} n
  */
 async function push(userIds, n) {
-  const ids = [...new Set((userIds || []).map(Number).filter((x) => Number.isInteger(x) && x > 0))];
-  if (!ids.length) return { sent: 0 };
+  const asked = [...new Set((userIds || []).map(Number).filter((x) => Number.isInteger(x) && x > 0))];
+  if (!asked.length) return { sent: 0 };
+
+  /* 先把不存在或已停用的帳號濾掉。
+     多筆 INSERT 是一句 SQL，只要其中一個 user_id 撞到外鍵就整批失敗 ——
+     一個已刪除的學生會害同一批的另外 199 個人收不到通知，
+     而且回傳值還說「已送出 200 筆」。 */
+  const ids = [];
+  for (let i = 0; i < asked.length; i += 500) {
+    const part = asked.slice(i, i + 500);
+    const rows = await db.query(
+      `SELECT id FROM users WHERE active = 1 AND id IN (${part.map(() => '?').join(',')})`, part
+    ).catch(() => []);
+    ids.push(...rows.map((r) => r.id));
+  }
+  const skipped = asked.length - ids.length;
+  if (skipped) console.warn(`[notify] 略過 ${skipped} 個不存在或已停用的帳號`);
+  if (!ids.length) return { sent: 0, skipped };
 
   // 一次一批寫進去，數量大時不要組成超長 SQL
+  let sent = 0;
   for (let i = 0; i < ids.length; i += 200) {
     const chunk = ids.slice(i, i + 200);
     const values = chunk.map(() => '(?,?,?,?,?)').join(',');
@@ -84,16 +101,70 @@ async function push(userIds, n) {
         n.body ? String(n.body).slice(0, 500) : null,
         n.link ? String(n.link).slice(0, 200) : null);
     }
-    await db.exec(
+    const r = await db.exec(
       `INSERT INTO notifications (user_id, type, title, body, link) VALUES ${values}`, params
-    ).catch((e) => console.warn('[notify] 寫入失敗：', e.message));
+    ).catch((e) => { console.warn('[notify] 寫入失敗：', e.message); return null; });
+    if (r) sent += chunk.length;
   }
 
   // Email 是加值，寄不出去不能影響主流程
   if (n.email !== false) {
     mailTo(ids, n).catch((e) => console.warn('[notify] 寄信失敗：', e.message));
   }
-  return { sent: ids.length };
+
+  // 順手修剪。放在這裡而不是只靠每晚的自動清理，是因為那個預設是關的 ——
+  // 老師沒開的話這張表只會長不會短，而且「未讀的一律保留」代表
+  // 一個不再登入的學生會永遠累積下去。
+  trim(ids).catch((e) => console.warn('[notify] 修剪失敗：', e.message));
+
+  return skipped ? { sent, skipped } : { sent };
+}
+
+/** 每個人最多留幾則；已讀且超過這個天數的一律清掉 */
+const KEEP_PER_USER = 200;
+const HARD_KEEP_DAYS = 180;
+
+/**
+ * 修剪通知。
+ *
+ * 刻意不用視窗函式（ROW_NUMBER OVER PARTITION）—— MySQL 5.7 沒有，
+ * 而 README 寫的最低需求就是 5.7。先用一句 GROUP BY 找出「誰超量」，
+ * 通常回傳零筆就結束了，超量的人才多跑兩句。
+ */
+async function trim(userIds = []) {
+  // ① 已讀而且夠舊的，一律清掉。一次上限 500 筆，不會拖慢送通知這件事。
+  await db.exec(
+    `DELETE FROM notifications
+      WHERE read_at IS NOT NULL AND created_at < DATE_SUB(NOW(), INTERVAL ? DAY)
+      LIMIT 500`, [HARD_KEEP_DAYS]
+  ).catch(() => {});
+
+  // ② 單一使用者超量。未讀的也算 —— 一個累積兩百則未讀的人顯然沒在看，
+  //    留最新的兩百則已經綽綽有餘。
+  const ids = [...new Set((userIds || []).map(Number).filter((x) => Number.isInteger(x) && x > 0))];
+  if (!ids.length) return 0;
+
+  let removed = 0;
+  for (let i = 0; i < ids.length; i += 200) {
+    const chunk = ids.slice(i, i + 200);
+    const over = await db.query(
+      `SELECT user_id, COUNT(*) AS n FROM notifications
+        WHERE user_id IN (${chunk.map(() => '?').join(',')})
+        GROUP BY user_id HAVING n > ?`, [...chunk, KEEP_PER_USER]
+    ).catch(() => []);
+    for (const row of over) {
+      const edge = await db.query(
+        `SELECT id FROM notifications WHERE user_id = ?
+          ORDER BY id DESC LIMIT 1 OFFSET ${KEEP_PER_USER - 1}`, [row.user_id]
+      ).catch(() => []);
+      if (!edge.length) continue;
+      const r = await db.exec(
+        'DELETE FROM notifications WHERE user_id = ? AND id < ?', [row.user_id, edge[0].id]
+      ).catch(() => null);
+      removed += r?.affectedRows || 0;
+    }
+  }
+  return removed;
 }
 
 async function listFor(userId, { limit = 30, unreadOnly = false } = {}) {
@@ -287,6 +358,6 @@ async function mailTo(userIds, n) {
 }
 
 module.exports = {
-  push, listFor, markRead, cleanup,
+  push, listFor, markRead, cleanup, trim, KEEP_PER_USER, HARD_KEEP_DAYS,
   getSmtp, saveSmtp, maskSmtp, smtpSend, mailTo, encodeHeader, buildMessage, SMTP_DEFAULTS,
 };

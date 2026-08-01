@@ -1394,7 +1394,9 @@ const Admin = (() => {
         classGroup: cls.value || null,
         userIds: [...box.querySelectorAll('input:checked')].map((i) => Number(i.value)),
       });
-      toast(`通知已送給 ${r.sent} 位學生`, 'ok');
+      toast(r.skipped
+        ? `通知已送給 ${r.sent} 位學生（有 ${r.skipped} 個帳號已停用或不存在，已略過）`
+        : `通知已送給 ${r.sent} 位學生`, r.skipped ? 'warn' : 'ok');
     } catch (e) { UI.alert(e.message); }
   }
 
