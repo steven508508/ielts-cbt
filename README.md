@@ -21,7 +21,7 @@
 1. [手動安裝](#手動安裝)
 2. [預設帳號](#預設帳號)
 3. [設定 AI](#設定-ai)
-4. [匯入題目](#匯入題目)
+4. [匯入題目 / AI 出題 / 題庫](#匯入題目)
 5. [支援的題型](#支援的題型)
 6. [老師可自訂的考試規則](#老師可自訂的考試規則)
 7. [學生端：官方機考 1:1](#學生端官方機考-11)
@@ -298,7 +298,19 @@ docker compose exec app node server/scripts/resetPassword.js admin 新的密碼
   也可以貼上你自己的文章，讓 AI 只依這段內容出題（答案保證在文章裡找得到）
 - **整份試卷** — 一次產生四科完整試卷（會花 2–5 分鐘、消耗較多額度）
 
-產出的題目可以直接存成試卷、存進題庫，或下載 JSON 再手動調整。
+產出的題目可以直接存成試卷、**存進題庫**，或下載 JSON 再手動調整。
+
+### 題庫
+
+導覽列的「題庫」頁把所有存起來的題組收在一起，方便跨試卷重複使用。
+
+- **來源** — AI 出題按「存進題庫」、匯入時收進來的題組，或手動經 API 新增
+- **篩選** — 依科目、題型、來源篩選，或用關鍵字搜尋主題、標籤與題目內容
+- **預覽** — 看完整題幹、選項、標準答案、解析與文章／逐字稿
+- **標籤** — 隨時修改主題、難度、標籤，方便日後找回來
+- **組卷** — 勾選任意幾個題組後按「加入試卷」，可以併進現有試卷或直接組成一份新試卷。
+  題號會**自動接續**在既有題目後面，不會撞號
+- **刪除** — 單筆或批次刪除；已經放進試卷的題目不受影響（題庫存的是副本）
 
 ---
 
@@ -590,9 +602,44 @@ Pronunciation 四項給分，並附語速統計、逐題錄音與逐字稿。
   而登入本來就還有速率限制在擋暴力破解。
 - ⚠️ 這個選項救不了「**學生的瀏覽器**連不到 `challenges.cloudflare.com`」的情況 ——
   瀏覽器產不出驗證碼，伺服器再寬鬆也沒用。校內網路如果會擋這個網域，就不要開這個功能。
-  遇到這種情形登入頁會直接顯示原因並停用登入鈕，不會讓人一直卡在看不懂的錯誤。
+  遇到這種情形登入頁會直接把 Cloudflare 的錯誤代碼翻成中文說明（含目前網址），
+  但**登入鈕不會被鎖住**，避免整個系統被自己的驗證機制擋在門外。
 - 開發或測試可以用 Cloudflare 官方測試金鑰（後台有「填入測試金鑰」按鈕）：
   Site Key `1x00000000000000000000AA`、Secret Key `1x0000000000000000000000000000000AA`，一律通過。
+
+#### 驗證框出不來 / 顯示「無法連線至網站」
+
+登入頁會直接把 Cloudflare 的錯誤代碼翻成中文。常見的三個：
+
+| 代碼 | 意思 | 怎麼修 |
+|---|---|---|
+| `110200` | **這個網域沒有被授權**（最常見） | Cloudflare → Turnstile → 該 Widget → Hostname Management，把你實際使用的網域加進去。填**主機名稱**就好，不要含 `https://`、不要含連接埠。用 IP 直連時 Turnstile 一律拒絕，必須改用網域。 |
+| `110100` / `110110` / `400020` | Site Key 不對 | 檢查是不是把 Site Key 跟 Secret Key 貼反了。 |
+| `200500` | 瀏覽器連不到 `challenges.cloudflare.com` | 校內防火牆、DNS 過濾或廣告封鎖擴充套件擋掉了。加白名單，或乾脆別開這個功能。 |
+
+**被自己鎖在外面時**（驗證框壞掉，連管理員都進不了後台去關它）：
+
+```bash
+# 看目前設定
+docker compose exec app node server/scripts/turnstile.js --status
+
+# 關掉人機驗證（最多 15 秒後生效，不用重啟）
+docker compose exec app node server/scripts/turnstile.js --off
+
+# 修好之後再開回來
+docker compose exec app node server/scripts/turnstile.js --on
+
+# 直接從命令列換金鑰
+docker compose exec app node server/scripts/turnstile.js \
+  --site-key=0x4AAA... --secret-key=0x4AAA... --on
+
+# 確認伺服器連得到 Cloudflare、Secret Key 有效
+docker compose exec app node server/scripts/turnstile.js --test
+```
+
+手動安裝的話用 `npm run turnstile -- --off`。
+另一條路是在 `.env` 加 `TURNSTILE_DISABLED=1` 再重啟 —— 這是硬性覆寫，
+不管資料庫裡的開關是什麼都不會生效，適合放進緊急復原程序。
 - **套上 HTTPS**（Nginx / Caddy 反向代理 + Let's Encrypt）。口說錄音必須有 HTTPS。
 - Nginx 反向代理時記得放寬上傳大小，並**打開 WebSocket 轉發**（口說即時對話需要）：
 
@@ -638,7 +685,7 @@ ielts-cbt/
 │   │   └── tabular.js        Excel / CSV 匯入與範本產生
 │   ├── routes/               auth, users, tests, importer, media, exam,
 │   │                         speaking, results, ai, manage
-│   └── scripts/              initDb.js, seed.js
+│   └── scripts/              initDb.js, seed.js, resetPassword.js, turnstile.js
 ├── public/
 │   ├── index.html
 │   ├── css/
@@ -661,8 +708,9 @@ ielts-cbt/
 ```bash
 npm test                # 單元測試（31 項：批改、換算、驗證、匯入）
 npm start               # 另開一個終端機
-node test/e2e.js        # 端對端測試（83 項）：登入 → 作答 → 交卷 → 批改 → 成績單
+node test/e2e.js        # 端對端測試（187 項）：登入 → 作答 → 交卷 → 批改 → 成績單
                         # → 老師改分 → 檔案管理 → 成績批次操作 → 保留政策與清理
+                        # → 成員管理 → 題庫組卷 → 人機驗證設定
 ```
 
 ---
@@ -740,6 +788,22 @@ Excel 匯入用的 SheetJS 已經搬離 npm registry，改由官方 CDN 發布
 
 **AI 出題的題目品質不穩**
 把主題寫具體一點、指定難度，或先貼上自己的文章讓 AI 只依該文出題。
+
+**按了「存進題庫」，卻找不到題庫在哪**
+在導覽列的「**題庫**」（試卷和匯入題目中間）。存進去之後也可以直接按按鈕旁邊出現的
+「前往題庫 →」。若導覽列沒看到，多半是瀏覽器讀到舊的快取檔，強制重新整理
+（Ctrl / ⌘ + Shift + R）即可。
+
+**登入頁的人機驗證框顯示「無法連線至網站」或一片空白**
+先看驗證框裡的錯誤代碼——系統會把它翻成中文並附上目前網址。
+最常見的是 `110200`（Cloudflare Widget 的網域清單沒有你的網域）與
+`200500`（瀏覽器連不到 `challenges.cloudflare.com`）。
+詳細對照表與「被鎖在外面」的救援指令見
+[登入人機驗證](#登入人機驗證cloudflare-turnstile) 一節。急著進系統的話：
+
+```bash
+docker compose exec app node server/scripts/turnstile.js --off
+```
 AI 產生的題目一律建議人工校對後再指派給學生。
 
 ---

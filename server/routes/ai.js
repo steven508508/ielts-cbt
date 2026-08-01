@@ -80,9 +80,83 @@ router.post('/generate-paper', requireStaff, async (req, res) => {
   }
 });
 
+/* ── 題庫 ─────────────────────────────────────────────────────
+   AI 出題、匯入、或從既有試卷都可以把題組存進來重複使用。
+   payload 形狀：{ group, passage?, transcript?, passageTitle? } */
+
+/** 從 payload 算出題數，列表才看得到「幾題」 */
+function countQuestions(payload) {
+  const g = payload?.group;
+  if (!g) return 0;
+  if (Array.isArray(g.questions)) return g.questions.length;
+  return 0;
+}
+
+/** 一組 section 裡最大的題號（沒有題號的題型回 0） */
+function maxNumber(sections) {
+  let max = 0;
+  for (const s of sections || []) {
+    for (const g of s.groups || []) {
+      for (const q of g.questions || []) {
+        const n = Number(q.number);
+        if (Number.isFinite(n) && n > max) max = n;
+      }
+    }
+  }
+  return max;
+}
+
+/** 把 section 裡的題號整批往後推，接在既有題目後面 */
+function shiftNumbers(sections, afterNumber) {
+  if (!afterNumber) return sections;
+  let min = Infinity;
+  for (const s of sections || []) {
+    for (const g of s.groups || []) {
+      for (const q of g.questions || []) {
+        const n = Number(q.number);
+        if (Number.isFinite(n) && n < min) min = n;
+      }
+    }
+  }
+  if (!Number.isFinite(min)) return sections;
+  const offset = afterNumber - min + 1;
+  if (offset <= 0) return sections;
+  for (const s of sections || []) {
+    for (const g of s.groups || []) {
+      for (const q of g.questions || []) {
+        if (Number.isFinite(Number(q.number))) q.number = Number(q.number) + offset;
+      }
+      if (Number.isFinite(Number(g.startNumber))) g.startNumber = Number(g.startNumber) + offset;
+    }
+  }
+  return sections;
+}
+
+/** 把題庫項目還原成可以合併進試卷的 paper 結構 */
+function bankItemToPaper(row, title) {
+  const p = typeof row.payload === 'string' ? JSON.parse(row.payload) : row.payload;
+  const section = {
+    title: p.sectionTitle
+      || (row.module === 'reading' ? 'Reading Passage' : row.module === 'listening' ? 'Section' : 'Part'),
+    passageTitle: p.passageTitle || null,
+    passage: p.passage || null,
+    transcript: p.transcript || null,
+    groups: p.group ? [p.group] : (p.groups || []),
+  };
+  return {
+    title: title || `題庫 #${row.id} — ${row.topic || row.type}`,
+    testType: 'academic',
+    modules: [{ module: row.module, sections: [section] }],
+  };
+}
+
 /** 存進題庫 */
 router.post('/bank', requireStaff, async (req, res) => {
   const { module: mod, type, topic, difficulty, tags, payload, source = 'ai' } = req.body || {};
+  if (!mod || !type) return res.status(400).json({ error: '缺少 module 或 type' });
+  if (!payload || (!payload.group && !payload.groups)) {
+    return res.status(400).json({ error: 'payload 至少要有一個題組（group）' });
+  }
   const id = await db.insert(
     'INSERT INTO question_bank (module, type, topic, difficulty, tags, payload, source, created_by) VALUES (?,?,?,?,?,?,?,?)',
     [mod, type, topic || null, difficulty || null, tags || null, JSON.stringify(payload), source, req.user.id]
@@ -91,28 +165,129 @@ router.post('/bank', requireStaff, async (req, res) => {
 });
 
 router.get('/bank', requireStaff, async (req, res) => {
-  const { module: mod, type } = req.query;
+  const { module: mod, type, source, q } = req.query;
   const where = [];
   const params = [];
-  if (mod) { where.push('module = ?'); params.push(mod); }
-  if (type) { where.push('type = ?'); params.push(type); }
+  if (mod) { where.push('b.module = ?'); params.push(mod); }
+  if (type) { where.push('b.type = ?'); params.push(type); }
+  if (source) { where.push('b.source = ?'); params.push(source); }
+  if (q) {
+    where.push('(b.topic LIKE ? OR b.tags LIKE ? OR b.payload LIKE ?)');
+    const like = `%${String(q).trim()}%`;
+    params.push(like, like, like);
+  }
+  const clause = where.length ? 'WHERE ' + where.join(' AND ') : '';
   const rows = await db.query(
-    `SELECT id, module, type, topic, difficulty, tags, source, created_at FROM question_bank
-     ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY id DESC LIMIT 300`,
+    `SELECT b.id, b.module, b.type, b.topic, b.difficulty, b.tags, b.source, b.created_at,
+            b.payload, u.name AS creator
+       FROM question_bank b LEFT JOIN users u ON u.id = b.created_by
+       ${clause} ORDER BY b.id DESC LIMIT 500`,
     params
   );
-  res.json({ items: rows });
+  const items = rows.map((r) => {
+    let payload = {};
+    try { payload = JSON.parse(r.payload); } catch { /* 壞掉的資料照樣列出來讓人刪掉 */ }
+    const { payload: _drop, ...rest } = r;
+    return { ...rest, questionCount: countQuestions(payload), broken: !payload.group && !payload.groups };
+  });
+  // 給前端做篩選下拉用的統計
+  const stats = await db.query(
+    'SELECT module, type, COUNT(*) AS n FROM question_bank GROUP BY module, type ORDER BY module, type'
+  );
+  const total = await db.one('SELECT COUNT(*) AS n FROM question_bank');
+  res.json({ items, stats, total: Number(total?.n || 0) });
 });
 
 router.get('/bank/:id', requireStaff, async (req, res) => {
   const row = await db.one('SELECT * FROM question_bank WHERE id = ?', [req.params.id]);
   if (!row) return res.status(404).json({ error: '找不到題組' });
-  res.json({ item: { ...row, payload: JSON.parse(row.payload) } });
+  let payload = {};
+  try { payload = JSON.parse(row.payload); } catch { payload = {}; }
+  res.json({ item: { ...row, payload } });
+});
+
+/** 改標籤 / 主題 / 難度（題目本身要改就重新產生或直接編試卷） */
+router.put('/bank/:id', requireStaff, async (req, res) => {
+  const row = await db.one('SELECT id FROM question_bank WHERE id = ?', [req.params.id]);
+  if (!row) return res.status(404).json({ error: '找不到題組' });
+  const { topic, difficulty, tags } = req.body || {};
+  await db.exec(
+    'UPDATE question_bank SET topic = ?, difficulty = ?, tags = ? WHERE id = ?',
+    [topic || null, difficulty || null, tags || null, req.params.id]
+  );
+  res.json({ ok: true });
 });
 
 router.delete('/bank/:id', requireStaff, async (req, res) => {
+  const row = await db.one('SELECT id FROM question_bank WHERE id = ?', [req.params.id]);
+  if (!row) return res.status(404).json({ error: '找不到題組' });
   await db.exec('DELETE FROM question_bank WHERE id = ?', [req.params.id]);
   res.json({ ok: true });
+});
+
+/** 批次刪除 */
+router.post('/bank/bulk-delete', requireStaff, async (req, res) => {
+  const ids = (req.body?.ids || []).map(Number).filter(Boolean);
+  if (!ids.length) return res.status(400).json({ error: '沒有選取任何題組' });
+  await db.exec(
+    `DELETE FROM question_bank WHERE id IN (${ids.map(() => '?').join(',')})`, ids);
+  res.json({ ok: true, deleted: ids.length });
+});
+
+/**
+ * 把題庫裡的題組放進試卷。
+ *   testId 有值 → 併進那份現有試卷；沒有 → 用 title 開一份新試卷。
+ * 同一個模組的 section 會接在後面，跟匯入的合併規則一致。
+ */
+router.post('/bank/to-test', requireStaff, async (req, res) => {
+  const ids = (req.body?.ids || []).map(Number).filter(Boolean);
+  if (!ids.length) return res.status(400).json({ error: '請先選取要加入的題組' });
+
+  const rows = await db.query(
+    `SELECT * FROM question_bank WHERE id IN (${ids.map(() => '?').join(',')})`, ids);
+  if (!rows.length) return res.status(404).json({ error: '找不到選取的題組' });
+  // 照使用者勾選的順序排
+  rows.sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
+
+  let base;
+  const testId = Number(req.body?.testId) || 0;
+  if (testId) {
+    const t = await db.one('SELECT * FROM tests WHERE id = ?', [testId]);
+    if (!t) return res.status(404).json({ error: '找不到試卷' });
+    base = normalizePaper(JSON.parse(t.content));
+  } else {
+    base = normalizePaper({
+      title: String(req.body?.title || '').trim() || '題庫組卷',
+      testType: req.body?.testType === 'general' ? 'general' : 'academic',
+      modules: [],
+    });
+  }
+
+  const renumber = req.body?.renumber !== false;
+  for (const row of rows) {
+    const add = normalizePaper(bankItemToPaper(row));
+    for (const mod of add.modules) {
+      const exist = base.modules.find((m) => m.module === mod.module);
+      if (!exist) { base.modules.push(mod); continue; }
+      // 題庫題組的題號都是從 1 開始，直接接上去一定會撞號。
+      // 預設自動往後接續，老師就不必手動改一遍題號。
+      if (renumber) shiftNumbers(mod.sections, maxNumber(exist.sections));
+      exist.sections.push(...mod.sections);
+    }
+  }
+
+  const result = validatePaper(base);
+  if (!result.ok) return res.status(400).json({ error: '組出來的試卷格式有誤', errors: result.errors });
+
+  if (testId) {
+    await db.exec('UPDATE tests SET content = ? WHERE id = ?', [JSON.stringify(result.paper), testId]);
+    return res.json({ ok: true, testId, added: rows.length, stats: result.stats, warnings: result.warnings });
+  }
+  const newId = await db.insert(
+    'INSERT INTO tests (title, test_type, description, content, published, created_by) VALUES (?,?,?,?,0,?)',
+    [result.paper.title, result.paper.testType, '由題庫組成', JSON.stringify(result.paper), req.user.id]
+  );
+  res.json({ ok: true, testId: newId, created: true, added: rows.length, stats: result.stats });
 });
 
 // ── 單篇寫作立即批改（練習模式，不必整場考試）────────────────

@@ -367,9 +367,15 @@ const Admin = (() => {
           }, '存成新試卷'),
           el('button', {
             class: 'btn',
-            onclick: async () => {
-              await API.post('/ai/bank', { module: body.module, type: body.type, topic: body.topic, difficulty: body.difficulty, payload: { group, passage: r.passage, transcript: r.transcript } });
-              toast('已存進題庫', 'ok');
+            onclick: async (e) => {
+              await API.post('/ai/bank', {
+                module: body.module, type: body.type, topic: body.topic, difficulty: body.difficulty,
+                payload: {
+                  group, passage: r.passage, transcript: r.transcript, passageTitle: r.passageTitle,
+                },
+              });
+              toast('已存進題庫，可在左上「題庫」頁面找到', 'ok');
+              e.target.replaceWith(el('a', { class: 'btn', href: '#/admin/bank' }, '前往題庫 →'));
             },
           }, '存進題庫'),
           el('button', { class: 'btn', onclick: () => UI.download('group.json', JSON.stringify(r, null, 2)) }, '下載 JSON')));
@@ -1105,7 +1111,24 @@ const Admin = (() => {
           '② 學生的電腦要連得到 ', el('code', {}, 'challenges.cloudflare.com'),
           '。校內網路若擋掉這個網域，所有人都會登不進來 —— ',
           '這種情況「連不到 Cloudflare 時仍允許登入」也救不了，因為瀏覽器根本產不出驗證碼。', el('br'),
-          '建議先開起來自己用學生電腦登入試一次，確認沒問題再正式宣布。')),
+          '建議先開起來自己用學生電腦登入試一次，確認沒問題再正式宣布。'),
+        el('div', {
+          class: 'small',
+          style: {
+            marginTop: '.6rem', padding: '.6rem .7rem', lineHeight: '1.8',
+            background: '#f6f8fa', border: '1px solid var(--line-2)', borderRadius: '4px',
+          },
+        },
+          el('b', {}, '被鎖在外面怎麼辦'), el('br'),
+          '如果驗證框壞掉、連管理員都登不進來，到伺服器上執行：', el('br'),
+          el('code', { style: { display: 'block', margin: '.3rem 0', userSelect: 'all' } },
+            'docker compose exec app node server/scripts/turnstile.js --off'),
+          el('span', { class: 'muted' },
+            '最多 15 秒後生效，不用重啟。也可以在 .env 加 ',
+            el('code', {}, 'TURNSTILE_DISABLED=1'), ' 再重啟，效果一樣。'),
+          el('div', { class: 'muted', style: { marginTop: '.3rem' } },
+            '目前這個後台的網址是 ', el('code', {}, location.host),
+            ' —— Cloudflare Widget 的網域清單裡要有這一個（不含連接埠）。'))),
 
       el('div', { class: 'card' },
         el('h3', {}, '批改規則'),
@@ -1640,8 +1663,11 @@ const Admin = (() => {
 
   // ══ 口說即時監看 ══════════════════════════════════════════
   let monitorTimer = null;
+  /** 換頁或登出時要停掉輪詢，否則會一直打 API（登出後還會噴 403）*/
+  function stopPolling() { clearInterval(monitorTimer); monitorTimer = null; }
+
   async function monitor(mount) {
-    clearInterval(monitorTimer);
+    stopPolling();
     const box = el('div');
     UI.render(mount,
       el('div', { class: 'toolbar' },
@@ -1694,5 +1720,274 @@ const Admin = (() => {
     monitorTimer = setInterval(load, 4000);
   }
 
-  return { tests, importPage, generate, members, assign, results, settings, files, data, monitor };
+  /* ═══════════════════════════════════════════════════════════
+     題庫 —— AI 出題、匯入、手動建立的題組都收在這裡重複使用
+     ═══════════════════════════════════════════════════════════ */
+  const BANK_TYPE_LABEL = {
+    mcq_single: '單選', mcq_multi: '多選', tfng: 'True/False/Not Given',
+    ynng: 'Yes/No/Not Given', matching: '配對', matching_headings: '標題配對',
+    gap_fill: '填空', gap_fill_bank: '選字填空', short_answer: '簡答',
+    label_image: '圖表標示', writing_task: '寫作題', speaking_part: '口說題組',
+  };
+  const BANK_SOURCE_LABEL = { ai: 'AI 產生', import: '匯入', manual: '手動' };
+
+  async function bank(mount) {
+    const filter = { module: '', type: '', source: '', q: '' };
+    const selected = new Set();
+
+    const box = el('div');
+    const counter = el('span', { class: 'small muted' });
+    const bar = el('div', { class: 'row', style: { alignItems: 'center', gap: '.5rem', marginBottom: '.6rem' } });
+    const typeSel = el('select', {
+      onchange: (e) => { filter.type = e.target.value; load(); },
+    }, el('option', { value: '' }, '全部題型'));
+
+    const search = el('input', {
+      type: 'search', placeholder: '搜尋主題、標籤或題目內容…',
+      oninput: UI.debounce((e) => { filter.q = e.target.value.trim(); load(); }, 300),
+    });
+
+    async function load() {
+      const qs = new URLSearchParams();
+      for (const [k, v] of Object.entries(filter)) if (v) qs.set(k, v);
+      let d;
+      try { d = await API.get(`/ai/bank?${qs}`); }
+      catch (e) { UI.render(box, el('div', { class: 'empty' }, `讀取題庫失敗：${e.message}`)); return; }
+
+      const stats = d.stats || [];
+      counter.textContent = `題庫共 ${d.total} 個題組`
+        + (d.items.length !== d.total ? `，目前顯示 ${d.items.length} 個` : '');
+
+      // 題型下拉依目前科目動態帶出（只列真的有東西的題型）
+      const avail = [...new Set(stats
+        .filter((s) => !filter.module || s.module === filter.module)
+        .map((s) => s.type))];
+      const keep = filter.type;
+      UI.render(typeSel, [el('option', { value: '' }, '全部題型')]
+        .concat(avail.map((t) => el('option', { value: t, selected: t === keep },
+          BANK_TYPE_LABEL[t] || t))));
+      if (keep && !avail.includes(keep)) { filter.type = ''; typeSel.value = ''; }
+
+      // 選取狀態只保留還在畫面上的
+      const visible = new Set(d.items.map((i) => i.id));
+      [...selected].forEach((id) => { if (!visible.has(id)) selected.delete(id); });
+      renderBar(d.items);
+
+      if (!d.items.length) {
+        UI.render(box, el('div', { class: 'empty' },
+          d.total === 0
+            ? el('div', {},
+                el('p', {}, '題庫還是空的。'),
+                el('p', { class: 'small muted' },
+                  '到「AI 出題」產生題組後按「存進題庫」，或在「匯入題目」把整份試卷的題組收進來，就會出現在這裡。'),
+                el('a', { class: 'btn primary sm', href: '#/admin/generate' }, '去 AI 出題 →'))
+            : '沒有符合條件的題組。'));
+        return;
+      }
+
+      UI.render(box, el('table', { class: 'data' },
+        el('thead', {}, el('tr', {},
+          el('th', { style: { width: '2.2rem' } }, el('input', {
+            type: 'checkbox',
+            checked: d.items.every((i) => selected.has(i.id)),
+            onchange: (e) => {
+              selected.clear();
+              if (e.target.checked) d.items.forEach((i) => selected.add(i.id));
+              load();
+            },
+          })),
+          el('th', {}, '主題 / 標籤'), el('th', {}, '科目'), el('th', {}, '題型'),
+          el('th', {}, '題數'), el('th', {}, '難度'), el('th', {}, '來源'),
+          el('th', {}, '建立'), el('th', {}, ''))),
+        el('tbody', {}, d.items.map((it) => el('tr', { class: it.broken ? 'warn-row' : '' },
+          el('td', {}, el('input', {
+            type: 'checkbox', checked: selected.has(it.id),
+            onchange: (e) => {
+              if (e.target.checked) selected.add(it.id); else selected.delete(it.id);
+              renderBar(d.items);
+            },
+          })),
+          el('td', {},
+            el('b', {}, it.topic || el('span', { class: 'muted' }, '（未命名）')),
+            it.tags ? el('div', { class: 'small muted' }, it.tags) : null,
+            it.broken ? el('div', { class: 'small', style: { color: 'var(--err)' } }, '資料損毀，建議刪除') : null),
+          el('td', { class: 'small' }, (UI.MODULE_LABEL[it.module] || it.module).split(' ')[0]),
+          el('td', { class: 'small' }, BANK_TYPE_LABEL[it.type] || it.type),
+          el('td', { class: 'small' }, it.questionCount ? `${it.questionCount} 題` : '—'),
+          el('td', { class: 'small' }, it.difficulty || '—'),
+          el('td', { class: 'small' }, BANK_SOURCE_LABEL[it.source] || it.source),
+          el('td', { class: 'small muted' },
+            fmtDate(it.created_at), it.creator ? el('div', {}, it.creator) : null),
+          el('td', { style: { whiteSpace: 'nowrap' } },
+            el('button', { class: 'btn sm', onclick: () => bankPreview(it.id, load) }, '預覽'),
+            ' ',
+            el('button', { class: 'btn sm', onclick: () => bankEditTags(it, load) }, '標籤'),
+            ' ',
+            el('button', {
+              class: 'btn sm danger',
+              onclick: async () => {
+                if (!await UI.confirm(el('div', {},
+                  el('p', {}, `確定要刪除題組「${it.topic || it.type}」？`),
+                  el('p', { class: 'small muted' }, '已經放進試卷的題目不會受影響。')), '刪除')) return;
+                await API.del(`/ai/bank/${it.id}`);
+                selected.delete(it.id);
+                toast('已刪除', 'ok'); load();
+              },
+            }, '刪除')))))));
+    }
+
+    function renderBar(items) {
+      const n = selected.size;
+      UI.render(bar,
+        el('select', {
+          onchange: (e) => { filter.module = e.target.value; filter.type = ''; load(); },
+        }, [['', '全部科目'], ['listening', '聽力'], ['reading', '閱讀'], ['writing', '寫作'], ['speaking', '口說']]
+          .map(([v, l]) => el('option', { value: v, selected: filter.module === v }, l))),
+        typeSel,
+        el('select', {
+          onchange: (e) => { filter.source = e.target.value; load(); },
+        }, [['', '全部來源'], ['ai', 'AI 產生'], ['import', '匯入'], ['manual', '手動']]
+          .map(([v, l]) => el('option', { value: v, selected: filter.source === v }, l))),
+        search,
+        el('span', { style: { flex: '1' } }),
+        n ? el('span', { class: 'small' }, el('b', {}, `已選 ${n} 個`)) : null,
+        n ? el('button', { class: 'btn primary sm', onclick: () => bankToTest([...selected], load) }, '加入試卷') : null,
+        n ? el('button', {
+          class: 'btn sm danger',
+          onclick: async () => {
+            if (!await UI.confirm(`確定要刪除選取的 ${n} 個題組？`, '刪除')) return;
+            await API.post('/ai/bank/bulk-delete', { ids: [...selected] });
+            selected.clear(); toast(`已刪除 ${n} 個題組`, 'ok'); load();
+          },
+        }, '刪除') : null);
+      // renderBar 會重畫 select，把目前值補回去
+      typeSel.value = filter.type;
+      search.value = filter.q;
+    }
+
+    UI.render(mount,
+      el('div', { class: 'toolbar' },
+        el('h2', { style: { margin: 0 } }, '題庫'),
+        counter,
+        el('span', { style: { flex: 1 } }),
+        el('a', { class: 'btn', href: '#/admin/import' }, '＋ 匯入題目'),
+        el('a', { class: 'btn primary', href: '#/admin/generate' }, '✨ AI 出題')),
+      el('p', { class: 'small muted' },
+        '題組存在這裡可以重複使用：勾選後按「加入試卷」就能併進現有試卷，或直接組成一份新試卷。'),
+      el('div', { class: 'card' }, bar, box));
+
+    load();
+  }
+
+  /** 預覽一個題組的完整內容 */
+  async function bankPreview(id, reload) {
+    let item;
+    try { ({ item } = await API.get(`/ai/bank/${id}`)); }
+    catch (e) { return UI.alert(`讀不到這個題組：${e.message}`); }
+
+    const p = item.payload || {};
+    const g = p.group || (p.groups && p.groups[0]);
+    const qs = g?.questions || [];
+
+    const body = el('div', {},
+      el('div', { class: 'small muted', style: { marginBottom: '.6rem' } },
+        `${(UI.MODULE_LABEL[item.module] || item.module).split(' ')[0]} · `
+        + `${BANK_TYPE_LABEL[item.type] || item.type} · ${qs.length} 題`
+        + (item.difficulty ? ` · ${item.difficulty}` : '')),
+      g?.instructions ? el('p', { class: 'instructions' }, g.instructions) : null,
+      p.passageTitle ? el('h4', {}, p.passageTitle) : null,
+      p.passage ? el('details', {},
+        el('summary', {}, '文章內容'),
+        el('div', { class: 'passage-preview', style: { whiteSpace: 'pre-wrap', lineHeight: '1.8', marginTop: '.5rem' } },
+          p.passage)) : null,
+      p.transcript ? el('details', {},
+        el('summary', {}, '聽力逐字稿'),
+        el('div', { style: { whiteSpace: 'pre-wrap', lineHeight: '1.8', marginTop: '.5rem' } }, p.transcript)) : null,
+      g?.options?.length ? el('div', { class: 'small', style: { margin: '.5rem 0' } },
+        el('b', {}, '選項：'), g.options.map((o, i) =>
+          el('div', {}, `${o.key || String.fromCharCode(65 + i)}. ${o.text ?? o}`))) : null,
+      el('ol', { class: 'qb-preview', style: { lineHeight: '1.8', paddingLeft: '1.4rem' } },
+        qs.map((q) => el('li', { value: q.number || undefined },
+          el('div', {}, q.prompt || q.text || '（無題幹）'),
+          q.options?.length ? el('div', { class: 'small muted' },
+            q.options.map((o, i) => `${o.key || String.fromCharCode(65 + i)}. ${o.text ?? o}`).join('　')) : null,
+          el('div', { class: 'small', style: { color: '#2e7d32' } },
+            '答案：', (() => {
+              const a = q.answers ?? q.answer;
+              if (Array.isArray(a)) return a.length ? a.join('　/　') : '—';
+              return a === undefined || a === null || a === '' ? '—' : String(a);
+            })()),
+          q.explanation ? el('div', { class: 'small muted' }, '解析：', q.explanation) : null))));
+
+    const choice = await UI.modal({
+      title: item.topic || `題組 #${item.id}`,
+      width: '820px',
+      body,
+      actions: [
+        { label: '加入試卷', value: 'add', class: 'primary' },
+        { label: '下載 JSON', value: 'json' },
+        { label: '關閉', value: null },
+      ],
+    });
+    if (choice === 'add') bankToTest([item.id], reload);
+    if (choice === 'json') UI.download(`bank-${item.id}.json`, JSON.stringify(p, null, 2));
+  }
+
+  /** 改主題 / 難度 / 標籤 */
+  async function bankEditTags(it, reload) {
+    const topic = el('input', { type: 'text', value: it.topic || '' });
+    const difficulty = el('input', { type: 'text', value: it.difficulty || '', placeholder: '例：band 6-7' });
+    const tags = el('input', { type: 'text', value: it.tags || '', placeholder: '用逗號分隔，例：環境,圖表' });
+
+    const ok = await UI.modal({
+      title: '編輯題組資訊',
+      body: el('div', {},
+        el('label', { class: 'field' }, el('span', {}, '主題'), topic),
+        el('label', { class: 'field' }, el('span', {}, '難度'), difficulty),
+        el('label', { class: 'field' }, el('span', {}, '標籤'), tags)),
+      actions: [{ label: '儲存', value: true, class: 'primary' }, { label: '取消', value: false }],
+    });
+    if (!ok) return;
+    await API.put(`/ai/bank/${it.id}`, {
+      topic: topic.value.trim(), difficulty: difficulty.value.trim(), tags: tags.value.trim(),
+    });
+    toast('已更新', 'ok'); reload();
+  }
+
+  /** 把選取的題組併進現有試卷，或組成新試卷 */
+  async function bankToTest(ids, reload) {
+    let tests = [];
+    try { tests = (await API.get('/tests')).tests || []; } catch { tests = []; }
+
+    const target = el('select', {}, [el('option', { value: '' }, '── 建立一份新試卷 ──')]
+      .concat(tests.map((t) => el('option', { value: String(t.id) },
+        `${t.title}${t.published ? '' : '（草稿）'}`))));
+    const title = el('input', { type: 'text', value: '題庫組卷', placeholder: '新試卷名稱' });
+    const titleField = el('label', { class: 'field' }, el('span', {}, '新試卷名稱'), title);
+    target.onchange = () => { titleField.style.display = target.value ? 'none' : ''; };
+
+    const ok = await UI.modal({
+      title: `把 ${ids.length} 個題組加入試卷`,
+      body: el('div', {},
+        el('label', { class: 'field' }, el('span', {}, '加到哪一份試卷'), target),
+        titleField,
+        el('p', { class: 'small muted' },
+          '同一科目的題組會依序接在既有 section 後面。題號如果重複，之後可以在試卷編輯裡調整。')),
+      actions: [{ label: '加入', value: true, class: 'primary' }, { label: '取消', value: false }],
+    });
+    if (!ok) return;
+
+    try {
+      const r = await API.post('/ai/bank/to-test', {
+        ids, testId: target.value ? Number(target.value) : 0, title: title.value.trim(),
+      });
+      toast(r.created ? `已建立新試卷（${r.added} 個題組）` : `已加入試卷（${r.added} 個題組）`, 'ok');
+      if (reload) reload();
+      location.hash = `#/admin/tests`;
+    } catch (e) {
+      UI.alert(e.details?.errors?.join('\n') || e.message);
+    }
+  }
+
+  return { tests, importPage, generate, bank, members, assign, results, settings, files, data, monitor, stopPolling };
 })();

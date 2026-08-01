@@ -8,20 +8,96 @@
   // ── Cloudflare Turnstile ────────────────────────────────
   const TURNSTILE_SRC = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
   let turnstileLoading = null;
+  let activeWidget = null;   // 上一個 widget 的 id，重畫前要先拆掉
 
   function loadTurnstile() {
     if (window.turnstile) return Promise.resolve(window.turnstile);
     if (turnstileLoading) return turnstileLoading;
     turnstileLoading = new Promise((resolve, reject) => {
+      let settled = false;
+      const done = (fn, v) => { if (!settled) { settled = true; clearTimeout(timer); fn(v); } };
+      const timer = setTimeout(
+        () => done(reject, new Error('載入 Cloudflare 驗證元件逾時（15 秒）')), 15000);
       const s = document.createElement('script');
       s.src = TURNSTILE_SRC;
       s.async = true; s.defer = true;
-      s.onload = () => resolve(window.turnstile);
-      s.onerror = () => reject(new Error('無法載入 Cloudflare 驗證元件'));
+      s.onload = () => done(resolve, window.turnstile);
+      s.onerror = () => done(reject, new Error('無法載入 Cloudflare 驗證元件'));
       document.head.append(s);
-      setTimeout(() => reject(new Error('載入 Cloudflare 驗證元件逾時')), 15000);
-    });
+    }).catch((e) => { turnstileLoading = null; throw e; });   // 失敗就讓下次可以重試
     return turnstileLoading;
+  }
+
+  /** 拆掉上一個 widget。登出後重新進登入頁時一定要做，否則會殘留一堆孤兒 widget。 */
+  function dropTurnstile() {
+    if (activeWidget !== null && window.turnstile) {
+      try { window.turnstile.remove(activeWidget); } catch { /* 已經不在了 */ }
+    }
+    activeWidget = null;
+  }
+
+  /** 把 Cloudflare 的錯誤代碼翻成看得懂的話 —— 對照官方 client-side error codes */
+  function turnstileErrorHint(code) {
+    const c = String(code || '');
+    if (c.startsWith('110200')) return {
+      title: '這個網域沒有被授權（代碼 110200）',
+      body: `Cloudflare 那個 Widget 的「網域 / Hostname」清單裡沒有 ${location.hostname}。`,
+      fix: '到 Cloudflare 儀表板 → Turnstile → 這個 Widget → Hostname Management，把上面那個網域加進去（不含 https:// 與連接埠）。',
+    };
+    if (c.startsWith('110100') || c.startsWith('110110') || c.startsWith('400020')) return {
+      title: 'Site Key 不正確（代碼 ' + c + '）',
+      body: '伺服器上填的 Site Key，Cloudflare 找不到。',
+      fix: '確認「系統設定 → 人機驗證」貼的是 Site Key（0x4AAA… 開頭的公開金鑰），而不是 Secret Key，也別把兩個貼反。',
+    };
+    if (c.startsWith('400070')) return {
+      title: 'Widget 已被停用（代碼 400070）',
+      body: 'Cloudflare 上這個 Widget 目前是停用狀態。',
+      fix: '到 Cloudflare 儀表板把它重新啟用，或改用另一組金鑰。',
+    };
+    if (c.startsWith('200500')) return {
+      title: '驗證框載不進來（代碼 200500）',
+      body: '這台電腦連不到 challenges.cloudflare.com——常見於學校防火牆、DNS 過濾或廣告封鎖擴充套件。',
+      fix: '把 challenges.cloudflare.com 加進白名單，或請管理員關閉登入人機驗證。',
+    };
+    if (c.startsWith('200100')) return {
+      title: '電腦時間不對（代碼 200100）',
+      body: '這台電腦的時鐘和實際時間差太多，Cloudflare 無法驗證。',
+      fix: '把系統時間改成自動同步後重新整理。',
+    };
+    if (c.startsWith('110600') || c.startsWith('110620')) return {
+      title: '驗證逾時（代碼 ' + c + '）',
+      body: '太久沒完成驗證。',
+      fix: '按下面的「重新驗證」再試一次。',
+    };
+    if (c.startsWith('300') || c.startsWith('600')) return {
+      title: '驗證未通過（代碼 ' + c + '）',
+      body: 'Cloudflare 認為這次連線可疑，常見原因是使用 VPN／代理，或瀏覽器擴充套件干擾。',
+      fix: '關掉 VPN 與廣告封鎖擴充套件，或改用無痕視窗再試。',
+    };
+    return {
+      title: c ? `人機驗證發生錯誤（代碼 ${c}）` : '人機驗證發生錯誤',
+      body: '驗證元件無法完成初始化。',
+      fix: '請按「重新驗證」；若一直失敗，請管理員在伺服器上執行 node server/scripts/turnstile.js --off 暫時關閉。',
+    };
+  }
+
+  function turnstileErrorBox(code, onRetry) {
+    const h = turnstileErrorHint(code);
+    return el('div', {
+      class: 'small',
+      style: {
+        textAlign: 'left', lineHeight: '1.75', color: 'var(--err)',
+        border: '1px solid #e6b8b3', background: '#fdf0ee',
+        borderRadius: '4px', padding: '.6rem .7rem', width: '100%',
+      },
+    },
+      el('b', {}, h.title), el('br'),
+      h.body, el('br'),
+      el('span', { class: 'muted' }, h.fix),
+      el('div', { class: 'muted', style: { marginTop: '.4rem', fontSize: '.78rem' } },
+        `目前網址：${location.protocol}//${location.host}`),
+      el('div', { style: { marginTop: '.5rem', display: 'flex', gap: '.4rem' } },
+        el('button', { class: 'btn sm', type: 'button', onclick: onRetry }, '重新驗證')));
   }
 
   // ── 登入 ────────────────────────────────────────────────
@@ -40,12 +116,14 @@
 
     const submit = async () => {
       msg.textContent = '';
+      msg.style.color = 'var(--err)';
       btn.disabled = true;
       try {
         const r = await API.post('/auth/login', {
           username: u.value.trim(), password: p.value, turnstileToken: token,
         });
         API.setSession(r.token, r.user);
+        dropTurnstile();
         location.hash = '#/';
         route();
       } catch (e) {
@@ -80,39 +158,39 @@
     try { cfg = (await API.get('/auth/config')).turnstile; } catch { cfg = null; }
     if (!cfg?.enabled || !cfg.siteKey) return;
 
+    // 登出後會再次進到這裡，上一輪的 widget 必須先拆掉，
+    // 否則 Cloudflare 內部仍記著那個已經被移除的 DOM 節點，新的驗證框就畫不出來。
+    dropTurnstile();
+
+    const retry = () => { dropTurnstile(); turnstileLoading = null; loginPage(); };
+
     try {
       const ts = await loadTurnstile();
       widgetId = ts.render(capBox, {
         sitekey: cfg.siteKey,
         theme: 'light',
         language: 'zh-tw',
+        retry: 'auto',
+        'retry-interval': 3000,
+        'refresh-expired': 'auto',
         callback: (t) => { token = t; msg.textContent = ''; },
         'expired-callback': () => { token = ''; },
         'timeout-callback': () => { token = ''; },
-        'error-callback': () => {
+        'error-callback': (code) => {
           token = '';
-          msg.textContent = '人機驗證元件發生錯誤，請重新整理頁面再試一次。';
+          UI.render(capBox, turnstileErrorBox(code, retry));
+          // 回傳 false 讓 Cloudflare 不要再蓋掉我們自己畫的說明
+          return false;
         },
       });
+      activeWidget = widgetId;
     } catch (e) {
-      // 載不到驗證元件就一定拿不到 token，伺服器那邊必定會擋。
-      // 與其讓使用者按了才看到看不懂的錯誤，不如直接講清楚。
-      btn.disabled = true;
-      UI.render(capBox, el('div', {
-        class: 'small',
-        style: {
-          textAlign: 'center', lineHeight: '1.7', color: 'var(--err)',
-          border: '1px solid #e6b8b3', background: '#fdf0ee', borderRadius: '4px', padding: '.6rem .7rem',
-        },
-      },
-        el('b', {}, '無法載入人機驗證元件'), el('br'),
-        '這台電腦連不到 challenges.cloudflare.com，因此無法登入。', el('br'),
-        el('span', { class: 'muted' }, '請檢查網路或防火牆設定，或請管理員暫時關閉登入人機驗證。'),
-        el('div', { style: { marginTop: '.5rem' } },
-          el('button', {
-            class: 'btn sm', type: 'button',
-            onclick: () => { turnstileLoading = null; loginPage(); },
-          }, '重新嘗試'))));
+      // 載不到 api.js（多半是 challenges.cloudflare.com 被擋）。
+      // 這裡「絕對不能」把登入鈕鎖住——伺服器端可能設了連不上就放行，
+      // 或管理員剛好已經把人機驗證關掉，鎖住只會讓所有人都進不來。
+      UI.render(capBox, turnstileErrorBox('200500', retry));
+      msg.textContent = '仍可先試著直接登入；若伺服器要求驗證會再提示。';
+      msg.style.color = 'var(--muted, #666)';
     }
   }
 
@@ -123,9 +201,9 @@
     const staff = API.user?.role !== 'student';
     const links = staff
       ? [['#/admin/results', '成績總覽'], ['#/admin/monitor', '即時監看'], ['#/admin/tests', '試卷'],
-         ['#/admin/import', '匯入題目'], ['#/admin/generate', 'AI 出題'], ['#/admin/members', '成員'],
-         ['#/admin/assign', '指派考試'], ['#/admin/files', '檔案'], ['#/admin/data', '資料管理'],
-         ['#/admin/settings', '系統設定']]
+         ['#/admin/bank', '題庫'], ['#/admin/import', '匯入題目'], ['#/admin/generate', 'AI 出題'],
+         ['#/admin/members', '成員'], ['#/admin/assign', '指派考試'], ['#/admin/files', '檔案'],
+         ['#/admin/data', '資料管理'], ['#/admin/settings', '系統設定']]
       : [['#/', '我的考試'], ['#/my-results', '我的成績'], ['#/practice', '寫作練習']];
 
     const main = el('main', { class: 'app-main', id: 'main' });
@@ -305,6 +383,9 @@
   async function route() {
     const { path, params } = parseHash();
 
+    // 離開哪一頁都先停掉背景輪詢（例如即時監看的 4 秒更新）
+    try { Admin.stopPolling(); } catch { /* Admin 還沒載入 */ }
+
     if (!API.token) return loginPage();
     if (path === '/login') { location.hash = '#/'; return; }
 
@@ -330,6 +411,7 @@
         case '/admin/tests': return Admin.tests(mount);
         case '/admin/import': return Admin.importPage(mount);
         case '/admin/generate': return Admin.generate(mount);
+        case '/admin/bank': return Admin.bank(mount);
         case '/admin/members': return Admin.members(mount);
         case '/admin/students': location.hash = '#/admin/members'; return;
         case '/admin/assign': return Admin.assign(mount, params);

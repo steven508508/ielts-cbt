@@ -591,6 +591,125 @@ async function call(method, path, body, token) {
   ok(mlog2.data.log.some((r) => r.action === 'user_delete' || r.action === 'users_delete'),
     '刪除成員會留下維護紀錄');
 
+  // ── 題庫 ───────────────────────────────────────────────
+  console.log('\n題庫');
+  const bankGroup = (n, start) => ({
+    type: 'tfng',
+    instructions: 'Do the following statements agree with the information given in the passage?',
+    questions: Array.from({ length: n }, (_, i) => ({
+      number: start + i,
+      prompt: `Statement ${start + i} about ${stamp}.`,
+      answers: ['TRUE'],
+    })),
+  });
+
+  const bankBad = await call('POST', '/ai/bank', { module: 'reading', type: 'tfng', payload: {} }, tea);
+  ok(bankBad.status === 400, '沒有題組的 payload 存不進題庫');
+
+  const bankNoMod = await call('POST', '/ai/bank', { payload: { group: bankGroup(2, 1) } }, tea);
+  ok(bankNoMod.status === 400, '缺少 module / type 會被擋下');
+
+  const bk1 = await call('POST', '/ai/bank', {
+    module: 'reading', type: 'tfng', topic: `題庫測試 ${stamp}`, difficulty: 'band 6-7',
+    tags: 'e2e,環境',
+    payload: { group: bankGroup(3, 1), passage: 'A passage about urban greening.', passageTitle: 'Urban Greening' },
+  }, tea);
+  ok(bk1.status === 200 && bk1.data.id > 0, '可以把題組存進題庫');
+
+  const bk2 = await call('POST', '/ai/bank', {
+    module: 'listening', type: 'gap_fill', topic: `題庫測試2 ${stamp}`,
+    payload: { group: { type: 'gap_fill', questions: [{ number: 1, prompt: 'The tour starts at ___.', answers: ['9am'] }] }, transcript: 'Welcome…' },
+  }, tea);
+  ok(bk2.status === 200, '不同科目的題組也存得進去');
+
+  const bankList = await call('GET', '/ai/bank', null, tea);
+  ok(bankList.data.total >= 2 && bankList.data.items.length >= 2, `題庫列得出來（共 ${bankList.data.total} 個）`);
+  const listed = bankList.data.items.find((i) => i.id === bk1.data.id);
+  ok(listed && listed.questionCount === 3, '列表會算出題數');
+  ok(listed && listed.creator, '列表帶出建立者姓名');
+  ok(!('payload' in (listed || {})), '列表不回傳整包 payload，避免清單過肥');
+  ok(Array.isArray(bankList.data.stats) && bankList.data.stats.length > 0, '附上科目／題型統計供篩選用');
+
+  const byMod = await call('GET', '/ai/bank?module=listening', null, tea);
+  ok(byMod.data.items.every((i) => i.module === 'listening'), '可依科目篩選');
+  const byType = await call('GET', '/ai/bank?type=tfng', null, tea);
+  ok(byType.data.items.every((i) => i.type === 'tfng'), '可依題型篩選');
+  const bySearch = await call('GET', `/ai/bank?q=${encodeURIComponent(stamp)}`, null, tea);
+  ok(bySearch.data.items.length >= 2, '可用關鍵字搜尋主題與內容');
+  const bySrc = await call('GET', '/ai/bank?source=ai', null, tea);
+  ok(bySrc.data.items.every((i) => i.source === 'ai'), '可依來源篩選');
+
+  const bankStu = await call('GET', '/ai/bank', null, stu);
+  ok(bankStu.status === 403, '學生看不到題庫');
+
+  const bankOne = await call('GET', `/ai/bank/${bk1.data.id}`, null, tea);
+  ok(bankOne.data.item.payload.group.questions.length === 3, '單筆查詢帶回完整題目');
+  ok(bankOne.data.item.payload.passage, '文章內容一起存下來');
+  const bankMissing = await call('GET', '/ai/bank/999999', null, tea);
+  ok(bankMissing.status === 404, '不存在的題組回 404');
+
+  const bankEdit = await call('PUT', `/ai/bank/${bk1.data.id}`, { topic: `改過的主題 ${stamp}`, tags: '環境' }, tea);
+  ok(bankEdit.status === 200, '可以改主題與標籤');
+  const afterEdit = await call('GET', `/ai/bank/${bk1.data.id}`, null, tea);
+  ok(afterEdit.data.item.topic === `改過的主題 ${stamp}`, '改完真的存進去了');
+
+  // 組成新試卷
+  const toNew = await call('POST', '/ai/bank/to-test', {
+    ids: [bk1.data.id, bk2.data.id], title: `題庫組卷 ${stamp}`,
+  }, tea);
+  ok(toNew.data.created === true && toNew.data.testId > 0, '可以把題庫題組組成一份新試卷');
+  const newPaper = await call('GET', `/tests/${toNew.data.testId}`, null, tea);
+  const mods = (newPaper.data.test?.paper || newPaper.data.paper).modules.map((m) => m.module);
+  ok(mods.includes('reading') && mods.includes('listening'), '新試卷同時含兩個科目');
+
+  // 併進現有試卷
+  const bkBefore = await call('GET', `/tests/${toNew.data.testId}`, null, tea);
+  const beforePaper = bkBefore.data.test?.paper || bkBefore.data.paper;
+  const beforeSections = beforePaper.modules.find((m) => m.module === 'reading').sections.length;
+  const toExisting = await call('POST', '/ai/bank/to-test', {
+    ids: [bk1.data.id], testId: toNew.data.testId,
+  }, tea);
+  ok(toExisting.data.ok === true && !toExisting.data.created, '可以併進現有試卷');
+  const bkAfter = await call('GET', `/tests/${toNew.data.testId}`, null, tea);
+  const afterPaper = bkAfter.data.test?.paper || bkAfter.data.paper;
+  ok(afterPaper.modules.find((m) => m.module === 'reading').sections.length === beforeSections + 1,
+    '併進去之後 section 真的多一個');
+  const readNums = flattenQuestions(normalizePaper(afterPaper), 'reading').map((q) => q.number);
+  ok(new Set(readNums).size === readNums.length,
+    `題號自動接續，不會撞號（${readNums.join(',')}）`);
+
+  const toNone = await call('POST', '/ai/bank/to-test', { ids: [] }, tea);
+  ok(toNone.status === 400, '沒選題組不能組卷');
+  const toBadTest = await call('POST', '/ai/bank/to-test', { ids: [bk1.data.id], testId: 999999 }, tea);
+  ok(toBadTest.status === 404, '併進不存在的試卷回 404');
+
+  await call('DELETE', `/tests/${toNew.data.testId}`, null, adm);
+
+  const delMissing = await call('DELETE', '/ai/bank/999999', null, tea);
+  ok(delMissing.status === 404, '刪不存在的題組回 404');
+  const delOne = await call('DELETE', `/ai/bank/${bk2.data.id}`, null, tea);
+  ok(delOne.status === 200, '可以刪除單一題組');
+  const bulkNone = await call('POST', '/ai/bank/bulk-delete', { ids: [] }, tea);
+  ok(bulkNone.status === 400, '批次刪除要先選東西');
+  const bulkDel = await call('POST', '/ai/bank/bulk-delete', { ids: [bk1.data.id] }, tea);
+  ok(bulkDel.data.deleted === 1, '可以批次刪除題組');
+  const bankGone = await call('GET', `/ai/bank?q=${encodeURIComponent(stamp)}`, null, tea);
+  ok(bankGone.data.items.length === 0, '刪掉的題組真的不見了');
+
+  // ── 人機驗證設定 ───────────────────────────────────────
+  console.log('\n人機驗證');
+  const tsPub = await call('GET', '/auth/config');
+  ok(tsPub.status === 200 && typeof tsPub.data.turnstile.enabled === 'boolean',
+    '登入頁可讀取公開的 Turnstile 設定');
+  ok(!('secretKey' in tsPub.data.turnstile), '公開設定絕對不含 Secret Key');
+  const tsAdmin = await call('GET', '/manage/turnstile', null, tea);
+  ok(tsAdmin.status === 200 && !/^0x[0-9a-zA-Z]{20,}$/.test(tsAdmin.data.turnstile.secretKey || ''),
+    '後台讀到的 Secret Key 是遮罩過的');
+  const tsSave = await call('PUT', '/manage/turnstile', { turnstile: { enabled: false } }, tea);
+  ok(tsSave.status === 403, '老師不能改人機驗證設定');
+  const loginNoToken = await call('POST', '/auth/login', { username: 'student1', password: 'ielts1234' });
+  ok(loginNoToken.status === 200, '人機驗證關閉時，沒有 token 也能正常登入');
+
   console.log(`\n${'─'.repeat(46)}`);
   console.log(`通過 ${pass}　失敗 ${fail}`);
   process.exit(fail ? 1 : 0);

@@ -202,3 +202,8 @@ table.data tr:hover td{background:#fbfbfb}
   .trf-scores{grid-template-columns:repeat(2,1fr)}
   .trf-scores .col .s{font-size:1.5rem}
 }
+
+/* 題庫 */
+table.data tr.warn-row td{background:#fffaf0}
+.qb-preview li{margin-bottom:.7rem}
+.qb-preview li > div:first-child{font-weight:500}

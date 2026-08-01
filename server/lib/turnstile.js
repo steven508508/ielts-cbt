@@ -34,6 +34,9 @@ async function getConfig(force = false) {
     if (row && row.v) stored = JSON.parse(row.v) || {};
   } catch { /* 資料表還沒建好時忽略 */ }
   cache = { ...DEFAULTS, ...config.turnstileDefaults, ...stored };
+  // 緊急關閉開關：驗證框壞掉、所有人都登不進來時，
+  // 在 .env 加一行 TURNSTILE_DISABLED=1 再重啟即可，不必動資料庫。
+  if (process.env.TURNSTILE_DISABLED === '1') cache = { ...cache, enabled: false, forcedOff: true };
   cacheAt = Date.now();
   return cache;
 }
@@ -124,6 +127,7 @@ function maskConfig(c) {
     failOpen: c.failOpen !== false,
     protectLogin: c.protectLogin !== false,
     active: !!(c.enabled && c.siteKey && s),
+    forcedOff: !!c.forcedOff,
   };
 }
 
