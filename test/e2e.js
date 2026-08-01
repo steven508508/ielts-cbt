@@ -469,8 +469,13 @@ async function call(method, path, body, token) {
   ok(rejected.status === 400 && rejected.data.turnstileFailed,
     'Cloudflare 判定驗證失敗時，就算帳密正確也登不進去');
 
+  // 這一項會實際打到 Cloudflare。CI 上外網不一定通，所以只要求它「有在時限內回話」，
+  // 不要求一定連得上——路由本身有 10 秒逾時，不會把請求掛住。
+  const tsStart = Date.now();
   const tsTest = await call('POST', '/manage/turnstile/test', {}, adm);
-  ok(typeof tsTest.data.ok === 'boolean', `「測試 Secret Key」可用：${tsTest.data.message || tsTest.data.error}`);
+  const tsMs = Date.now() - tsStart;
+  ok(typeof tsTest.data.ok === 'boolean' && tsMs < 20000,
+    `「測試 Secret Key」${tsMs} ms 內有回應：${tsTest.data.message || tsTest.data.error}`);
 
   // 關掉，把環境還原，免得影響之後的測試與實際部署
   const off = await call('PUT', '/manage/turnstile', {

@@ -83,11 +83,21 @@ router.post('/turnstile/test', requireRole('admin'), async (req, res) => {
   const c = await turnstile.getConfig(true);
   if (!c.secretKey) return res.status(400).json({ ok: false, error: '尚未填入 Secret Key' });
   try {
-    const r = await fetch(turnstile.VERIFY_URL, {
-      method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ secret: c.secretKey, response: 'connectivity-test-token' }),
-    });
+    // 一定要有逾時。少了它，Cloudflare 沒回應時這個請求會一直掛著，
+    // 後台按下「測試」就永遠轉圈。
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 10000);
+    let r;
+    try {
+      r = await fetch(turnstile.VERIFY_URL, {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ secret: c.secretKey, response: 'connectivity-test-token' }),
+        signal: ctrl.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
     const data = await r.json();
     const codes = data['error-codes'] || [];
     // 用假 token 一定會失敗；重點是看是不是「token 無效」而不是「secret 無效」
@@ -96,7 +106,10 @@ router.post('/turnstile/test', requireRole('admin'), async (req, res) => {
     }
     res.json({ ok: true, message: 'Cloudflare 連線正常，Secret Key 看起來有效', codes });
   } catch (e) {
-    res.status(502).json({ ok: false, error: `無法連線到 Cloudflare：${e.message}` });
+    const why = (e?.name === 'AbortError' || /aborted/i.test(e?.message || ''))
+      ? '伺服器在 10 秒內連不上 Cloudflare（可能是防火牆或 DNS 擋住了 challenges.cloudflare.com）'
+      : e.message;
+    res.status(502).json({ ok: false, error: `無法連線到 Cloudflare：${why}` });
   }
 });
 

@@ -105,11 +105,14 @@ const HELP = `
     const c = await turnstile.getConfig(true);
     if (!c.secretKey) { console.error('尚未設定 Secret Key，無法測試。'); process.exit(1); }
     try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 10000);
       const r = await fetch(turnstile.VERIFY_URL, {
         method: 'POST',
         headers: { 'content-type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({ secret: c.secretKey, response: 'connectivity-test-token' }),
-      });
+        signal: ctrl.signal,
+      }).finally(() => clearTimeout(timer));
       const data = await r.json();
       const codes = data['error-codes'] || [];
       if (codes.includes('invalid-input-secret') || codes.includes('missing-input-secret')) {
