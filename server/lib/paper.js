@@ -140,6 +140,17 @@ function gapsIn(html) {
 }
 
 /** 補齊缺漏欄位、自動編題號；回傳新的物件（不改原物件） */
+/** 純文字 → 段落 HTML；本來就是 HTML 就原封不動 */
+function asHtml(text) {
+  const s = String(text ?? '').trim();
+  if (!s) return s;
+  if (/<(p|div|table|ul|ol|h[1-6]|figure|img|br)\b/i.test(s)) return s;
+  return s
+    .split(/\n{2,}/)
+    .map((para) => `<p>${para.split(/\n/).join('<br>')}</p>`)
+    .join('');
+}
+
 function normalizePaper(input) {
   const paper = JSON.parse(JSON.stringify(input || {}));
   paper.title = paper.title || 'Untitled IELTS Test';
@@ -158,6 +169,8 @@ function normalizePaper(input) {
     for (const [si, sec] of mod.sections.entries()) {
       sec.title = sec.title || `${mod.module === 'reading' ? 'Passage' : 'Section'} ${si + 1}`;
       sec.groups = Array.isArray(sec.groups) ? sec.groups : [];
+      // 老師直接貼純文字時，把段落補成 <p>，否則整篇會擠成一坨
+      if (sec.passage) sec.passage = asHtml(sec.passage);
       for (const g of sec.groups) {
         g.type = String(g.type || '').trim();
         g.questions = Array.isArray(g.questions) ? g.questions : [];

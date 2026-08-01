@@ -293,8 +293,10 @@ async function call(method, path, body, token) {
 
   console.log('\n試卷管理');
   const mt = await call('GET', '/manage/tests', null, tea);
-  ok(mt.data.tests[0].attempts > 0, `試卷管理顯示考試紀錄數：${mt.data.tests[0].attempts}`);
-  const testId = mt.data.tests[0].id;
+  // 找真正被考過的那一份，不要假設它排在第一個
+  const mtRow = mt.data.tests.find((t) => t.id === a.testId) || mt.data.tests[0];
+  ok(mtRow.attempts > 0, `試卷管理顯示考試紀錄數：${mtRow.attempts}`);
+  const testId = mtRow.id;
   await call('POST', '/manage/tests/bulk', { action: 'archive', ids: [testId] }, tea);
   const mt2 = await call('GET', '/manage/tests', null, tea);
   ok(mt2.data.tests.find((t) => t.id === testId).archived === 1, '封存試卷');
@@ -695,6 +697,116 @@ async function call(method, path, body, token) {
   ok(bulkDel.data.deleted === 1, '可以批次刪除題組');
   const bankGone = await call('GET', `/ai/bank?q=${encodeURIComponent(stamp)}`, null, tea);
   ok(bankGone.data.items.length === 0, '刪掉的題組真的不見了');
+
+  // ── 素材（文章／音檔／圖片）不能在路上掉光 ──────────────
+  console.log('\n素材保全');
+  const MEDIA_PAPER = {
+    title: `素材測試 ${stamp}`,
+    testType: 'academic',
+    modules: [
+      { module: 'listening', sections: [{
+        title: 'Section 1',
+        audio: '/uploads/audio/t.mp3',
+        transcript: 'Speaker A: hello.',
+        image: '/uploads/image/sec.png',
+        groups: [{
+          type: 'label_image', instructions: 'Label the map.',
+          image: '/uploads/image/grp.png',
+          options: [{ key: 'A', text: 'Gate' }, { key: 'B', text: 'Hall' }],
+          questions: [{ number: 1, text: 'Entrance', answers: ['A'], image: '/uploads/image/q.png' }],
+        }],
+      }] },
+      { module: 'reading', sections: [{
+        title: 'Reading Passage 1',
+        passageTitle: 'The Urban Beehive',
+        source: 'Adapted from Nature',
+        passage: '<p>Bees matter.</p><figure><img src="/uploads/image/bee.png" alt="bee"></figure>',
+        groups: [{
+          type: 'tfng', instructions: 'TRUE/FALSE/NOT GIVEN',
+          image: '/uploads/image/fig.png',
+          questions: [{ number: 1, text: 'Bees matter.', answers: ['TRUE'] }],
+        }],
+      }] },
+      { module: 'writing', sections: [{
+        title: 'Writing',
+        groups: [{ type: 'writing_task', questions: [
+          { number: 1, taskNo: 1, minWords: 150, text: 'Describe the chart.',
+            image: '/uploads/image/chart.png', visualDescription: 'A bar chart.', answers: [] },
+        ] }],
+      }] },
+    ],
+  };
+
+  const mkTest = await call('POST', '/tests', { paper: MEDIA_PAPER, published: true }, tea);
+  const mediaTestId = mkTest.data.id;
+  ok(mediaTestId > 0, '建立含完整素材的試卷');
+
+  const mkBack = (await call('GET', `/tests/${mediaTestId}`, null, tea)).data.paper;
+  const mkR = mkBack.modules.find((m) => m.module === 'reading').sections[0];
+  const mkL = mkBack.modules.find((m) => m.module === 'listening').sections[0];
+  ok(!!mkR.passage && /<img/.test(mkR.passage), '存進資料庫後文章與文章內的圖片都還在');
+  ok(!!mkR.passageTitle && !!mkR.source, '文章標題與出處都在');
+  ok(!!mkL.audio && !!mkL.image && !!mkL.groups[0].image && !!mkL.groups[0].questions[0].image,
+    '音檔、節圖片、題組圖片、單題圖片都在');
+
+  const mAsg = await call('POST', '/tests/assignments', {
+    testId: mediaTestId, userId: me.data.user.id, modules: ['listening', 'reading', 'writing'],
+  }, tea);
+  const mAsgId = mAsg.data.id || mAsg.data.assignmentId;
+  const mStart = await call('POST', '/exam/start', { assignmentId: mAsgId, testId: mediaTestId }, stu);
+  const mAttempt = mStart.data.attemptId;
+  const sPaper = (await call('GET', `/exam/${mAttempt}`, null, stu)).data.paper;
+  const sR = sPaper.modules.find((m) => m.module === 'reading').sections[0];
+  const sL = sPaper.modules.find((m) => m.module === 'listening').sections[0];
+  const sW = sPaper.modules.find((m) => m.module === 'writing').sections[0].groups[0].questions[0];
+  ok(!!sR.passage && /<img/.test(sR.passage), '學生拿到的考卷有文章，文章內的圖片也在');
+  ok(!!sR.passageTitle && !!sR.source, '學生看得到文章標題與出處');
+  ok(!!sR.groups[0].image, '學生看得到閱讀題組的圖片');
+  ok(!!sL.audio, '學生拿得到聽力音檔網址');
+  ok(!!sL.image && !!sL.groups[0].image && !!sL.groups[0].questions[0].image, '聽力的三層圖片都在');
+  ok(!!sW.image && !!sW.visualDescription, '寫作 Task 1 的圖表與圖表說明都在');
+  ok(!sL.transcript, '逐字稿仍然不給學生（考試中不能看）');
+  ok(!sR.groups[0].questions[0].answers, '答案仍然不給學生');
+
+  // 缺素材要被抓出來，不能默默存進去
+  const holed = await call('POST', '/tests', {
+    paper: {
+      title: `缺素材 ${stamp}`, testType: 'academic',
+      modules: [
+        { module: 'reading', sections: [{ title: 'RP1', groups: [{ type: 'tfng', questions: [{ number: 1, text: 'x', answers: ['TRUE'] }] }] }] },
+        { module: 'listening', sections: [{ title: 'S1', groups: [{ type: 'short_answer', wordLimit: 1, questions: [{ number: 1, text: 'y', answers: ['yes'] }] }] }] },
+      ],
+    },
+  }, tea);
+  ok((holed.data.warnings || []).some((w) => /沒有 passage/.test(w)), '閱讀缺文章會被警告');
+  ok((holed.data.warnings || []).some((w) => /沒有指定 audio/.test(w)), '聽力缺音檔會被警告');
+
+  const mediaList = await call('GET', '/tests', null, tea);
+  const holedRow = mediaList.data.tests.find((t) => t.id === holed.data.id);
+  ok(holedRow && holedRow.missingMedia === 2, '試卷清單直接標出缺 2 節素材');
+  const goodRow = mediaList.data.tests.find((t) => t.id === mediaTestId);
+  ok(goodRow && goodRow.missingMedia === 0, '素材齊全的試卷不會被誤標');
+  ok(!('content' in (holedRow || {})), '清單不夾帶整份試卷內容');
+
+  // 純文字文章要自動分段，不能整篇擠成一坨
+  const plainText = await call('POST', '/tests', {
+    paper: {
+      title: `純文字 ${stamp}`, testType: 'academic',
+      modules: [{ module: 'reading', sections: [{
+        title: 'RP1', passage: '第一段。\n\n第二段。',
+        groups: [{ type: 'tfng', questions: [{ number: 1, text: 'x', answers: ['TRUE'] }] }],
+      }] }],
+    },
+  }, tea);
+  const plainBack = (await call('GET', `/tests/${plainText.data.id}`, null, tea)).data.paper;
+  const plainPassage = plainBack.modules[0].sections[0].passage;
+  ok(/<p>第一段。<\/p><p>第二段。<\/p>/.test(plainPassage), '貼純文字會自動補成段落');
+
+  await call('POST', '/manage/results/bulk', { action: 'delete', ids: [mAttempt], force: true }, adm);
+  await call('DELETE', `/tests/assignments/${mAsgId}`, null, adm);
+  await call('DELETE', `/tests/${mediaTestId}`, null, adm);
+  await call('DELETE', `/tests/${holed.data.id}`, null, adm);
+  await call('DELETE', `/tests/${plainText.data.id}`, null, adm);
 
   // ── AI 背景工作（整份試卷產生）─────────────────────────
   console.log('\nAI 背景工作');

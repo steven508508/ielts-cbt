@@ -29,11 +29,27 @@ router.get('/', async (req, res) => {
   const staff = req.user.role !== 'student';
   const rows = await db.query(
     `SELECT t.id, t.title, t.test_type, t.description, t.published, t.created_at, t.updated_at,
-            u.name AS author
+            u.name AS author${staff ? ', t.content' : ''}
      FROM tests t LEFT JOIN users u ON u.id = t.created_by
      ${staff ? '' : 'WHERE t.published = 1'}
      ORDER BY t.updated_at DESC`
   );
+  // 老師端順便標出「學生會開天窗」的試卷：閱讀沒文章、聽力沒音檔
+  if (staff) {
+    for (const r of rows) {
+      let n = 0;
+      try {
+        for (const m of (JSON.parse(r.content).modules || [])) {
+          for (const s of (m.sections || [])) {
+            if (m.module === 'reading' && !s.passage) n += 1;
+            if (m.module === 'listening' && !s.audio) n += 1;
+          }
+        }
+      } catch { /* 內容壞掉就不標 */ }
+      r.missingMedia = n;
+      delete r.content;
+    }
+  }
   res.json({ tests: rows });
 });
 

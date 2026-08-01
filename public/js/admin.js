@@ -32,6 +32,12 @@ const Admin = (() => {
                   el('button', { class: 'btn sm', onclick: () => preview(t.id) }, '預覽'),
                   ' ',
                   el('button', {
+                    class: 'btn sm' + (t.missingMedia ? ' danger' : ''),
+                    title: '補文章、音檔、圖片',
+                    onclick: () => editMedia(t.id, () => tests(mount)),
+                  }, t.missingMedia ? `素材 ⚠${t.missingMedia}` : '素材'),
+                  ' ',
+                  el('button', {
                     class: 'btn sm',
                     onclick: async () => {
                       await API.put(`/tests/${t.id}`, { published: !t.published });
@@ -55,6 +61,138 @@ const Admin = (() => {
                       await API.del(`/tests/${t.id}`); toast('已刪除', 'ok'); tests(mount);
                     },
                   }, '刪除'))))))));
+  }
+
+  /**
+   * 存檔後如果驗證有「沒有文章／沒有音檔」這類警告，一定要講出來。
+   * 這種東西存的當下沒感覺，等到學生開始考試才發現左邊一片空白就來不及了。
+   */
+  async function warnIfMissingMedia(warnings) {
+    const media = (warnings || []).filter((w) => /沒有 passage|沒有指定 audio|建議提供 image/.test(w));
+    if (!media.length) return;
+    await UI.alert(el('div', {},
+      el('p', {}, el('b', {}, '試卷存好了，但學生端會缺東西：')),
+      el('ul', { class: 'small' }, media.map((w) => el('li', {}, w))),
+      el('p', { class: 'small muted' },
+        '到「試卷管理 → 素材」補上文章內容或音檔網址即可。'
+        + '沒補的話，學生開始考試時閱讀區會顯示「（沒有文章內容）」、聽力沒有聲音。')),
+    '請補上素材');
+  }
+
+  /**
+   * 素材編輯 —— 專門補文章、音檔、圖片、逐字稿。
+   * 題目本身不動，所以不必擔心改壞題號或答案。
+   */
+  async function editMedia(id, after) {
+    const d = await API.get(`/tests/${id}`);
+    const paper = d.paper;
+    const fields = [];
+
+    const panes = paper.modules.map((m) => {
+      const rows = m.sections.map((sec, si) => {
+        const f = { module: m.module, si, sec };
+        const needPassage = m.module === 'reading';
+        const needAudio = m.module === 'listening';
+        const missing = (needPassage && !sec.passage) || (needAudio && !sec.audio);
+
+        const box = el('div', {
+          style: {
+            padding: '.6rem .7rem', marginBottom: '.5rem', borderRadius: '4px',
+            border: `1px solid ${missing ? '#e6b8b3' : 'var(--line-2)'}`,
+            background: missing ? '#fdf0ee' : '#fff',
+          },
+        },
+          el('div', { style: { display: 'flex', alignItems: 'center', gap: '.4rem' } },
+            el('b', {}, sec.title),
+            missing ? el('span', { class: 'pill', style: { background: '#c0392b', color: '#fff' } }, '缺素材') : null,
+            el('span', { class: 'small muted' },
+              `　${(sec.groups || []).reduce((n, g) => n + (g.questions?.length || 0), 0)} 題`)),
+
+          needPassage ? el('label', { class: 'field' }, el('span', {}, '文章標題'),
+            (f.passageTitle = el('input', { type: 'text', value: sec.passageTitle || '' }))) : null,
+          needPassage ? el('label', { class: 'field' },
+            el('span', {}, '文章內容（可直接貼純文字，會自動分段；也接受 HTML）'),
+            (f.passage = el('textarea', { rows: 8 }, sec.passage || ''))) : null,
+
+          needAudio ? el('label', { class: 'field' },
+            el('span', {}, '音檔網址（到「檔案」上傳後複製，例如 /uploads/audio/xxx.mp3）'),
+            (f.audio = el('input', { type: 'text', value: sec.audio || '', placeholder: '/uploads/audio/…' }))) : null,
+          needAudio ? el('label', { class: 'field' },
+            el('span', {}, '聽力逐字稿（只有老師看得到，學生考試時不會顯示）'),
+            (f.transcript = el('textarea', { rows: 4 }, sec.transcript || ''))) : null,
+
+          el('label', { class: 'field' },
+            el('span', {}, '本節圖片網址（地圖／平面圖，選填）'),
+            (f.image = el('input', { type: 'text', value: sec.image || '', placeholder: '/uploads/image/…' }))),
+
+          (sec.groups || []).some((g) => ['label_image', 'matching'].includes(g.type))
+            ? el('div', { class: 'small muted' }, '這一節有圖表標示題，題組層的圖片請在下方分別填寫。')
+            : null,
+
+          el('div', {}, (sec.groups || []).map((g, gi) => {
+            if (!['label_image'].includes(g.type) && !g.image) return null;
+            const gf = el('input', { type: 'text', value: g.image || '', placeholder: '/uploads/image/…' });
+            f.groupImages = f.groupImages || {};
+            f.groupImages[gi] = gf;
+            return el('label', { class: 'field' },
+              el('span', {}, `題組 ${gi + 1}（${g.type}）圖片`), gf);
+          })),
+
+          m.module === 'writing'
+            ? el('div', {}, (sec.groups || []).flatMap((g, gi) => (g.questions || []).map((q, qi) => {
+                const qf = el('input', { type: 'text', value: q.image || '', placeholder: '/uploads/image/…' });
+                f.taskImages = f.taskImages || {};
+                f.taskImages[`${gi}:${qi}`] = qf;
+                return el('label', { class: 'field' },
+                  el('span', {}, `Task ${q.taskNo || q.number} 圖表`), qf);
+              })))
+            : null);
+
+        fields.push(f);
+        return box;
+      });
+      return el('details', { open: m.module === 'reading' || m.module === 'listening' },
+        el('summary', {}, el('b', {}, UI.MODULE_LABEL[m.module]), ` — ${m.sections.length} 節`),
+        el('div', { style: { paddingTop: '.5rem' } }, rows));
+    });
+
+    const ok = await UI.modal({
+      title: `素材 — ${paper.title}`,
+      width: '820px',
+      body: el('div', {},
+        el('p', { class: 'small muted' },
+          '這裡只改文章、音檔與圖片，題目與答案完全不動。'
+          + '標紅色的是學生端會開天窗的地方。'),
+        panes),
+      actions: [{ label: '儲存', value: true, class: 'primary' }, { label: '取消', value: false }],
+    });
+    if (!ok) return;
+
+    for (const f of fields) {
+      const mod = paper.modules.find((m) => m.module === f.module);
+      const sec = mod.sections[f.si];
+      if (f.passageTitle) sec.passageTitle = f.passageTitle.value.trim() || null;
+      if (f.passage) sec.passage = f.passage.value.trim() || null;
+      if (f.audio) sec.audio = f.audio.value.trim() || null;
+      if (f.transcript) sec.transcript = f.transcript.value.trim() || null;
+      if (f.image) sec.image = f.image.value.trim() || null;
+      for (const [gi, input] of Object.entries(f.groupImages || {})) {
+        sec.groups[gi].image = input.value.trim() || null;
+      }
+      for (const [key, input] of Object.entries(f.taskImages || {})) {
+        const [gi, qi] = key.split(':').map(Number);
+        sec.groups[gi].questions[qi].image = input.value.trim() || null;
+      }
+    }
+
+    try {
+      const r = await API.put(`/tests/${id}`, { paper, published: d.test.published });
+      const still = (r.warnings || []).filter((w) => /沒有 passage|沒有指定 audio/.test(w));
+      toast(still.length ? `已儲存，還有 ${still.length} 節缺素材` : '素材已補齊', still.length ? '' : 'ok');
+      if (after) after();
+    } catch (e) {
+      UI.alert(e.details?.errors?.join('\n') || e.message);
+    }
   }
 
   async function preview(id) {
@@ -107,6 +245,7 @@ const Admin = (() => {
       staged.title = title;
       try {
         const r = await API.post('/tests', { paper: staged, published: false });
+        await warnIfMissingMedia(r.warnings);
         toast('已建立試卷', 'ok');
         location.hash = '#/admin/tests';
       } catch (e) { UI.alert(e.details?.errors?.join('\n') || e.message); }
@@ -121,7 +260,8 @@ const Admin = (() => {
       });
       if (!ok) return;
       try {
-        await API.post('/import/merge', { testId: Number(sel.value), paper: staged });
+        const merged = await API.post('/import/merge', { testId: Number(sel.value), paper: staged });
+        await warnIfMissingMedia(merged.warnings);
         toast('已併入', 'ok'); location.hash = '#/admin/tests';
       } catch (e) { UI.alert(e.message); }
     }
@@ -392,7 +532,8 @@ const Admin = (() => {
               onclick: async (e) => {
                 e.target.disabled = true;
                 try {
-                  await API.post('/tests', { paper: r.paper, published: false });
+                  const saved = await API.post('/tests', { paper: r.paper, published: false });
+                  await warnIfMissingMedia(saved.warnings);
                   toast('已存成試卷', 'ok'); location.hash = '#/admin/tests';
                 } catch (er) {
                   e.target.disabled = false;
@@ -422,7 +563,8 @@ const Admin = (() => {
                 try {
                   const { job: full } = await API.get(`/ai/jobs/${job.id}?partial=1`);
                   if (!full.partial) { UI.alert('這個工作沒有留下可用的半成品。'); e.target.disabled = false; return; }
-                  await API.post('/tests', { paper: full.partial, published: false });
+                  const saved = await API.post('/tests', { paper: full.partial, published: false });
+                  await warnIfMissingMedia(saved.warnings);
                   toast('已存成草稿試卷', 'ok'); location.hash = '#/admin/tests';
                 } catch (er) {
                   e.target.disabled = false;
@@ -496,6 +638,8 @@ const Admin = (() => {
           el('button', {
             class: 'btn primary',
             onclick: async () => {
+              // 老師自己貼的文章／逐字稿一定要跟著存進去，
+              // 否則學生端只會看到題目、左邊一片空白
               const paper = {
                 title: `AI 題組 — ${body.topic || group.type}`,
                 testType: 'academic',
@@ -503,13 +647,16 @@ const Admin = (() => {
                   module: body.module,
                   sections: [{
                     title: body.module === 'reading' ? 'Reading Passage 1' : 'Section 1',
-                    passageTitle: r.passageTitle, passage: r.passage, transcript: r.transcript,
+                    passageTitle: r.passageTitle,
+                    passage: r.passage || body.passage || null,
+                    transcript: r.transcript || body.transcript || null,
                     groups: [group],
                   }],
                 }],
               };
               try {
-                await API.post('/tests', { paper, published: false });
+                const saved = await API.post('/tests', { paper, published: false });
+                await warnIfMissingMedia(saved.warnings);
                 toast('已存成新試卷', 'ok'); location.hash = '#/admin/tests';
               } catch (er) { UI.alert(er.details?.errors?.join('\n') || er.message); }
             },
@@ -520,7 +667,10 @@ const Admin = (() => {
               await API.post('/ai/bank', {
                 module: body.module, type: body.type, topic: body.topic, difficulty: body.difficulty,
                 payload: {
-                  group, passage: r.passage, transcript: r.transcript, passageTitle: r.passageTitle,
+                  group,
+                  passage: r.passage || body.passage || null,
+                  transcript: r.transcript || body.transcript || null,
+                  passageTitle: r.passageTitle || null,
                 },
               });
               toast('已存進題庫，可在左上「題庫」頁面找到', 'ok');
@@ -2133,6 +2283,7 @@ const Admin = (() => {
       const r = await API.post('/ai/bank/to-test', {
         ids, testId: target.value ? Number(target.value) : 0, title: title.value.trim(),
       });
+      await warnIfMissingMedia(r.warnings);
       toast(r.created ? `已建立新試卷（${r.added} 個題組）` : `已加入試卷（${r.added} 個題組）`, 'ok');
       if (reload) reload();
       location.hash = `#/admin/tests`;

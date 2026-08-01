@@ -64,15 +64,27 @@ router.post('/parse', async (req, res) => {
     return res.status(400).json({ error: '請貼上完整的題目內容' });
   try {
     const parsed = await aiTasks.parsePasted({ text, moduleHint, answerKey, userId: req.user.id });
+    const mod = parsed.module || moduleHint || 'reading';
+    const sections = parsed.sections || [];
+
+    // AI 有時候只回題目、把文章漏掉（尤其貼進來的是「文章＋題目」混在一起時）。
+    // 閱讀少了文章，學生端就只剩題目，所以退而求其次：把老師貼的原文整段放進去，
+    // 並在提醒裡講清楚要人工確認。
+    const notes = [...(parsed.notes || [])];
+    if (mod === 'reading' && sections.length === 1 && !sections[0].passage) {
+      sections[0].passage = String(text);
+      notes.push('AI 沒有回傳文章內容，已把你貼上的原文整段放進「文章」欄位，請確認有沒有把題目也混進去。');
+    }
+
     const paper = normalizePaper({
       title: title || 'AI 解析的試卷',
       testType: testType || 'academic',
-      modules: [{ module: parsed.module || moduleHint || 'reading', sections: parsed.sections || [] }],
+      modules: [{ module: mod, sections }],
     });
     const result = validatePaper(paper);
     res.json({
       ok: result.ok, errors: result.errors,
-      warnings: [...(parsed.notes || []).map((n) => `AI 提醒：${n}`), ...result.warnings],
+      warnings: [...notes.map((n) => `AI 提醒：${n}`), ...result.warnings],
       stats: result.stats, paper: result.paper,
     });
   } catch (e) {

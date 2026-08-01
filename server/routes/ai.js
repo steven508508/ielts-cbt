@@ -332,7 +332,7 @@ router.post('/bank/to-test', requireStaff, async (req, res) => {
     'INSERT INTO tests (title, test_type, description, content, published, created_by) VALUES (?,?,?,?,0,?)',
     [result.paper.title, result.paper.testType, '由題庫組成', JSON.stringify(result.paper), req.user.id]
   );
-  res.json({ ok: true, testId: newId, created: true, added: rows.length, stats: result.stats });
+  res.json({ ok: true, testId: newId, created: true, added: rows.length, stats: result.stats, warnings: result.warnings });
 });
 
 // ── 單篇寫作立即批改（練習模式，不必整場考試）────────────────

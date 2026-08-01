@@ -91,6 +91,12 @@ ${wants.join('\n')}
 Every answer must be findable in the source text. Do not create trick items.`;
 
   const out = await ai.chat({ system, user, json: true, maxTokens: 12000, temperature: 0.8, purpose: 'generate', userId });
+
+  // 老師自己貼了文章／逐字稿時，AI 只會回題目，不會把原文再吐一次
+  // （吐回來只是浪費 token）。但存成試卷時一定要帶著它，否則學生端
+  // 就只剩題目、沒有文章可讀。這裡補回去。
+  if (!out.passage && passage) out.passage = passage;
+  if (!out.transcript && transcript) out.transcript = transcript;
   return out;
 }
 
