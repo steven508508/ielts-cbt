@@ -603,16 +603,16 @@
             it.bodyHtml
               ? el('div', { class: 'rev-body small', html: UI.sanitize(it.bodyHtml) }) : null,
             it.image ? el('img', { src: it.image, class: 'rev-img', alt: '題目圖片', loading: 'lazy' }) : null,
-            it.options?.length
-              ? el('div', { class: 'small muted' },
-                  it.options.map((o) => `${o.key}. ${o.text}`).join('　')) : null,
+            // 配合題的選項可能有十個、每個一整句，擠成一行等於沒給
+            it.options?.length ? optList(it.options, it) : null,
             // 沒有原文的話，閱讀錯題根本沒得檢討 —— 學生看不出當初為什麼選錯
             srcBlock(d.passages?.[it.passageKey]),
             el('div', { style: { display: 'flex', gap: '1.2rem', flexWrap: 'wrap', marginTop: '.4rem' } },
               el('div', {}, el('span', { class: 'small muted' }, '你的答案　'),
-                el('b', { style: { color: 'var(--err)' } }, it.yourAnswer || '（空白）')),
+                el('b', { style: { color: 'var(--err)' } }, withText(it.yourAnswer, it.options) || '（空白）')),
               el('div', {}, el('span', { class: 'small muted' }, '正確答案　'),
-                el('b', { style: { color: 'var(--ok)' } }, it.expected || '—'))),
+                el('b', { style: { color: 'var(--ok)' } },
+                  (it.answers?.length ? it.answers.map((a) => withText(a, it.options)).join(' / ') : it.expected) || '—'))),
             it.explanation
               ? el('details', { style: { marginTop: '.4rem' } },
                   el('summary', { class: 'small' }, '看解析'),
@@ -638,6 +638,29 @@
       summary, box);
 
     load();
+  }
+
+  /** 配合題的答案是字母，補上對應的選項文字才看得懂 */
+  function withText(key, options) {
+    const k = String(key ?? '').trim();
+    if (!k || !options?.length) return k;
+    const hit = options.find((o) => String(o.key).toUpperCase() === k.toUpperCase());
+    return hit ? `${k}（${hit.text}）` : k;
+  }
+
+  /** 選項清單。標出「你選的」與「正解」，才看得出當初錯在哪。 */
+  function optList(options, it) {
+    const mine = String(it?.yourAnswer || '').toUpperCase();
+    const right = new Set((it?.answers || []).map((x) => String(x).toUpperCase()));
+    return el('ul', { class: 'rev-opts' }, options.map((o) => {
+      const k = String(o.key || '').toUpperCase();
+      const isRight = right.has(k);
+      const isMine = mine && mine === k;
+      return el('li', { class: `${isRight ? 'right' : ''} ${isMine && !isRight ? 'mine' : ''}`.trim() },
+        el('b', {}, `${o.key}.`), ' ', o.text,
+        isRight ? el('span', { class: 'tag ok' }, '正解') : null,
+        isMine && !isRight ? el('span', { class: 'tag err' }, '你選的') : null);
+    }));
   }
 
   /** 錯題／重做共用：把那一節的原文或逐字稿附上去 */

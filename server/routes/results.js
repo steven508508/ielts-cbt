@@ -90,6 +90,8 @@ router.get('/:id', async (req, res) => {
           response: a?.response ?? '', correct: a ? !!a.correct : false,
           answers: q.answers, explanation: q.explanation,
           options: q.options || null,
+          optionsShared: !!q.optionsShared,
+          groupIndex: q.groupIndex,
           // 沒有這些的話，檢討時只看得到一句題幹，
           // 學生根本回想不起來當初在讀什麼、看什麼圖
           instructions: q.instructions || '',

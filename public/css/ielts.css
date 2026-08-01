@@ -442,3 +442,18 @@ table.data tr.warn-row td{background:#fffaf0}
   margin: .3rem 0; padding: .5rem .6rem; background: #f6f8fa;
   border: 1px solid var(--line-2); border-radius: 4px; line-height: 1.9;
 }
+
+/* 檢討：選項清單 */
+.rev-opts { list-style: none; margin: .35rem 0; padding: 0; }
+.rev-opts li {
+  padding: .22rem .5rem; margin: .12rem 0; font-size: .87rem; line-height: 1.6;
+  border: 1px solid transparent; border-radius: 3px; background: #f8f9fa;
+}
+.rev-opts li.right { background: #eef8f1; border-color: #bfe3ca; }
+.rev-opts li.mine  { background: #fdf0ee; border-color: #f0c9c3; }
+.rev-opts .tag {
+  margin-left: .4rem; font-size: .68rem; padding: 0 .3rem;
+  border-radius: 3px; border: 1px solid;
+}
+.rev-opts .tag.ok  { background: #fff; color: #1e7d3c; border-color: #bfe3ca; }
+.rev-opts .tag.err { background: #fff; color: #a5342a; border-color: #f0c9c3; }

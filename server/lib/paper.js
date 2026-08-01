@@ -335,6 +335,9 @@ function flattenQuestions(paper, moduleName) {
           wordLimit: g.wordLimit ?? null,
           allowNumbers: g.allowNumbers !== false,
           options: q.options || g.options || null,
+          // 配合題／選字填空的選項是整個題組共用的（十三題共用一份 A–H）。
+          // 檢討時要畫在題組上方一次，而不是每一題底下重複十三遍。
+          optionsShared: !q.options && !!g.options,
           groupType: g.type,
           multiCount: g.type === 'mcq_multi' ? (g.selectCount || (q.answers || []).length) : null,
           // 檢討錯題時沒有這些就只剩一句題幹，學生根本看不懂當初在問什麼。

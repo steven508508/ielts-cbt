@@ -1294,6 +1294,17 @@ async function call(method, path, body, token) {
             image: '/uploads/image/diagram.png',
             questions: [{ number: 3, prompt: 'canopy', answers: ['canopy'],
               image: '/uploads/image/diagram.png' }] },
+          { type: 'matching', instructions: 'Choose the correct heading for each paragraph.',
+            options: [{ key: 'i', text: 'An unexpected consequence' },
+              { key: 'ii', text: 'The origins of the method' },
+              { key: 'iii', text: 'Why costs began to fall' },
+              { key: 'iv', text: 'A warning from critics' }],
+            questions: [{ number: 4, prompt: 'Paragraph A', answers: ['ii'] },
+              { number: 5, prompt: 'Paragraph B', answers: ['iii'] }] },
+          { type: 'mcq_single', instructions: 'Choose the correct letter.',
+            questions: [{ number: 6, prompt: 'What cools the streets?',
+              options: [{ key: 'A', text: 'Trees' }, { key: 'B', text: 'Rain' }, { key: 'C', text: 'Wind' }],
+              answers: ['A'] }] },
         ],
       }],
     }],
@@ -1312,6 +1323,9 @@ async function call(method, path, body, token) {
       { module: 'reading', number: 1, response: 'FALSE' },
       { module: 'reading', number: 2, response: 'TRUE' },
       { module: 'reading', number: 3, response: 'roots' },
+      { module: 'reading', number: 4, response: 'i' },
+      { module: 'reading', number: 5, response: 'iii' },
+      { module: 'reading', number: 6, response: 'B' },
     ],
   }, stu);
   await call('POST', `/exam/${rvId}/module/finish`, { module: 'reading' }, stu);
@@ -1337,6 +1351,19 @@ async function call(method, path, body, token) {
     === '/uploads/image/diagram.png', '錯題複習也帶得回圖片');
   const pCount = Object.keys(rvWrong.data.passages || {}).length;
   ok(pCount <= rvWrong.data.items.length, `原文去重過（${pCount} 篇 / ${rvWrong.data.items.length} 題）`);
+
+  // 配合題的選項是整組共用的，檢討時如果沒帶回來，學生只看得到「你選了 i」
+  const rvMatch = rvQ.find((q) => q.type === 'matching');
+  ok(!!rvMatch, '試卷裡有配合題');
+  ok((rvMatch.options || []).length === 4, `配合題帶得回四個選項（實際 ${(rvMatch.options || []).length} 個）`);
+  ok(rvMatch.optionsShared === true, '而且標成「整組共用」，前端才知道只畫一次');
+  ok(rvQ.filter((q) => q.type === 'matching').every((q) => (q.options || []).length === 4),
+    '同一組的每一題都拿得到選項，不是只有第一題');
+  const rvMcq = rvQ.find((q) => q.type === 'mcq_single');
+  ok((rvMcq.options || []).length === 3 && rvMcq.optionsShared === false,
+    '單選題的選項是每題自己的');
+  const rvWrongMatch = rvWrong.data.items.find((x) => x.attemptId === rvId && x.type === 'matching');
+  ok((rvWrongMatch?.options || []).length === 4, '錯題複習也帶得回配合題的選項');
 
   const rvDrill = await call('POST', '/practice/drill', { module: 'reading', count: 5 }, stu);
   ok(Object.keys(rvDrill.data.passages || {}).length > 0, '重做時也給原文，不然閱讀題無從作答');

@@ -835,3 +835,36 @@ test('檢討素材：沒有圖沒有文章的聽力題也不會出錯', () => {
   assert.equal(m[0].passage, null);
   assert.equal(flatQ(p, 'listening')[0].image, null);
 });
+
+test('檢討素材：配合題的共用選項會被標成 shared，單選題不會', () => {
+  const p = {
+    title: 'x', testType: 'academic',
+    modules: [{ module: 'reading', sections: [{ title: 'S1', passage: '<p>t</p>', groups: [
+      { type: 'matching', instructions: 'Choose the heading.',
+        options: [{ key: 'i', text: 'One' }, { key: 'ii', text: 'Two' }],
+        questions: [{ number: 1, text: 'Para A', answers: ['i'] },
+                    { number: 2, text: 'Para B', answers: ['ii'] }] },
+      { type: 'mcq_single',
+        questions: [{ number: 3, text: 'Q', options: [{ key: 'A', text: 'a' }], answers: ['A'] }] },
+    ] }] }],
+  };
+  const qs = flatQ(p, 'reading');
+  assert.equal(qs[0].optionsShared, true, '配合題的選項是整組共用的');
+  assert.equal(qs[1].optionsShared, true);
+  assert.equal(qs[0].groupIndex, qs[1].groupIndex, '同一組才畫得成一份');
+  assert.equal(qs[2].optionsShared, false, '單選題的選項是每題自己的');
+  assert.equal(qs[2].groupIndex, 1);
+});
+
+test('檢討素材：配合題的選項真的帶到每一題上（不是只有第一題）', () => {
+  const p = {
+    title: 'x', testType: 'academic',
+    modules: [{ module: 'reading', sections: [{ title: 'S1', groups: [
+      { type: 'matching', options: [{ key: 'i', text: 'One' }, { key: 'ii', text: 'Two' }],
+        questions: [{ number: 1, text: 'A', answers: ['i'] }, { number: 2, text: 'B', answers: ['ii'] }] },
+    ] }] }],
+  };
+  for (const q of flatQ(p, 'reading')) {
+    assert.equal((q.options || []).length, 2, `第 ${q.number} 題應該拿得到選項`);
+  }
+});

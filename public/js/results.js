@@ -258,19 +258,81 @@ const Results = (() => {
         el('h3', {}, sec.title),
         // 檢討一定要能看到原文。只給題幹的話學生根本回想不起來當初在讀什麼。
         sourceBlock(media[Number(k)]),
-        sec.items.map((q) => el('div', { class: `rev-q ${q.correct ? 'correct' : 'wrong'}` },
-          el('div', { class: 'hd' },
-            el('b', {}, `Q${q.number}`),
-            el('span', { class: `pill ${q.correct ? 'ok' : 'err'}` }, q.correct ? '答對' : '答錯'),
-            el('span', { class: 'muted small' }, TYPE_LABEL[q.type] || q.type)),
-          q.instructions && el('div', { class: 'small muted', style: { marginBottom: '.2rem' } }, q.instructions),
-          q.text && el('div', { class: 'small', style: { marginBottom: '.3rem' }, html: sanitize(q.text) }),
-          q.bodyHtml && el('div', { class: 'rev-body small', html: sanitize(q.bodyHtml) }),
-          q.image && el('img', { src: q.image, class: 'rev-img', alt: `Q${q.number} 圖片`, loading: 'lazy' }),
-          el('div', { class: 'small' },
-            '你的答案：', el('span', { class: 'yours' }, q.response || '（未作答）'),
-            !q.correct ? el('span', {}, '　正解：', el('b', {}, (q.answers || []).join(' / '))) : null),
-          q.explanation && el('div', { class: 'exp', html: sanitize(q.explanation) }))))));
+        groupBy(sec.items).map((grp) => el('div', {},
+          // 配合題／選字填空的選項是整組共用的，畫在題組上方一次就好
+          grp.instructions ? el('div', { class: 'small muted', style: { margin: '.5rem 0 .2rem' } }, grp.instructions) : null,
+          grp.sharedOptions ? optionList(grp.sharedOptions, grp.items) : null,
+          grp.bodyHtml ? el('div', { class: 'rev-body small', html: sanitize(grp.bodyHtml) }) : null,
+          grp.image ? el('img', { src: grp.image, class: 'rev-img', alt: '題組圖片', loading: 'lazy' }) : null,
+          grp.items.map((q) => el('div', { class: `rev-q ${q.correct ? 'correct' : 'wrong'}` },
+            el('div', { class: 'hd' },
+              el('b', {}, `Q${q.number}`),
+              el('span', { class: `pill ${q.correct ? 'ok' : 'err'}` }, q.correct ? '答對' : '答錯'),
+              el('span', { class: 'muted small' }, TYPE_LABEL[q.type] || q.type)),
+            q.text && el('div', { class: 'small', style: { marginBottom: '.3rem' }, html: sanitize(q.text) }),
+            !grp.image && q.image
+              ? el('img', { src: q.image, class: 'rev-img', alt: `Q${q.number} 圖片`, loading: 'lazy' }) : null,
+            // 單選題的選項是每題自己的，就畫在題目底下
+            !q.optionsShared && q.options?.length ? optionList(q.options, [q]) : null,
+            el('div', { class: 'small' },
+              '你的答案：', el('span', { class: 'yours' }, withText(q.response, q.options) || '（未作答）'),
+              !q.correct
+                ? el('span', {}, '　正解：',
+                    el('b', {}, (q.answers || []).map((a) => withText(a, q.options)).join(' / ')))
+                : null),
+            q.explanation && el('div', { class: 'exp', html: sanitize(q.explanation) }))))))));
+  }
+
+  /**
+   * 配合題的答案是 "ii" 這種字母，光看字母根本不知道選了什麼。
+   * 有選項清單時把對應的文字補上去。
+   */
+  function withText(key, options) {
+    const k = String(key ?? '').trim();
+    if (!k || !options?.length) return k;
+    const hit = options.find((o) => String(o.key).toUpperCase() === k.toUpperCase());
+    return hit ? `${k}（${hit.text}）` : k;
+  }
+
+  /** 依題組切開，讓共用的選項清單只畫一次 */
+  function groupBy(items) {
+    const out = [];
+    for (const q of items) {
+      const last = out[out.length - 1];
+      if (last && last.key === q.groupIndex) { last.items.push(q); continue; }
+      out.push({
+        key: q.groupIndex,
+        instructions: q.instructions || '',
+        sharedOptions: q.optionsShared ? q.options : null,
+        bodyHtml: q.bodyHtml || null,
+        image: q.optionsShared || !q.options ? q.image : null,
+        items: [q],
+      });
+    }
+    return out;
+  }
+
+  /**
+   * 選項清單。答錯的時候要看得出「我選了哪個、正確的是哪個」——
+   * 只印一排 A. B. C. 對檢討沒有幫助。
+   */
+  function optionList(options, forQuestions) {
+    const chosen = new Set();
+    const right = new Set();
+    for (const q of forQuestions || []) {
+      String(q.response || '').split(/[,\s]+/).filter(Boolean).forEach((x) => chosen.add(x.toUpperCase()));
+      (q.answers || []).forEach((x) => right.add(String(x).toUpperCase()));
+    }
+    const single = (forQuestions || []).length === 1;
+    return el('ul', { class: 'rev-opts' }, options.map((o) => {
+      const k = String(o.key || '').toUpperCase();
+      const isRight = single && right.has(k);
+      const isMine = single && chosen.has(k);
+      return el('li', { class: `${isRight ? 'right' : ''} ${isMine && !isRight ? 'mine' : ''}`.trim() },
+        el('b', {}, `${o.key}.`), ' ', o.text,
+        isRight ? el('span', { class: 'tag ok' }, '正解') : null,
+        isMine && !isRight ? el('span', { class: 'tag err' }, '你選的') : null);
+    }));
   }
 
   /** 這一節的文章／逐字稿／音檔。預設收起來，按一下展開對照。 */
