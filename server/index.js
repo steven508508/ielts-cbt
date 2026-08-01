@@ -103,6 +103,9 @@ async function start() {
   // 自動清理逾期資料
   require('./lib/retention').schedule();
 
+  // 上次關機時還在跑的 AI 背景工作其實早就沒了，標記成中斷免得永遠轉圈
+  await require('./lib/jobs').reapStale();
+
   server.listen(config.port, config.host, () => {
     console.log(`IELTS 模擬考系統已啟動 → http://localhost:${config.port}`);
     console.log(`口說即時語音通道 → ws://localhost:${config.port}/ws/speaking`);

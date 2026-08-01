@@ -94,28 +94,221 @@ Every answer must be findable in the source text. Do not create trick items.`;
   return out;
 }
 
-/** 產生一整份試卷骨架（四科），供老師再微調 */
-async function generateFullPaper({ testType = 'academic', theme = '', userId }) {
-  const system = `You are a senior IELTS item writer. Produce a COMPLETE ${testType === 'general' ? 'General Training' : 'Academic'} practice paper outline.
+/* ── 產生一整份試卷 ────────────────────────────────────────────
+   以前是「一個請求要 AI 吐出整份試卷」，輸出量三萬 token 起跳，
+   幾乎必定撞上逾時（不論是本系統的 180 秒、反向代理，還是 Cloudflare
+   橘雲對來源回應的 100 秒硬上限）。
+   現在拆成九段分別產生，每段都在安全範圍內，也能個別重試。 */
+
+const LISTENING_PLAN = [
+  { no: 1, range: [1, 10],  brief: 'a transactional conversation between two speakers in an everyday social context (enquiry, booking, registration). Include a form/notes gap-fill.' },
+  { no: 2, range: [11, 20], brief: 'a monologue in an everyday social context (a talk about a facility, a tour, local arrangements). Include a map/plan labelling or matching task.' },
+  { no: 3, range: [21, 30], brief: 'a conversation between up to four people in an educational or training context (students discussing an assignment with a tutor). Include multiple choice and matching.' },
+  { no: 4, range: [31, 40], brief: 'an academic lecture monologue. Include note completion / summary completion.' },
+];
+
+const READING_ACADEMIC_PLAN = [
+  { no: 1, range: [1, 13],  brief: 'a factual/descriptive text of general interest (900-1000 words). Mix True/False/Not Given with note or summary completion.' },
+  { no: 2, range: [14, 26], brief: 'a text on a work- or study-related topic with a clear argumentative structure (900-1000 words). Include Matching Headings and Matching Features.' },
+  { no: 3, range: [27, 40], brief: 'a longer, more complex analytical text (1000-1100 words). Include Yes/No/Not Given, multiple choice, and summary completion.' },
+];
+
+const READING_GENERAL_PLAN = [
+  { no: 1, range: [1, 14],  brief: 'Section 1 "social survival" — two or three short everyday texts (notices, advertisements, timetables), 700-800 words in total.' },
+  { no: 2, range: [15, 27], brief: 'Section 2 "workplace survival" — two texts about job descriptions, contracts, staff training (800-900 words in total).' },
+  { no: 3, range: [28, 40], brief: 'Section 3 "general reading" — one longer descriptive/instructive text of general interest (900-1000 words).' },
+];
+
+/** 產生一個聽力 section（10 題 + 完整逐字稿）*/
+async function generateListeningSection({ no, range, brief, theme, testType, userId }) {
+  const system = `You are a senior IELTS item writer for Cambridge English. You write listening material that is
+indistinguishable from the official papers: natural spoken English with hesitations, self-corrections and
+speaker labels; distractors that punish careless listening; answers that appear verbatim in the transcript.
+
 ${SCHEMA_SPEC}
 
-Return JSON shaped exactly like:
-{ "title": "...", "testType": "${testType}", "description": "...",
-  "modules": [
-    {"module":"listening","durationSec":1800,"sections":[{"title":"Section 1","instructions":"...","transcript":"...","groups":[…]}]},
-    {"module":"reading","durationSec":3600,"sections":[{"title":"Reading Passage 1","passageTitle":"...","passage":"<p>…</p>","groups":[…]}]},
-    {"module":"writing","durationSec":3600,"sections":[{"title":"Writing","groups":[{"type":"writing_task","questions":[{"number":1,"taskNo":1,"minWords":150,"durationSec":1200,"prompt":"...","sampleAnswer":"..."}]}]}]},
-    {"module":"speaking","durationSec":840,"sections":[{"title":"Speaking","groups":[{"type":"speaking_part","questions":[{"part":1,"topic":"...","items":["…"]},{"part":2,"cueCard":{"topic":"Describe …","bullets":["…"],"prepSec":60,"talkSec":120}},{"part":3,"topic":"...","items":["…"]}]}]}]}
-  ]}`;
+Return JSON:
+{ "title": "Section ${no}",
+  "instructions": "…the rubric a candidate sees at the top of this section…",
+  "transcript": "…the FULL audio script, with speaker labels…",
+  "groups": [ …one or more group objects covering EVERY question number in the range… ] }`;
 
-  const user = `Theme / subject flavour: ${theme || 'mixed authentic IELTS topics'}
-Listening: 4 sections, 40 questions total, with full transcripts.
-Reading: 3 passages, 40 questions total, with full passages.
-Writing: Task 1 (${testType === 'general' ? 'a letter' : 'describe a chart/process — describe the visual in words under "visualDescription" so a teacher can draw or generate it'}) + Task 2 essay.
-Speaking: Part 1 (3 topics x 4 questions), Part 2 cue card, Part 3 (5-6 discussion questions).
-Vary the question types across the official range. Keep every answer verifiable.`;
+  const user = `IELTS Listening Section ${no}.
+Content: ${brief}
+Question numbers: ${range[0]} to ${range[1]} inclusive — exactly ${range[1] - range[0] + 1} question numbers, none missing, none extra.
+Theme / subject flavour: ${theme || 'authentic everyday and academic IELTS topics'}
+Use two or three different question types within this section, as the real test does.
+Every answer must appear in the transcript, in order. Respect every wordLimit you set.`;
 
-  return ai.chat({ system, user, json: true, maxTokens: 32000, temperature: 0.8, purpose: 'generate_paper', userId });
+  return ai.chat({ system, user, json: true, maxTokens: 12000, temperature: 0.8, purpose: 'generate_paper', userId });
+}
+
+/** 產生一篇閱讀（文章 + 13~14 題）*/
+async function generateReadingPassage({ no, range, brief, theme, testType, userId }) {
+  const system = `You are a senior IELTS item writer for Cambridge English. You write ${testType === 'general' ? 'General Training' : 'Academic'}
+reading material indistinguishable from the official papers.
+
+${SCHEMA_SPEC}
+
+Return JSON:
+{ "title": "Reading Passage ${no}",
+  "passageTitle": "…",
+  "passage": "<p>…</p>",   // the FULL text, simple HTML. If any task needs paragraph letters,
+                            // start paragraphs like <p><strong>A</strong> …</p>
+  "instructions": "…",
+  "groups": [ …group objects covering EVERY question number in the range… ] }`;
+
+  const user = `IELTS ${testType === 'general' ? 'General Training' : 'Academic'} Reading Passage ${no}.
+Content: ${brief}
+Question numbers: ${range[0]} to ${range[1]} inclusive — exactly ${range[1] - range[0] + 1} question numbers, none missing, none extra.
+Theme / subject flavour: ${theme || 'authentic IELTS topics'}
+Use two or three different question types, as the real test does.
+Every answer must be verifiable from the passage. Do not create trick items.`;
+
+  return ai.chat({ system, user, json: true, maxTokens: 14000, temperature: 0.8, purpose: 'generate_paper', userId });
+}
+
+/** 產生寫作兩題 */
+async function generateWritingTasks({ theme, testType, userId }) {
+  const system = `You are a senior IELTS item writer. Write the Writing module of a
+${testType === 'general' ? 'General Training' : 'Academic'} paper.
+
+Return JSON:
+{ "title": "Writing",
+  "groups": [{ "type": "writing_task", "questions": [
+     { "number": 1, "taskNo": 1, "minWords": 150, "durationSec": 1200,
+       "text": "…the exact task rubric the candidate sees…",
+       ${testType === 'general'
+    ? '"answers": [], "sampleAnswer": "a band 8-9 model letter"'
+    : '"visualDescription": "describe the chart/table/process in enough detail that a teacher can draw it or generate an image", "answers": [], "sampleAnswer": "a band 8-9 model answer"'} },
+     { "number": 2, "taskNo": 2, "minWords": 250, "durationSec": 2400,
+       "text": "…the exact Task 2 prompt, including the instruction line…",
+       "answers": [], "sampleAnswer": "a band 8-9 model essay" }
+  ]}]}`;
+
+  const user = `Theme / subject flavour: ${theme || 'authentic IELTS topics'}
+Task 1: ${testType === 'general' ? 'a letter (formal, semi-formal or informal — state which)' : 'describe a chart, table, diagram or process'}.
+Task 2: a discursive essay with a clear question type (opinion / discussion / problem-solution / two-part).
+Write the rubrics exactly in official style. Model answers should be genuinely band 8-9.`;
+
+  return ai.chat({ system, user, json: true, maxTokens: 8000, temperature: 0.8, purpose: 'generate_paper', userId });
+}
+
+/** 產生口說三部分 */
+async function generateSpeakingSet({ theme, userId }) {
+  const system = `You are a senior IELTS speaking examiner and item writer.
+
+Return JSON:
+{ "title": "Speaking",
+  "groups": [{ "type": "speaking_part", "questions": [
+    { "part": 1, "topic": "…", "items": ["…","…","…","…"] },
+    { "part": 1, "topic": "…", "items": ["…","…","…","…"] },
+    { "part": 1, "topic": "…", "items": ["…","…","…","…"] },
+    { "part": 2, "cueCard": { "topic": "Describe …", "bullets": ["You should say:","…","…","…","and explain …"], "prepSec": 60, "talkSec": 120 } },
+    { "part": 3, "topic": "…", "items": ["…","…","…","…","…","…"] }
+  ]}]}`;
+
+  const user = `Theme / subject flavour: ${theme || 'authentic IELTS topics'}
+Part 1: three familiar everyday topics, four questions each.
+Part 2: one cue card, with the Part 2 topic linked to the Part 3 discussion.
+Part 3: six abstract discussion questions that escalate in difficulty, clearly related to the Part 2 topic.
+Write them exactly as an examiner would say them aloud.`;
+
+  return ai.chat({ system, user, json: true, maxTokens: 6000, temperature: 0.85, purpose: 'generate_paper', userId });
+}
+
+/**
+ * 分段產生整份試卷。
+ * ctx 由 jobs.run 提供（setStep / savePartial / check），沒有的話就當作單純跑一次。
+ */
+async function generateFullPaper({ testType = 'academic', theme = '', userId, ctx = null }) {
+  const readingPlan = testType === 'general' ? READING_GENERAL_PLAN : READING_ACADEMIC_PLAN;
+  const steps = [];
+
+  for (const s of LISTENING_PLAN) {
+    steps.push({
+      label: `聽力 Section ${s.no}（第 ${s.range[0]}–${s.range[1]} 題）`,
+      run: () => generateListeningSection({ ...s, theme, testType, userId }),
+      into: 'listening',
+    });
+  }
+  for (const s of readingPlan) {
+    steps.push({
+      label: `閱讀 Passage ${s.no}（第 ${s.range[0]}–${s.range[1]} 題）`,
+      run: () => generateReadingPassage({ ...s, theme, testType, userId }),
+      into: 'reading',
+    });
+  }
+  steps.push({ label: '寫作 Task 1 與 Task 2', run: () => generateWritingTasks({ theme, testType, userId }), into: 'writing' });
+  steps.push({ label: '口說 Part 1–3', run: () => generateSpeakingSet({ theme, userId }), into: 'speaking' });
+
+  const collected = { listening: [], reading: [], writing: [], speaking: [] };
+  const failed = [];
+
+  for (let i = 0; i < steps.length; i += 1) {
+    const s = steps[i];
+    ctx?.check();
+    await ctx?.setStep(`${s.label}…（${i + 1}/${steps.length}）`, i);
+
+    let section = null;
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      try {
+        section = await s.run();
+        break;
+      } catch (e) {
+        ctx?.check();
+        // 設定不完整（沒填金鑰、沒填模型）重試幾百次也不會變好，直接中止整份
+        if (e.code === 'AI_NOT_CONFIGURED') { e.friendly = true; throw e; }
+        if (attempt === 2) {
+          // 單一段失敗不要整份丟掉——其他七、八段都是好的，
+          // 老師拿回去補一段比重跑一次划算得多。
+          failed.push(`${s.label}：${ai.friendlyError(e)}`);
+        } else {
+          await ctx?.setStep(`${s.label}… 第一次失敗，重試中（${i + 1}/${steps.length}）`, i);
+          await new Promise((r) => setTimeout(r, 2000));
+        }
+      }
+    }
+    if (section) {
+      collected[s.into].push(section);
+      await ctx?.savePartial(assemble(collected, { testType, theme, failed }));
+    }
+  }
+
+  await ctx?.setStep('組裝試卷…', steps.length);
+  const paper = assemble(collected, { testType, theme, failed });
+  if (!collected.listening.length && !collected.reading.length
+      && !collected.writing.length && !collected.speaking.length) {
+    const err = new Error(failed.length
+      ? `九個段落全部失敗。第一個錯誤：\n${failed[0]}`
+      : 'AI 沒有產出任何內容');
+    err.friendly = true;              // 已經是給人看的訊息了，不要再翻譯一次
+    throw err;
+  }
+  return paper;
+}
+
+/** 把各段結果組成一份完整 paper */
+function assemble(collected, { testType, theme, failed = [] }) {
+  const modules = [];
+  const push = (module, durationSec, sections) => {
+    if (sections.length) modules.push({ module, durationSec, sections });
+  };
+  push('listening', 1800, collected.listening);
+  push('reading', 3600, collected.reading);
+  push('writing', 3600, collected.writing);
+  push('speaking', 840, collected.speaking);
+
+  const stamp = new Date().toISOString().slice(0, 10);
+  return {
+    title: `AI 模擬試卷${theme ? ` — ${theme}` : ''}（${stamp}）`,
+    testType,
+    description: failed.length
+      ? `AI 產生，有 ${failed.length} 個段落失敗需要補：${failed.join('；')}`
+      : 'AI 產生的完整模擬試卷，請人工校對後再指派。',
+    generationIssues: failed,
+    modules,
+  };
 }
 
 // ── 2. 貼上原文 → 解析成系統格式 ───────────────────────────────

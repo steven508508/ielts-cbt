@@ -696,6 +696,57 @@ async function call(method, path, body, token) {
   const bankGone = await call('GET', `/ai/bank?q=${encodeURIComponent(stamp)}`, null, tea);
   ok(bankGone.data.items.length === 0, '刪掉的題組真的不見了');
 
+  // ── AI 背景工作（整份試卷產生）─────────────────────────
+  console.log('\nAI 背景工作');
+  const jobStart = Date.now();
+  const jStart = await call('POST', '/ai/generate-paper', { testType: 'academic', theme: `e2e ${stamp}` }, tea);
+  const jobMs = Date.now() - jobStart;
+  ok(jStart.status === 202 && jStart.data.jobId > 0,
+    `建立工作立刻回應（${jobMs} ms，不再卡住整個請求）`);
+  ok(jobMs < 5000, '回應時間遠低於任何反向代理的逾時');
+  const jobId = jStart.data.jobId;
+
+  const jDup = await call('POST', '/ai/generate-paper', { testType: 'academic' }, tea);
+  ok(jDup.status === 409 && jDup.data.jobId === jobId, '同一個人不能同時開兩份，並帶回進行中的 jobId');
+
+  const jList = await call('GET', '/ai/jobs?kind=generate_paper', null, tea);
+  ok(jList.data.jobs.some((j) => j.id === jobId), '工作出現在自己的清單裡');
+  ok(!('result' in (jList.data.jobs[0] || { result: 1 })), '清單不夾帶整包結果');
+
+  const jGet = await call('GET', `/ai/jobs/${jobId}`, null, tea);
+  ok(jGet.status === 200 && jGet.data.job.totalSteps === 9, '可以查到進度，共 9 個步驟');
+  ok(typeof jGet.data.job.percent === 'number', '有百分比可以畫進度條');
+
+  const jStu = await call('GET', `/ai/jobs/${jobId}`, null, stu);
+  ok(jStu.status === 403, '學生看不到 AI 工作');
+  const jOther = await call('GET', `/ai/jobs/${jobId}`, null, adm);
+  ok(jOther.status === 200, '管理員看得到別人的工作');
+  const jMissing = await call('GET', '/ai/jobs/999999', null, tea);
+  ok(jMissing.status === 404, '不存在的工作回 404');
+
+  // 沒設定 AI 金鑰時應該立刻失敗，而不是重試 18 次
+  let jFinal = null;
+  for (let i = 0; i < 30; i += 1) {
+    await new Promise((r) => setTimeout(r, 500));
+    jFinal = (await call('GET', `/ai/jobs/${jobId}`, null, tea)).data.job;
+    if (['done', 'error', 'cancelled'].includes(jFinal.status)) break;
+  }
+  if (jFinal && jFinal.status === 'error') {
+    ok(!/operation was aborted/i.test(jFinal.error || ''),
+      '失敗訊息不會是看不懂的英文 abort');
+    ok(/設定|金鑰|API Key|端點|逾時/.test(jFinal.error || ''),
+      `失敗訊息說得出原因：${(jFinal.error || '').slice(0, 40)}…`);
+  } else {
+    // CI 上真的有設金鑰時就跑得完，那也算通過
+    ok(['done', 'running', 'cancelled'].includes(jFinal?.status),
+      `工作狀態合理：${jFinal?.status}`);
+  }
+
+  const jCancel = await call('POST', `/ai/jobs/${jobId}/cancel`, {}, tea);
+  ok(jCancel.status === 200, '可以取消工作');
+  const jCancelStu = await call('POST', `/ai/jobs/${jobId}/cancel`, {}, stu);
+  ok(jCancelStu.status === 403, '學生不能取消別人的工作');
+
   // ── 人機驗證設定 ───────────────────────────────────────
   console.log('\n人機驗證');
   const tsPub = await call('GET', '/auth/config');

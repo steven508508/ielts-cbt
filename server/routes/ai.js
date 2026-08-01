@@ -4,6 +4,7 @@ const db = require('../db');
 const { requireAuth, requireStaff, requireRole } = require('../middleware/auth');
 const ai = require('../lib/ai');
 const aiTasks = require('../lib/aiTasks');
+const jobs = require('../lib/jobs');
 const bands = require('../lib/bands');
 const { validatePaper, normalizePaper } = require('../lib/paper');
 
@@ -47,7 +48,7 @@ router.post('/test', requireStaff, async (req, res) => {
   try {
     res.json(await ai.testConnection(req.body?.role || 'chat'));
   } catch (e) {
-    res.status(502).json({ ok: false, error: e.message });
+    res.status(502).json({ ok: false, error: ai.friendlyError(e) });
   }
 });
 
@@ -62,22 +63,66 @@ router.post('/generate', requireStaff, async (req, res) => {
     const out = await aiTasks.generateQuestions(req.body || {}, req.user.id);
     res.json({ ok: true, ...out });
   } catch (e) {
-    res.status(502).json({ error: e.message });
+    res.status(502).json({ error: ai.friendlyError(e) });
   }
 });
 
+/**
+ * 產生整份試卷。
+ * 這件事要好幾分鐘，塞在一個 HTTP 請求裡等一定會被逾時擋下
+ * （本系統 180 秒、反向代理、Cloudflare 橘雲的 100 秒硬上限），
+ * 所以改成背景工作：這裡立刻回 jobId，前端輪詢 /ai/jobs/:id。
+ */
 router.post('/generate-paper', requireStaff, async (req, res) => {
-  try {
-    const raw = await aiTasks.generateFullPaper({
-      testType: req.body?.testType || 'academic',
-      theme: req.body?.theme || '',
-      userId: req.user.id,
-    });
+  const testType = req.body?.testType === 'general' ? 'general' : 'academic';
+  const theme = String(req.body?.theme || '').slice(0, 200);
+
+  // 同一個人已經有一個在跑就不要再開，免得白燒額度
+  const mine = await jobs.listFor(req.user.id, { limit: 5, kind: 'generate_paper' });
+  const busy = mine.find((j) => j.status === 'queued' || j.status === 'running');
+  if (busy) return res.status(409).json({ error: '你已經有一份試卷正在產生中', jobId: busy.id });
+
+  const jobId = await jobs.create({
+    kind: 'generate_paper', params: { testType, theme }, totalSteps: 9, userId: req.user.id,
+  });
+
+  jobs.run(jobId, async (ctx) => {
+    const raw = await aiTasks.generateFullPaper({ testType, theme, userId: req.user.id, ctx });
     const result = validatePaper(normalizePaper(raw));
-    res.json({ ok: result.ok, errors: result.errors, warnings: result.warnings, stats: result.stats, paper: result.paper });
-  } catch (e) {
-    res.status(502).json({ error: e.message });
-  }
+    return {
+      ok: result.ok,
+      errors: result.errors,
+      warnings: result.warnings,
+      stats: result.stats,
+      issues: raw.generationIssues || [],
+      paper: result.paper,
+    };
+  });
+
+  res.status(202).json({ jobId, totalSteps: 9 });
+});
+
+// ── 背景工作進度 ───────────────────────────────────────────────
+router.get('/jobs', requireStaff, async (req, res) => {
+  res.json({ jobs: await jobs.listFor(req.user.id, { limit: 20, kind: req.query.kind || null }) });
+});
+
+router.get('/jobs/:id', requireStaff, async (req, res) => {
+  const job = await jobs.get(req.params.id);
+  if (!job) return res.status(404).json({ error: '找不到這個工作' });
+  if (job.createdBy !== req.user.id && req.user.role !== 'admin')
+    return res.status(403).json({ error: '這不是你建立的工作' });
+  // 還在跑的時候不要每次都把半成品整包丟回去，太肥
+  if (job.status === 'running' && !req.query.partial) job.partial = undefined;
+  res.json({ job });
+});
+
+router.post('/jobs/:id/cancel', requireStaff, async (req, res) => {
+  const job = await jobs.get(req.params.id);
+  if (!job) return res.status(404).json({ error: '找不到這個工作' });
+  if (job.createdBy !== req.user.id && req.user.role !== 'admin')
+    return res.status(403).json({ error: '這不是你建立的工作' });
+  res.json({ job: await jobs.cancel(job.id) });
 });
 
 /* ── 題庫 ─────────────────────────────────────────────────────

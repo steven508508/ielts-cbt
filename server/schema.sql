@@ -230,3 +230,22 @@ CREATE TABLE IF NOT EXISTS exam_events (
   INDEX idx_ev_type (type),
   CONSTRAINT fk_ev_att FOREIGN KEY (attempt_id) REFERENCES attempts(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ── v2.5：AI 背景工作（整份試卷產生等長時間任務）────────────
+CREATE TABLE IF NOT EXISTS ai_jobs (
+  id          INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  kind        VARCHAR(40) NOT NULL,
+  status      ENUM('queued','running','done','error','cancelled') NOT NULL DEFAULT 'queued',
+  step        VARCHAR(200) NULL,
+  done_steps  SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+  total_steps SMALLINT UNSIGNED NOT NULL DEFAULT 1,
+  params      TEXT      NULL,
+  result      LONGTEXT  NULL,
+  partial     LONGTEXT  NULL,
+  error       TEXT      NULL,
+  created_by  INT UNSIGNED NULL,
+  created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_aijob_user (created_by, id),
+  INDEX idx_aijob_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

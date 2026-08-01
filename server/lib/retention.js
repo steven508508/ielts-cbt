@@ -154,6 +154,17 @@ async function runCleanup({ dryRun = true, policy = null, actor = 'system' } = {
       await db.exec('DELETE FROM ai_logs WHERE created_at < DATE_SUB(NOW(), INTERVAL ? DAY)', [p.keepAiLogsDays]);
     }
     add('清除 AI 呼叫紀錄', n, 0, `超過 ${p.keepAiLogsDays} 天`);
+
+    // AI 背景工作的結果整份試卷都存在裡面，幾百 KB 起跳，不要無限累積
+    const j = await db.one(
+      'SELECT COUNT(*) AS n FROM ai_jobs WHERE created_at < DATE_SUB(NOW(), INTERVAL ? DAY)',
+      [p.keepAiLogsDays]
+    ).catch(() => null);
+    const jn = Number(j?.n || 0);
+    if (!dryRun && jn) {
+      await db.exec('DELETE FROM ai_jobs WHERE created_at < DATE_SUB(NOW(), INTERVAL ? DAY)', [p.keepAiLogsDays]);
+    }
+    add('清除 AI 背景工作紀錄', jn, 0, `超過 ${p.keepAiLogsDays} 天（結果已存成試卷的不受影響）`);
   }
 
   // 5) 沒有被引用的媒體檔

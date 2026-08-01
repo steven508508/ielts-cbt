@@ -2,6 +2,7 @@
    老師 / 管理員後台
    ═══════════════════════════════════════════════════════════ */
 const Admin = (() => {
+  let jobTimer = null;   // AI 全卷產生的進度輪詢（換頁要停掉）
   const { el, $, sanitize, toast, band, fmtDate } = UI;
 
   // ── 試卷管理 ────────────────────────────────────────────
@@ -294,37 +295,185 @@ const Admin = (() => {
       }, '產生題目'));
 
     const wholeF = {};
+    const startBtn = el('button', { class: 'btn primary' }, '產生完整試卷');
     const whole = el('div', {},
-      el('p', { class: 'small muted' }, '一次產生四科完整試卷（40+40 題、兩篇寫作、完整口說）。需要 2–5 分鐘，且相當耗用 API 額度。'),
+      el('p', { class: 'small muted' },
+        '一次產生四科完整試卷（40+40 題、兩篇寫作、完整口說）。分成 9 段依序產生，'
+        + '整份大約 3–8 分鐘，相當耗用 API 額度。'),
+      el('p', { class: 'small muted' },
+        '產生過程在伺服器上跑，', el('b', {}, '可以關掉頁面'),
+        '，稍後回到這一頁會自動接回進度。'),
       el('div', { class: 'row' },
         el('label', { class: 'field' }, el('span', {}, '類型'),
           (wholeF.testType = el('select', {}, el('option', { value: 'academic' }, 'Academic'), el('option', { value: 'general' }, 'General Training')))),
         el('label', { class: 'field' }, el('span', {}, '主題風格'), (wholeF.theme = el('input', { type: 'text', placeholder: '例：環境與科技' })))),
-      el('button', {
-        class: 'btn primary',
-        onclick: async (e) => {
-          e.target.disabled = true; e.target.textContent = '產生中…請不要關閉頁面';
-          try {
-            const r = await API.post('/ai/generate-paper', { testType: wholeF.testType.value, theme: wholeF.theme.value });
-            UI.render(result, 
-              el('h3', {}, r.ok ? '✅ 產生完成' : '⚠️ 產生完成但有格式問題'),
-              r.errors?.length ? el('ul', { class: 'small' }, r.errors.map((x) => el('li', { style: { color: 'var(--err)' } }, x))) : null,
-              r.warnings?.length ? el('ul', { class: 'small' }, r.warnings.map((x) => el('li', { class: 'muted' }, x))) : null,
-              el('div', { style: { display: 'flex', gap: '.5rem', marginTop: '.6rem' } },
-                el('button', {
-                  class: 'btn primary',
-                  onclick: async () => {
-                    try {
-                      await API.post('/tests', { paper: r.paper, published: false });
-                      toast('已存成試卷', 'ok'); location.hash = '#/admin/tests';
-                    } catch (er) { UI.alert(er.details?.errors?.join('\n') || er.message); }
-                  },
-                }, '存成試卷'),
-                el('button', { class: 'btn', onclick: () => UI.download('ai-paper.json', JSON.stringify(r.paper, null, 2)) }, '下載 JSON')));
-          } catch (er) { UI.alert(er.message); }
-          e.target.disabled = false; e.target.textContent = '產生完整試卷';
+      startBtn);
+
+    startBtn.onclick = async () => {
+      startBtn.disabled = true;
+      try {
+        const r = await API.post('/ai/generate-paper', {
+          testType: wholeF.testType.value, theme: wholeF.theme.value,
+        });
+        watchJob(r.jobId);
+      } catch (er) {
+        startBtn.disabled = false;
+        // 409：已經有一個在跑，直接接上去就好
+        if (er.details?.jobId) watchJob(er.details.jobId);
+        else UI.alert(er.message);
+      }
+    };
+
+    // ── 背景工作進度 ──────────────────────────────────────
+    const STEP_NAMES = [
+      '聽力 Section 1', '聽力 Section 2', '聽力 Section 3', '聽力 Section 4',
+      '閱讀 Passage 1', '閱讀 Passage 2', '閱讀 Passage 3', '寫作 Task 1+2', '口說 Part 1-3',
+    ];
+
+    function stopWatching() { clearInterval(jobTimer); jobTimer = null; }
+    stopWatching();   // 重進頁面時先把上一次的輪詢收掉
+
+    function watchJob(jobId) {
+      stopWatching();
+      startBtn.disabled = true;
+      const tick = async () => {
+        let job;
+        try { ({ job } = await API.get(`/ai/jobs/${jobId}`)); }
+        catch (e) { stopWatching(); startBtn.disabled = false; UI.alert(e.message); return; }
+        renderJob(job);
+        if (['done', 'error', 'cancelled'].includes(job.status)) {
+          stopWatching();
+          startBtn.disabled = false;
+        }
+      };
+      tick();
+      jobTimer = setInterval(tick, 2500);
+    }
+
+    function renderJob(job) {
+      const pct = Math.max(0, Math.min(100, job.percent || 0));
+      const bar = el('div', {
+        style: {
+          height: '10px', background: '#eceff1', borderRadius: '6px',
+          overflow: 'hidden', margin: '.5rem 0',
         },
-      }, '產生完整試卷'));
+      }, el('div', {
+        style: {
+          height: '100%', width: `${pct}%`,
+          background: job.status === 'error' ? 'var(--err)' : 'var(--brand)',
+          transition: 'width .4s ease',
+        },
+      }));
+
+      const checklist = el('ol', { class: 'small', style: { lineHeight: '1.9', paddingLeft: '1.3rem', margin: '.4rem 0' } },
+        STEP_NAMES.map((name, i) => {
+          const done = i < job.doneSteps;
+          const current = i === job.doneSteps && job.status === 'running';
+          return el('li', { style: { color: done ? '#2e7d32' : current ? 'var(--ink)' : 'var(--muted)' } },
+            done ? '✓ ' : current ? '▶ ' : '· ', name,
+            current ? el('span', { class: 'muted' }, ' …產生中') : null);
+        }));
+
+      if (job.status === 'done') {
+        const r = job.result || {};
+        UI.render(result,
+          el('h3', {}, r.ok ? '✅ 產生完成' : '⚠️ 產生完成，但有格式問題需要處理'),
+          el('p', { class: 'small muted' },
+            `聽力 ${r.stats?.listening || 0} 題　閱讀 ${r.stats?.reading || 0} 題　`
+            + `寫作 ${r.stats?.writingTasks || 0} 篇　口說 ${r.stats?.speakingParts || 0} 部分`),
+          r.issues?.length ? el('div', { class: 'small', style: { color: 'var(--warn)' } },
+            el('b', {}, '有段落沒產生成功，存成試卷後請自行補上：'),
+            el('ul', {}, r.issues.map((x) => el('li', {}, x)))) : null,
+          r.errors?.length ? el('ul', { class: 'small' }, r.errors.map((x) => el('li', { style: { color: 'var(--err)' } }, x))) : null,
+          r.warnings?.length ? el('ul', { class: 'small' }, r.warnings.map((x) => el('li', { class: 'muted' }, x))) : null,
+          el('div', { style: { display: 'flex', gap: '.5rem', marginTop: '.6rem' } },
+            el('button', {
+              class: 'btn primary',
+              onclick: async (e) => {
+                e.target.disabled = true;
+                try {
+                  await API.post('/tests', { paper: r.paper, published: false });
+                  toast('已存成試卷', 'ok'); location.hash = '#/admin/tests';
+                } catch (er) {
+                  e.target.disabled = false;
+                  UI.alert(er.details?.errors?.join('\n') || er.message);
+                }
+              },
+            }, '存成試卷'),
+            el('button', { class: 'btn', onclick: () => UI.download('ai-paper.json', JSON.stringify(r.paper, null, 2)) }, '下載 JSON')));
+        return;
+      }
+
+      if (job.status === 'error' || job.status === 'cancelled') {
+        UI.render(result,
+          el('h3', {}, job.status === 'cancelled' ? '已取消' : '❌ 產生失敗'),
+          bar,
+          job.error ? el('p', { class: 'small', style: { color: 'var(--err)', whiteSpace: 'pre-wrap' } }, job.error) : null,
+          checklist,
+          job.doneSteps > 0
+            ? el('p', { class: 'small muted' },
+                `已經完成 ${job.doneSteps} 段。可以按「取回已完成的部分」把它們存成一份不完整的試卷，再手動補齊。`)
+            : null,
+          el('div', { style: { display: 'flex', gap: '.5rem', marginTop: '.6rem' } },
+            job.doneSteps > 0 ? el('button', {
+              class: 'btn',
+              onclick: async (e) => {
+                e.target.disabled = true;
+                try {
+                  const { job: full } = await API.get(`/ai/jobs/${job.id}?partial=1`);
+                  if (!full.partial) { UI.alert('這個工作沒有留下可用的半成品。'); e.target.disabled = false; return; }
+                  await API.post('/tests', { paper: full.partial, published: false });
+                  toast('已存成草稿試卷', 'ok'); location.hash = '#/admin/tests';
+                } catch (er) {
+                  e.target.disabled = false;
+                  UI.alert(er.details?.errors?.join('\n') || er.message);
+                }
+              },
+            }, '取回已完成的部分') : null,
+            el('button', { class: 'btn primary', onclick: () => startBtn.click() }, '重新產生')));
+        return;
+      }
+
+      UI.render(result,
+        el('h3', {}, '產生中…'),
+        el('p', { class: 'small muted' }, job.step || '準備中', `　（${pct}%）`),
+        bar,
+        checklist,
+        el('p', { class: 'small muted' },
+          '這件事在伺服器上跑，關掉頁面也不會中斷。回到這一頁會自動接回進度。'),
+        el('button', {
+          class: 'btn sm',
+          onclick: async () => {
+            if (!await UI.confirm('確定要取消？已經產生的段落會保留，可以取回。')) return;
+            await API.post(`/ai/jobs/${job.id}/cancel`, {});
+            toast('已送出取消', 'ok');
+          },
+        }, '取消'));
+    }
+
+    /** 接回進行中的工作時，順手把分頁切到「整份試卷」，
+        免得畫面上顯示的是全卷進度、分頁卻停在「單一題組」。 */
+    function showWholeTab() {
+      const btn = bar?.children?.[1];
+      if (btn && !btn.classList.contains('active')) btn.click();
+    }
+
+    // 進頁面時如果已經有工作在跑（或剛跑完），直接接回去
+    (async () => {
+      try {
+        const { jobs: list } = await API.get('/ai/jobs?kind=generate_paper');
+        const live = list.find((j) => j.status === 'running' || j.status === 'queued');
+        if (live) {
+          showWholeTab();
+          toast('接回正在進行的試卷產生工作', 'ok');
+          watchJob(live.id);
+        } else if (list[0] && list[0].status === 'done') {
+          showWholeTab();
+          const { job } = await API.get(`/ai/jobs/${list[0].id}`);
+          renderJob(job);
+        }
+      } catch { /* 沒有就算了 */ }
+    })();
 
     function showGenerated(r, body) {
       const group = r.group;
@@ -1663,8 +1812,11 @@ const Admin = (() => {
 
   // ══ 口說即時監看 ══════════════════════════════════════════
   let monitorTimer = null;
-  /** 換頁或登出時要停掉輪詢，否則會一直打 API（登出後還會噴 403）*/
-  function stopPolling() { clearInterval(monitorTimer); monitorTimer = null; }
+  /** 換頁或登出時要停掉所有輪詢，否則會一直打 API（登出後還會噴 403）*/
+  function stopPolling() {
+    clearInterval(monitorTimer); monitorTimer = null;
+    clearInterval(jobTimer); jobTimer = null;
+  }
 
   async function monitor(mount) {
     stopPolling();

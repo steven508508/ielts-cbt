@@ -109,14 +109,43 @@ function parseJson(text) {
   throw new Error('AI 回覆不是有效的 JSON：' + cleaned.slice(0, 300));
 }
 
-async function fetchWithTimeout(url, options, ms = 180000) {
+const DEFAULT_TIMEOUT = Number(process.env.AI_TIMEOUT_MS || 180000);
+
+async function fetchWithTimeout(url, options, ms = DEFAULT_TIMEOUT) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), ms);
   try {
     return await fetch(url, { ...options, signal: ctrl.signal });
+  } catch (e) {
+    // Node 的 abort 只會丟出「This operation was aborted」，對老師來說毫無意義
+    if (e?.name === 'AbortError' || /operation was aborted/i.test(e?.message || '')) {
+      const err = new Error(`AI 端點在 ${Math.round(ms / 1000)} 秒內沒有回應（逾時）`);
+      err.code = 'AI_TIMEOUT';
+      throw err;
+    }
+    throw e;
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** 把各種底層錯誤翻成老師看得懂、而且知道下一步該做什麼的訊息 */
+function friendlyError(e) {
+  const m = String(e?.message || e || '');
+  if (e?.friendly) return m;          // 已經翻譯過的不要再包一層
+  if (e?.code === 'AI_TIMEOUT' || /operation was aborted|aborted/i.test(m))
+    return `${m || 'AI 端點逾時'}。試卷太長時很常見——可以改用「單一題組」分次產生，或在 .env 調高 AI_TIMEOUT_MS。`;
+  if (/ECONNREFUSED|ENOTFOUND|EAI_AGAIN|fetch failed/i.test(m))
+    return `連不到 AI 端點（${m}）。檢查「系統設定 → AI」的 Base URL，以及伺服器有沒有對外網路。`;
+  if (/\b401\b|invalid.*api.?key|authentication/i.test(m))
+    return 'API Key 無效或已失效，請到「系統設定 → AI」重新填寫。';
+  if (/\b429\b|rate.?limit|quota|insufficient/i.test(m))
+    return 'AI 供應商回報額度不足或請求太頻繁（429）。等幾分鐘再試，或檢查帳戶餘額。';
+  if (/max_tokens|context length|too many tokens/i.test(m))
+    return `模型的輸出上限不夠（${m}）。換一個輸出長度較大的模型，或改用「單一題組」分次產生。`;
+  if (/不是有效的 JSON/.test(m))
+    return `${m}\n（模型沒有回傳乾淨的 JSON。換能力較強的模型通常就會好。）`;
+  return m;
 }
 
 // ── 文字生成 ───────────────────────────────────────────────────
@@ -130,10 +159,11 @@ async function fetchWithTimeout(url, options, ms = 180000) {
 async function chat({ system, user, json = false, maxTokens = 8000, temperature = 0.7, purpose = 'chat', userId = null }) {
   const cfg = await getConfig();
   const ep = resolve(cfg, 'chat');
+  const configError = (msg) => { const e = new Error(msg); e.code = 'AI_NOT_CONFIGURED'; e.friendly = true; return e; };
   if (!ep.apiKey && !/localhost|127\.0\.0\.1/.test(ep.baseUrl))
-    throw new Error(`尚未設定 ${ep.provider} 的 API Key，請到「系統設定 → AI」填寫`);
-  if (!ep.baseUrl) throw new Error('尚未設定 AI 端點網址');
-  if (!ep.model) throw new Error('尚未設定 AI 模型名稱');
+    throw configError(`尚未設定 ${ep.provider} 的 API Key，請到「系統設定 → AI」填寫`);
+  if (!ep.baseUrl) throw configError('尚未設定 AI 端點網址');
+  if (!ep.model) throw configError('尚未設定 AI 模型名稱');
 
   const started = Date.now();
   const sys = json ? `${system}\n\nIMPORTANT: Reply with valid JSON only. No prose, no markdown code fences.` : system;
@@ -279,4 +309,4 @@ function maskConfig(cfg) {
   };
 }
 
-module.exports = { getConfig, saveConfig, chat, transcribe, speak, testConnection, maskConfig, parseJson, resolve };
+module.exports = { getConfig, saveConfig, chat, transcribe, speak, testConnection, maskConfig, parseJson, resolve, friendlyError, DEFAULT_TIMEOUT };
