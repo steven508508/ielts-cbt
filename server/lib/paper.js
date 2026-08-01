@@ -27,6 +27,7 @@ const QUESTION_TYPES = {
     modules: ['listening', 'reading'],
     objective: true,
     answerKind: 'letter',
+    needsOptions: true,
     officialNames: ['Multiple choice'],
   },
   mcq_multi: {
@@ -34,6 +35,7 @@ const QUESTION_TYPES = {
     modules: ['listening', 'reading'],
     objective: true,
     answerKind: 'letters',
+    needsOptions: true,
     note: '一題佔多個題號，選對一個給一分',
     officialNames: ['Multiple choice (choose TWO/THREE letters)'],
   },
@@ -185,8 +187,15 @@ function normalizePaper(input) {
         if (g.options && !Array.isArray(g.options)) g.options = [];
         g.options = normOptions(g.options) || g.options;
         for (const q of g.questions) {
-          // 每題可以有自己的選項（單選題常見）；沒有就用題組共用的
+          // 每題可以有自己的選項（單選題常見）；沒有就用題組共用的。
+          // 空陣列一定要拿掉：`q.options || g.options` 會把 [] 當成有值，
+          // 題組層的選項就被蓋掉，學生端整題變成沒有選項可以按。
           if (q.options) q.options = normOptions(q.options);
+          if (Array.isArray(q.options) && !q.options.length) delete q.options;
+          // prompt 是早期的欄位名。統一成 text，
+          // 否則學生端只看 q.text，整個題幹會變成一片空白。
+          if (!String(q.text ?? '').trim() && String(q.prompt ?? '').trim()) q.text = q.prompt;
+          if (q.prompt != null && q.prompt === q.text) delete q.prompt;
         }
         const meta = QUESTION_TYPES[g.type];
         if (meta && meta.objective) {
@@ -253,9 +262,15 @@ function validatePaper(input) {
         }
 
         if (meta.objective) {
+          // 有 bodyHtml 時，空格本身就是題目；否則每一題都要有看得到的題幹
+          const bodyGaps = meta.supportsBody && g.bodyHtml ? gapsIn(g.bodyHtml) : [];
+          // 多選題整組共用第一題的題幹
+          const sharedStem = g.type === 'mcq_multi' && g.questions.some((q) => String(q.text || '').trim());
           for (const q of g.questions) {
             if (seen.has(q.number)) errors.push(`${where} 題號 ${q.number} 重複`);
             seen.add(q.number);
+            if (!String(q.text || '').trim() && !bodyGaps.includes(q.number) && !sharedStem)
+              errors.push(`${where} 第 ${q.number} 題學生看不到題目：請填 text 題幹，或在 bodyHtml 裡放 [[${q.number}]] 空格`);
             if (!q.answers || !q.answers.length || q.answers.every((a) => !String(a).trim()))
               errors.push(`${where} 第 ${q.number} 題沒有標準答案`);
             if (meta.answerKind === 'enum') {
@@ -264,8 +279,8 @@ function validatePaper(input) {
                   errors.push(`${where} 第 ${q.number} 題答案必須是 ${meta.enumValues.join(' / ')}，目前是 "${a}"`);
               }
             }
-            const optList = q.options || g.options;
-            if (meta.needsOptions && optList) {
+            const optList = q.options?.length ? q.options : g.options;
+            if (meta.needsOptions && optList?.length) {
               const keys = optList.map((o) => o.key.toUpperCase());
               for (const a of q.answers) {
                 for (const letter of String(a).split(/[,\s]+/).filter(Boolean)) {

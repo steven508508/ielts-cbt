@@ -1171,19 +1171,38 @@ const Exam = (() => {
       wrap.append(renderBody(module, g));
     } else {
       switch (g.type) {
-        case 'mcq_multi': wrap.append(mcqMulti(module, g)); break;
-        case 'mcq_single': g.questions.forEach((q) => wrap.append(mcq(module, g, q))); break;
+        // 選項不見了就退回文字輸入框，至少讓學生寫得下去，不要整題卡死
+        case 'mcq_multi':
+          wrap.append(g.options?.length
+            ? mcqMulti(module, g)
+            : broken(module, g, '這一題的選項沒有載入'));
+          break;
+        case 'mcq_single':
+          g.questions.forEach((q) => wrap.append((q.options?.length || g.options?.length)
+            ? mcq(module, g, q)
+            : broken(module, g, '這一題的選項沒有載入', q)));
+          break;
         case 'tfng':
         case 'ynng': g.questions.forEach((q) => wrap.append(enumQ(module, g, q))); break;
-        case 'matching': g.questions.forEach((q) => wrap.append(matchQ(module, g, q))); break;
+        case 'matching':
+        case 'gap_fill_bank':
         case 'label_image':
           g.questions.forEach((q) => wrap.append(
-            (q.options || g.options)?.length ? matchQ(module, g, q) : textQ(module, g, q)));
+            (q.options?.length || g.options?.length) ? matchQ(module, g, q) : textQ(module, g, q)));
           break;
         default: g.questions.forEach((q) => wrap.append(textQ(module, g, q)));
       }
     }
     return wrap;
+  }
+
+  /** 題目本身壞掉（缺選項…）時的保底：還是給得出作答框，並且講清楚 */
+  function broken(module, g, why, only) {
+    const qs = only ? [only] : g.questions;
+    return el('div', {},
+      el('div', { class: 'cbt-rubric', style: { color: '#b45309' } },
+        `⚠ ${why}，請舉手告訴監考老師。你仍然可以直接把答案打在下面的空格。`),
+      qs.map((q) => textQ(module, g, q)));
   }
 
   const optionBank = (g) => el('div', { class: 'cbt-bank' },
@@ -1207,7 +1226,7 @@ const Exam = (() => {
 
   function mcq(module, g, q) {
     const cur = S.answers[module]?.[q.number] ?? '';
-    const options = q.options || g.options || [];
+    const options = q.options?.length ? q.options : (g.options || []);
     return qShell(module, q,
       q.text && el('div', { class: 'cbt-stem', html: sanitize(q.text) }),
       el('div', { class: 'cbt-opts' }, options.map((o) =>
@@ -1268,7 +1287,7 @@ const Exam = (() => {
 
   function matchQ(module, g, q) {
     const cur = S.answers[module]?.[q.number] ?? '';
-    const options = q.options || g.options || [];
+    const options = q.options?.length ? q.options : (g.options || []);
     return qShell(module, q,
       el('div', { style: { display: 'flex', gap: '.6rem', alignItems: 'flex-start' } },
         el('select', {
@@ -1284,7 +1303,9 @@ const Exam = (() => {
   function textQ(module, g, q) {
     const cur = S.answers[module]?.[q.number] ?? '';
     return qShell(module, q,
-      q.text && el('div', { class: 'cbt-stem', html: sanitize(q.text) }),
+      q.text
+        ? el('div', { class: 'cbt-stem', html: sanitize(q.text) })
+        : el('div', { class: 'cbt-stem', style: { color: '#b45309' } }, '⚠ 這一題的題目文字缺漏，請舉手告訴監考老師'),
       el('div', {},
         el('input', {
           type: 'text', class: 'cbt-gap' + (cur ? ' filled' : ''), value: cur,

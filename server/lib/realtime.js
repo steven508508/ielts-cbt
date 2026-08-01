@@ -108,6 +108,18 @@ Say "Thank you. That is the end of the speaking test." and nothing else.`,
   return `${base}\n\n${phases[phase] || phases.part1}`;
 }
 
+/** 知道但不需要處理的事件，不用一直寫進日誌 */
+const IGNORED_EVENTS = new Set([
+  'session.updated', 'conversation.created', 'conversation.item.created',
+  'conversation.item.added', 'conversation.item.done', 'conversation.item.truncated',
+  'conversation.item.deleted', 'input_audio_buffer.committed', 'input_audio_buffer.cleared',
+  'response.created', 'response.output_item.added', 'response.output_item.done',
+  'response.content_part.added', 'response.content_part.done',
+  'response.audio.done', 'rate_limits.updated',
+  'conversation.item.input_audio_transcription.delta',
+  'conversation.item.input_audio_transcription.segment',
+]);
+
 /** GA 改掉的事件名稱 → 舊名（內部一律用舊名處理，Beta 端點也能吃）*/
 const GA_EVENT_ALIASES = {
   'response.output_audio.delta': 'response.audio.delta',
@@ -355,10 +367,25 @@ class Session {
 
       case 'input_audio_buffer.speech_stopped':
         this.send({ type: 'candidate_speaking', on: false });
+        /* 學生講完了。正常情況下幾秒內會有逐字稿與考官的回應；
+           都沒有的話代表上游卡住了 —— 以前學生只能對著安靜的畫面乾等，
+           完全不知道要做什麼。 */
+        clearTimeout(this.stallTimer);
+        this.stallSince = Date.now();
+        this.stallTimer = setTimeout(() => {
+          if (this.closed || this.finishing) return;
+          if (this.lastActivity && this.lastActivity > this.stallSince) return;
+          this.log('stalled：講完話之後 12 秒沒有任何回應');
+          this.send({
+            type: 'stalled',
+            message: '考官沒有接話。可以再說一次，或按「叫考官接話」。',
+          });
+        }, 12000);
         break;
 
       case 'response.audio.delta':
         // 直接把考官語音丟給瀏覽器播放
+        this.lastActivity = Date.now();
         this.send({ type: 'audio', delta: ev.delta });
         break;
 
@@ -379,6 +406,8 @@ class Session {
       }
 
       case 'conversation.item.input_audio_transcription.completed': {
+        this.lastActivity = Date.now();
+        clearTimeout(this.stallTimer);
         const text = (ev.transcript || '').trim();
         if (!text) break;
         this.turns.push({ role: 'candidate', text, at: Date.now() });
@@ -395,11 +424,38 @@ class Session {
         this.fire('examiner_done_hook');
         break;
 
+      // 學生的語音轉不出文字。以前這顆事件被 default 吞掉，
+      // 症狀就是「講了半天逐字稿一片空白、考官也不接話」，
+      // 而畫面上完全沒有任何線索。
+      case 'conversation.item.input_audio_transcription.failed': {
+        const why = ev.error?.message || '語音辨識失敗';
+        this.log('transcription failed', why);
+        this.sttFails = (this.sttFails || 0) + 1;
+        this.send({
+          type: 'stt_failed',
+          message: this.sttFails >= 2
+            ? `語音辨識連續失敗（${why}）。錄音有存下來，請舉手告訴監考老師。`
+            : '這一句沒有辨識出文字，請再說一次。',
+        });
+        break;
+      }
+
       case 'error':
         this.log('upstream error', ev.error?.message);
         this.send({ type: 'error', message: ev.error?.message || '模型回報錯誤' });
         break;
+
       default:
+        /* 沒處理到的事件一律記下來。上游改版（例如 Beta → GA）時，
+           被默默吞掉的新事件名稱就是最難查的那一種問題 ——
+           至少要在伺服器日誌裡看得到它出現過。 */
+        if (!IGNORED_EVENTS.has(type)) {
+          this.unknown = this.unknown || new Set();
+          if (!this.unknown.has(type)) {
+            this.unknown.add(type);
+            this.log('未處理的上游事件：', type);
+          }
+        }
         break;
     }
   }
@@ -419,6 +475,28 @@ class Session {
         [this.attempt.id, part, idx, lastExaminer?.text || '', text, dur]
       );
     } catch (e) { this.log('saveTurn', e.message); }
+  }
+
+  /** 學生按「進入下一部分」：不看條件，直接跳到下一個階段 */
+  forceAdvance() {
+    if (this.closed || this.finishing) return;
+    const order = ['intro', 'part1', 'part2_instruct', 'part3', 'end'];
+    if (this.phase.startsWith('part2')) return this.setPhase('part3');
+    const i = order.indexOf(this.phase);
+    const next = i >= 0 ? order[i + 1] : 'part1';
+    if (!next || next === 'end') return this.finish();
+    if (next === 'part2_instruct') return this.startPart2();
+    return this.setPhase(next);
+  }
+
+  /** 考官沒反應時再戳一次 */
+  nudge() {
+    if (this.closed || this.upstream?.readyState !== WebSocket.OPEN) {
+      return this.send({ type: 'error', message: '與考官的連線已中斷，請重新整理頁面' });
+    }
+    this.log('nudge');
+    this.upstream.send(JSON.stringify({ type: 'response.create' }));
+    this.send({ type: 'nudged' });
   }
 
   /** 依規則自動推進階段 */
@@ -552,6 +630,7 @@ class Session {
     this.closed = true;
     clearTimeout(this.phaseTimer);
     clearTimeout(this.finishTimer);
+    clearTimeout(this.stallTimer);
     try { this.upstream?.close(); } catch {}
     try { this.ws?.close(); } catch {}
     // 只刪掉「自己」。同一場考試若已經有新的連線接手，
@@ -657,9 +736,13 @@ function attach(server) {
       try { msg = JSON.parse(raw.toString()); } catch { return; }
 
       if (msg.type === 'examiner_done_hook') session.fire('examiner_done_hook');
-      else if (msg.type === 'skip') session.maybeAdvance();
+      // 以前接到 skip 是呼叫 maybeAdvance()，那是「檢查條件到了沒」——
+      // 學生才講兩句時條件不成立，按鈕就完全沒反應。要的是強制跳。
+      else if (msg.type === 'skip') session.forceAdvance();
       else if (msg.type === 'next_phase') session.setPhase(msg.phase);
       else if (msg.type === 'finish') session.finish();
+      // 考官沒反應時讓學生自己戳一下
+      else if (msg.type === 'nudge') session.nudge();
       else if (msg.type === 'cancel_response' && session.upstream?.readyState === WebSocket.OPEN) {
         session.upstream.send(JSON.stringify({ type: 'response.cancel' }));
       }

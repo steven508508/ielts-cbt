@@ -1075,6 +1075,168 @@ async function call(method, path, body, token) {
   ok(spBad.status === 400 && /沒有收到|逐字稿/.test(spBad.data.error || ''),
     '沒有作答內容時給得出看得懂的訊息');
 
+  // ── 十一種題型，從建卷到檢討整條路都要走得通 ──────────────
+  // 只驗 API 不夠：以前 mcq_single 沒有選項照樣存得進去，
+  // 學生螢幕上就是一題沒有任何圓鈕、完全不能作答的題目。
+  console.log('\n全題型：建卷 → 考卷 → 批改 → 檢討');
+  const allStamp = Date.now();
+  const allPaper = {
+    title: `全題型 ${allStamp}`, testType: 'academic',
+    modules: [
+      { module: 'listening', sections: [{
+        title: 'Section 1', audio: '/uploads/audio/demo.mp3',
+        transcript: `WOMAN: ${allStamp} the library opens at nine.`,
+        groups: [
+          { type: 'mcq_single', instructions: 'Choose the correct letter.',
+            questions: [{ number: 1, text: 'When does it open?',
+              options: [{ key: 'A', text: '8:00' }, { key: 'B', text: '9:00' }, { key: 'C', text: '10:00' }],
+              answers: ['B'] }] },
+          { type: 'mcq_multi', instructions: 'Choose TWO letters.', selectCount: 2,
+            options: [{ key: 'A', text: 'library' }, { key: 'B', text: 'pool' },
+                      { key: 'C', text: 'closing time' }, { key: 'D', text: 'gym' }],
+            questions: [{ number: 2, text: 'Which TWO are mentioned?', answers: ['A', 'C'] },
+                        { number: 3, answers: ['A', 'C'] }] },
+          { type: 'gap_fill', instructions: 'Write ONE WORD ONLY.', wordLimit: 1,
+            bodyHtml: '<p>Opens at [[4]].</p>', questions: [{ number: 4, answers: ['nine'] }] },
+          { type: 'label_image', instructions: 'Label the plan.', image: '/uploads/image/plan.png',
+            questions: [{ number: 5, text: 'The reading room', answers: ['east wing'] }] },
+        ] }] },
+      { module: 'reading', sections: [{
+        title: 'Reading Passage 1', passageTitle: 'Urban Greening',
+        passage: '<p><strong>A</strong> Cities plant trees to cool streets.</p>'
+          + '<p><strong>B</strong> Costs fall after a decade.</p>',
+        groups: [
+          { type: 'tfng', instructions: 'TRUE / FALSE / NOT GIVEN',
+            questions: [{ number: 6, text: 'Cities plant trees.', answers: ['TRUE'] }] },
+          { type: 'ynng', instructions: 'YES / NO / NOT GIVEN',
+            questions: [{ number: 7, text: 'The writer supports planting.', answers: ['YES'] }] },
+          { type: 'matching', instructions: 'Choose the correct heading.',
+            options: [{ key: 'i', text: 'An unexpected result' }, { key: 'ii', text: 'Cooling the streets' },
+                      { key: 'iii', text: 'Falling costs' }],
+            questions: [{ number: 8, text: 'Paragraph A', answers: ['ii'] },
+                        { number: 9, text: 'Paragraph B', answers: ['iii'] }] },
+          { type: 'gap_fill_bank', instructions: 'Choose from the list.',
+            options: [{ key: 'A', text: 'expensive' }, { key: 'B', text: 'cheaper' }, { key: 'C', text: 'greener' }],
+            bodyHtml: '<p>After ten years maintenance becomes [[10]].</p>',
+            questions: [{ number: 10, answers: ['B'] }] },
+          { type: 'short_answer', instructions: 'NO MORE THAN TWO WORDS.', wordLimit: 2,
+            questions: [{ number: 11, text: 'What do cities plant?', answers: ['trees'] }] },
+        ] }] },
+      { module: 'writing', sections: [{ title: 'Writing', groups: [
+        { type: 'writing_task', questions: [
+          { number: 1, taskNo: 1, minWords: 150, durationSec: 1200,
+            text: 'The chart below shows tree cover in three cities.',
+            visualDescription: 'Bar chart, three cities, 2000 vs 2020.' },
+          { number: 2, taskNo: 2, minWords: 250, durationSec: 2400,
+            text: 'Some people think cities should plant more trees. Discuss both views.' },
+        ] }] }] },
+      { module: 'speaking', sections: [{ title: 'Speaking', groups: [
+        { type: 'speaking_part', questions: [
+          { part: 1, topic: 'Your hometown', items: ['Where do you live?', 'Do you like it?'] },
+          { part: 2, cueCard: { topic: 'Describe a park you like',
+            bullets: ['where it is', 'what you do there', 'and explain why you like it'],
+            prepSec: 60, talkSec: 120 }, rounding: ['Do you go often?'] },
+          { part: 3, topic: 'Cities', items: ['Should cities have more parks?'] },
+        ] }] }] },
+    ],
+  };
+
+  // 這一段中途失敗的話，留下來的指派會變成下一次跑測試時的 available[0]，
+  // 害前面幾個時間長度的檢查全部錯亂。所以不管成功失敗都要收乾淨。
+  let allAsg; let allAt; let allTest;
+  const cleanUpAllTypes = async () => {
+    if (allAsg?.data?.ids?.[0]) await call('DELETE', `/tests/assignments/${allAsg.data.ids[0]}`, null, tea);
+    if (allAt) await call('POST', '/manage/results/bulk', { action: 'delete', ids: [allAt], force: true }, adm);
+    if (allTest?.data?.id) await call('DELETE', `/tests/${allTest.data.id}`, null, adm);
+  };
+  try {
+  const allVal = await call('POST', '/tests/validate', { paper: allPaper }, tea);
+  ok(allVal.data.ok === true, '十一種題型合在一份試卷裡驗證得過',
+    (allVal.data.errors || []).join('; '));
+  allTest = await call('POST', '/tests', { paper: allPaper }, tea);
+  ok(allTest.status === 200 && allTest.data.id > 0, '存得進去');
+
+  allAsg = await call('POST', '/tests/assignments', {
+    testId: allTest.data.id, userIds: [me.data.user.id],
+    modules: 'listening,reading,writing,speaking', maxAttempts: 9,
+  }, tea);
+  const allStart = await call('POST', '/exam/start',
+    { assignmentId: allAsg.data.ids[0], testId: allTest.data.id }, stu);
+  allAt = allStart.data.attemptId;
+  ok(!!allAt, '學生開得起來');
+
+  const allGot = await call('GET', `/exam/${allAt}`, null, stu);
+  const allJson = JSON.stringify(allGot.data.paper);
+  const allGroups = allGot.data.paper.modules.flatMap((m) => m.sections.flatMap((s) => s.groups));
+  const allByType = Object.fromEntries(allGroups.map((g) => [g.type, g]));
+  for (const ty of ['mcq_single', 'mcq_multi', 'gap_fill', 'label_image', 'tfng',
+    'ynng', 'matching', 'gap_fill_bank', 'short_answer', 'writing_task', 'speaking_part']) {
+    ok(!!allByType[ty], `${ty} 有送到學生端`);
+  }
+  ok(!/"answers"/.test(allJson), '考卷裡不夾帶任何答案');
+  ok(!allJson.includes(String(allStamp) + ' the library'), '考試中不給聽力逐字稿');
+
+  // 每一種題型都要帶著「學生按得下去」所需要的東西
+  ok(allByType.mcq_single.questions[0].options.length === 3, '單選題帶得到選項');
+  ok(allByType.mcq_multi.options.length === 4 && allByType.mcq_multi.selectCount === 2, '多選題帶得到選項與可選數');
+  ok(/\[\[4\]\]/.test(allByType.gap_fill.bodyHtml || ''), '填空題帶得到版面');
+  ok(!!allByType.label_image.image, '圖表標示題帶得到圖');
+  ok(allByType.matching.options.length === 3, '配對題帶得到選項');
+  ok(allByType.gap_fill_bank.options.length === 3 && /\[\[10\]\]/.test(allByType.gap_fill_bank.bodyHtml || ''),
+    '選字填空帶得到選項與版面');
+  ok(allByType.short_answer.wordLimit === 2, '簡答題帶得到字數上限');
+  ok(!!allByType.writing_task.questions[0].text && allByType.writing_task.questions.length === 2,
+    '寫作兩個 Task 都在');
+  const spParts = allByType.speaking_part.questions;
+  ok(spParts.length === 3 && spParts[1].cueCard?.bullets?.length === 3,
+    '口說三個 Part 都在，Part 2 的提示卡要點也在');
+
+  await call('POST', `/exam/${allAt}/module/start`, { module: 'listening' }, stu);
+  await call('POST', `/exam/${allAt}/answers`, { items: [
+    { module: 'listening', number: 1, response: 'B' },
+    { module: 'listening', number: 2, response: 'A,C' },
+    { module: 'listening', number: 3, response: 'A,C' },
+    { module: 'listening', number: 4, response: 'nine' },
+    { module: 'listening', number: 5, response: 'east wing' },
+  ] }, stu);
+  await call('POST', `/exam/${allAt}/module/finish`, { module: 'listening' }, stu);
+  await call('POST', `/exam/${allAt}/module/start`, { module: 'reading' }, stu);
+  await call('POST', `/exam/${allAt}/answers`, { items: [
+    { module: 'reading', number: 6, response: 'TRUE' },
+    { module: 'reading', number: 7, response: 'YES' },
+    { module: 'reading', number: 8, response: 'ii' },
+    { module: 'reading', number: 9, response: 'i' },      // 故意答錯
+    { module: 'reading', number: 10, response: 'B' },
+    { module: 'reading', number: 11, response: 'trees' },
+  ] }, stu);
+  await call('POST', `/exam/${allAt}/module/finish`, { module: 'reading' }, stu);
+  await call('POST', `/exam/${allAt}/submit`, {}, stu);
+  await new Promise((r) => setTimeout(r, 2500));
+
+  const allRes = await call('GET', `/results/${allAt}`, null, stu);
+  const allRv = [...(allRes.data.review?.listening || []), ...(allRes.data.review?.reading || [])];
+  const expect = { 1: true, 2: true, 3: true, 4: true, 5: true, 6: true, 7: true, 8: true, 9: false, 10: true, 11: true };
+  const misgraded = allRv.filter((q) => q.correct !== expect[q.number]).map((q) => 'Q' + q.number);
+  ok(misgraded.length === 0, '十一題的批改結果全部符合預期', `不符：${misgraded.join(',')}`);
+  ok(allRv.filter((q) => [2, 3].includes(q.number) && q.correct).length === 2,
+    '多選題佔兩個題號時，兩個題號各拿一分');
+
+  // 檢討頁要看得懂：選項、圖、版面、原文、逐字稿都要回來
+  const noOptions = allRv.filter((q) =>
+    ['mcq_single', 'mcq_multi', 'matching', 'gap_fill_bank'].includes(q.type) && !(q.options || []).length);
+  ok(noOptions.length === 0, '檢討頁每一種選擇型題目都看得到選項',
+    noOptions.map((q) => 'Q' + q.number).join(','));
+  ok(allRv.filter((q) => q.type === 'label_image').every((q) => q.image), '檢討頁的圖表標示題看得到圖');
+  ok(allRv.filter((q) => ['gap_fill', 'gap_fill_bank'].includes(q.type)).every((q) => q.bodyHtml),
+    '檢討頁的填空題看得到版面');
+  ok(!!allRes.data.reviewMedia?.reading?.[0]?.passage, '檢討頁看得到閱讀原文');
+  ok(!!allRes.data.reviewMedia?.listening?.[0]?.transcript, '檢討完看得到聽力逐字稿');
+  ok(!!allRes.data.writing?.[0]?.visualDescription, '檢討頁看得到寫作的圖表描述');
+
+  } finally {
+    await cleanUpAllTypes();
+  }
+
   // ── 螢光筆與註記要留得住 ────────────────────────────────
   console.log('\n螢光筆與註記');
   const marks = {

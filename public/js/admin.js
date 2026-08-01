@@ -2913,6 +2913,105 @@ const Admin = (() => {
       draw();
     }
 
+    /** 一串字串的清單編輯（口說題目、提示卡要點…） */
+    function listEditor(holder, get, set, { label, placeholder, addText }) {
+      const draw = () => {
+        const list = get() || [];
+        UI.render(holder,
+          el('div', { class: 'small muted', style: { marginBottom: '.3rem' } }, label),
+          list.map((v, i) => el('div', {
+            style: { display: 'flex', gap: '.4rem', marginBottom: '.3rem', alignItems: 'center' },
+          },
+            el('span', { class: 'small muted', style: { width: '1.4rem' } }, `${i + 1}.`),
+            el('input', {
+              type: 'text', value: v || '', style: { flex: 1 }, placeholder: placeholder || '',
+              oninput: (e) => { list[i] = e.target.value; set(list); touch(); },
+            }),
+            el('button', {
+              class: 'btn sm danger', type: 'button',
+              onclick: () => { list.splice(i, 1); set(list); touch(); draw(); },
+            }, '✕'))),
+          el('button', {
+            class: 'btn sm', type: 'button',
+            onclick: () => { list.push(''); set(list); touch(); draw(); },
+          }, addText || '＋ 新增一項'));
+      };
+      draw();
+    }
+
+    /** 寫作題專用欄位 */
+    function writingRow(q) {
+      return el('div', {},
+        el('div', { class: 'row' },
+          field('Task 編號', el('select', {
+            onchange: (e) => { q.taskNo = Number(e.target.value); touch(); },
+          },
+            [1, 2].map((n) => el('option', { value: n, selected: Number(q.taskNo) === n }, `Task ${n}`))),
+            'Task 1 佔 1/3，Task 2 佔 2/3'),
+          field('最低字數', el('input', {
+            type: 'number', min: 50, value: q.minWords ?? (Number(q.taskNo) === 2 ? 250 : 150),
+            oninput: (e) => { q.minWords = Number(e.target.value) || null; touch(); },
+          }), '官方為 Task 1 150 字、Task 2 250 字'),
+          field('作答時間（分鐘）', el('input', {
+            type: 'number', min: 1,
+            value: Math.round((q.durationSec ?? (Number(q.taskNo) === 2 ? 2400 : 1200)) / 60),
+            oninput: (e) => { q.durationSec = (Number(e.target.value) || 0) * 60 || null; touch(); },
+          }), '官方為 20 分 / 40 分')),
+        field('圖表描述（Task 1；沒有圖檔時學生看這段，AI 也用它評分）',
+          areaInput(q.visualDescription || '', (v) => { q.visualDescription = v || ''; }, 3),
+          '例如：長條圖，三座城市在 2000 與 2020 年的樹木覆蓋率'),
+        field('圖片網址（Task 1 的圖表，可留空）',
+          textInput(q.image || '', (v) => { q.image = v || null; }, { placeholder: '/uploads/image/…' })),
+        field('範文（只有老師看得到，可留空）',
+          areaInput(q.sampleAnswer || '', (v) => { q.sampleAnswer = v || ''; }, 3)));
+    }
+
+    /** 口說題組專用欄位 */
+    function speakingRow(q, redrawOne) {
+      const part = Number(q.part) || 1;
+      const itemsBox = el('div');
+      const bulletsBox = el('div');
+      const roundBox = el('div');
+
+      if (part === 2) {
+        q.cueCard = q.cueCard || { topic: '', bullets: [], prepSec: 60, talkSec: 120 };
+        listEditor(bulletsBox, () => q.cueCard.bullets || (q.cueCard.bullets = []),
+          (l) => { q.cueCard.bullets = l; },
+          { label: '提示卡要點 You should say', placeholder: 'where it is', addText: '＋ 新增要點' });
+        listEditor(roundBox, () => q.rounding || (q.rounding = []), (l) => { q.rounding = l; },
+          { label: '收尾追問 Rounding-off（可留空）', placeholder: 'Do you go there often?', addText: '＋ 新增追問' });
+      } else {
+        listEditor(itemsBox, () => q.items || (q.items = []), (l) => { q.items = l; },
+          { label: '題目清單（考官會一題一題問）', placeholder: 'Where do you live?', addText: '＋ 新增題目' });
+      }
+
+      return el('div', {},
+        el('div', { class: 'row' },
+          field('第幾部分', el('select', {
+            onchange: (e) => { q.part = Number(e.target.value); touch(); redrawOne(); },
+          },
+            [1, 2, 3].map((n) => el('option', { value: n, selected: part === n },
+              `Part ${n}${n === 2 ? '（提示卡）' : ''}`))),
+            'Part 1 生活話題、Part 2 提示卡長篇、Part 3 深入討論'),
+          part === 2 ? field('準備秒數', el('input', {
+            type: 'number', min: 10, value: q.cueCard?.prepSec ?? 60,
+            oninput: (e) => { q.cueCard.prepSec = Number(e.target.value) || 60; touch(); },
+          }), '官方 1 分鐘') : null,
+          part === 2 ? field('說話秒數', el('input', {
+            type: 'number', min: 30, value: q.cueCard?.talkSec ?? 120,
+            oninput: (e) => { q.cueCard.talkSec = Number(e.target.value) || 120; touch(); },
+          }), '官方 1–2 分鐘') : null),
+        part === 2
+          ? el('div', {},
+              field('提示卡主題', textInput(q.cueCard?.topic || '',
+                (v) => { q.cueCard.topic = v; }, { placeholder: 'Describe a park you like' })),
+              bulletsBox, roundBox)
+          : el('div', {},
+              field('主題 Topic', textInput(q.topic || '', (v) => { q.topic = v; },
+                { placeholder: 'Your hometown' })),
+              itemsBox));
+    }
+
     /** 一題 */
     function questionRow(g, q, qi, redraw) {
       const meta = types[g.type] || {};
@@ -2936,11 +3035,20 @@ const Admin = (() => {
             q.answers = v.split('//').map((x) => x.trim()).filter(Boolean);
           }, { placeholder: ANSWER_HINT[kind] || '' });
 
+      // 單選題可以「每題各自一組選項」。但絕對不能先塞一個空陣列進去，
+      // 那會蓋掉題組層共用的選項，存檔之後學生就看不到任何選項了。
       const perQOptions = el('div');
       if (g.type === 'mcq_single') {
-        q.options = q.options || [];
-        optionsEditor(perQOptions, q.options, (l) => { q.options = l; });
+        optionsEditor(perQOptions, q.options || [], (l) => {
+          if (l.length) q.options = l; else delete q.options;
+        });
       }
+
+      const isWriting = g.type === 'writing_task';
+      const isSpeaking = g.type === 'speaking_part';
+      const label = isSpeaking ? `Part ${Number(q.part) || 1}`
+        : isWriting ? `Task ${Number(q.taskNo) || 1}`
+        : `第 ${q.number ?? '?'} 題`;
 
       return el('div', {
         style: {
@@ -2949,23 +3057,30 @@ const Admin = (() => {
         },
       },
         el('div', { style: { display: 'flex', gap: '.5rem', alignItems: 'center', marginBottom: '.4rem' } },
-          el('span', { class: 'small muted' }, '題號'),
-          el('input', {
+          meta.objective
+            ? el('span', { class: 'small muted' }, '題號')
+            : el('b', { class: 'small' }, label),
+          meta.objective ? el('input', {
             type: 'number', value: q.number ?? '', style: { width: '5rem' },
             oninput: (e) => { q.number = Number(e.target.value) || null; touch(); },
-          }),
+          }) : null,
           el('span', { style: { flex: 1 } }),
           el('button', {
             class: 'btn sm danger', type: 'button',
             onclick: async () => {
-              if (!await UI.confirm(`刪除第 ${q.number} 題？`, '刪除')) return;
+              if (!await UI.confirm(`刪除${meta.objective ? `第 ${q.number} 題` : label}？`, '刪除')) return;
               g.questions.splice(qi, 1); touch(); redraw();
             },
           }, '刪除這一題')),
-        field('題幹', areaInput(q.text ?? q.prompt ?? '', (v) => { q.text = v; delete q.prompt; }, 2)),
+        isSpeaking ? speakingRow(q, redraw) : null,
+        isSpeaking ? null : field(isWriting ? '題目 Prompt' : '題幹',
+          areaInput(q.text ?? q.prompt ?? '', (v) => { q.text = v; delete q.prompt; }, isWriting ? 4 : 2)),
+        isWriting ? writingRow(q) : null,
         g.type === 'mcq_single' ? perQOptions : null,
-        field('標準答案', answerCell, kind === 'enum' ? null : ANSWER_HINT[kind]),
-        field('解析（只有老師和成績單看得到）', areaInput(q.explanation || '', (v) => { q.explanation = v; }, 2)));
+        meta.objective ? field('標準答案', answerCell, kind === 'enum' ? null : ANSWER_HINT[kind]) : null,
+        meta.objective
+          ? field('解析（只有老師和成績單看得到）', areaInput(q.explanation || '', (v) => { q.explanation = v; }, 2))
+          : null);
     }
 
     /** 整份試卷目前最大的題號 —— 新增題目時用，免得一加就撞號 */
@@ -2982,6 +3097,53 @@ const Admin = (() => {
         }
       }
       return max;
+    }
+
+    /** 一節的素材：閱讀文章、聽力音檔與逐字稿 */
+    function sectionMediaFields(mod, sec) {
+      if (mod.module === 'reading') {
+        return [
+          field('文章標題 Passage title',
+            textInput(sec.passageTitle || '', (v) => { sec.passageTitle = v || null; },
+              { placeholder: 'Urban Greening' })),
+          field('文章內容（學生考試時看的原文，可用簡單 HTML）',
+            areaInput(sec.passage || '', (v) => { sec.passage = v; }, 12),
+            '直接貼純文字也可以，系統會自動分段'),
+        ];
+      }
+      if (mod.module === 'listening') {
+        return [
+          field('音檔網址', textInput(sec.audio || '', (v) => { sec.audio = v || null; },
+            { placeholder: '/uploads/audio/section1.mp3' }), '到「檔案」頁上傳後把網址貼過來'),
+          field('逐字稿（考試中不會給學生看，只有檢討時看得到）',
+            areaInput(sec.transcript || '', (v) => { sec.transcript = v || null; }, 10)),
+        ];
+      }
+      return [];
+    }
+
+    /** 新增一題時該長什麼樣子 —— 口說和寫作的欄位和客觀題完全不同 */
+    function blankQuestion(g) {
+      if (g.type === 'speaking_part') {
+        const used = (g.questions || []).map((q) => Number(q.part)).filter(Boolean);
+        const part = [1, 2, 3].find((n) => !used.includes(n)) || 1;
+        return part === 2
+          ? { part: 2, cueCard: { topic: '', bullets: ['', '', ''], prepSec: 60, talkSec: 120 }, rounding: [] }
+          : { part, topic: '', items: [''] };
+      }
+      if (g.type === 'writing_task') {
+        const taskNo = (g.questions || []).some((q) => Number(q.taskNo) === 1) ? 2 : 1;
+        return {
+          number: (g.questions || []).length + 1, taskNo, text: '',
+          minWords: taskNo === 2 ? 250 : 150,
+          durationSec: taskNo === 2 ? 2400 : 1200,
+          visualDescription: '',
+        };
+      }
+      return {
+        number: maxNumberInPaper() + 1, text: '', answers: [], explanation: '',
+        ...(g.type === 'mcq_single' ? { options: [] } : {}),
+      };
     }
 
     /** 把某一科的客觀題重新依順序編號 —— 插題刪題之後很需要 */
@@ -3004,14 +3166,9 @@ const Admin = (() => {
         (g.questions || []).map((q, qi) => questionRow(g, q, qi, () => { drawQs(); })),
         el('button', {
           class: 'btn sm', type: 'button',
-          onclick: () => {
-            g.questions.push({
-              number: maxNumberInPaper() + 1, text: '', answers: [], explanation: '',
-              ...(g.type === 'mcq_single' ? { options: [] } : {}),
-            });
-            touch(); drawQs();
-          },
-        }, '＋ 新增題目'));
+          onclick: () => { g.questions.push(blankQuestion(g)); touch(); drawQs(); },
+        }, g.type === 'speaking_part' ? '＋ 新增一個 Part'
+          : g.type === 'writing_task' ? '＋ 新增一個 Task' : '＋ 新增題目'));
       drawQs();
 
       const groupOptions = el('div');
@@ -3085,6 +3242,7 @@ const Admin = (() => {
                 `　${(sec.groups || []).reduce((n, g) => n + (g.questions?.length || 0), 0)} 題`)),
             el('div', { style: { paddingLeft: '.6rem', paddingTop: '.5rem' } },
               field('這一節的標題', textInput(sec.title || '', (v) => { sec.title = v; })),
+              ...sectionMediaFields(mod, sec),
               gHolder,
               el('div', { style: { marginTop: '.6rem' } },
                 el('button', {
@@ -3174,7 +3332,8 @@ const Admin = (() => {
         el('p', { class: 'small muted' },
           '改完按「驗證並儲存」。驗證會檢查題號重複、答案是否合法、bodyHtml 的空格對不對得上。',
           el('br'),
-          '文章、音檔、圖片請用試卷管理列的「素材」按鈕。')),
+          '閱讀原文與聽力音檔在每一節的最上面就可以改；圖片請到「檔案」上傳後把網址貼過來，'
+          + '也可以用試卷管理列的「素材」按鈕一次補齊整份試卷。')),
       body);
 
     draw();

@@ -940,3 +940,100 @@ test('通知：修剪不使用視窗函式（MySQL 5.7 沒有）', () => {
     'README 寫的最低需求是 MySQL 5.7，那個版本沒有視窗函式');
   assert.match(trimSrc, /LIMIT 500/, '一次刪除要有上限，不能拖慢送通知');
 });
+
+// ── 每一種題型，學生真的按得下去嗎 ────────────────────────
+// 這一組全部來自實測：把試卷送到瀏覽器裡看學生螢幕上有沒有可以點的東西。
+// 底下每一種寫法，以前都會通過驗證，然後在考場上變成一題完全不能作答的題目。
+const readingWith = (groups) => ({
+  title: 'x', testType: 'academic',
+  modules: [{ module: 'reading', sections: [{ title: 'P1', passage: 'text', groups }] }],
+});
+
+test('驗證：單選題沒有選項要擋下來（學生端會一個圓鈕都沒有）', () => {
+  const r = validatePaper(readingWith([
+    { type: 'mcq_single', questions: [{ number: 1, text: 'Which?', answers: ['A'] }] },
+  ]));
+  assert.equal(r.ok, false);
+  assert.match(r.errors.join(' '), /需要 options/);
+});
+
+test('驗證：多選題沒有選項要擋下來', () => {
+  const r = validatePaper(readingWith([
+    { type: 'mcq_multi', selectCount: 2, questions: [{ number: 1, text: 'Which TWO?', answers: ['A', 'B'] }] },
+  ]));
+  assert.equal(r.ok, false);
+  assert.match(r.errors.join(' '), /需要 options/);
+});
+
+test('驗證：題目既沒有題幹也沒有空格，學生看不到題目', () => {
+  const r = validatePaper(readingWith([
+    { type: 'short_answer', questions: [{ number: 1, answers: ['tree'] }] },
+  ]));
+  assert.equal(r.ok, false);
+  assert.match(r.errors.join(' '), /學生看不到題目/);
+});
+
+test('驗證：多選題整組共用第一題的題幹，第二個題號不必再寫一次', () => {
+  const r = validatePaper(readingWith([
+    {
+      type: 'mcq_multi', selectCount: 2,
+      options: [{ key: 'A', text: 'a' }, { key: 'B', text: 'b' }, { key: 'C', text: 'c' }],
+      questions: [{ number: 1, text: 'Which TWO?', answers: ['A', 'C'] }, { number: 2, answers: ['A', 'C'] }],
+    },
+  ]));
+  assert.equal(r.ok, true, r.errors.join('; '));
+});
+
+test('驗證：填空題用 bodyHtml 的空格當題目就夠了', () => {
+  const r = validatePaper(readingWith([
+    { type: 'gap_fill', bodyHtml: 'Opens at [[1]].', questions: [{ number: 1, answers: ['nine'] }] },
+  ]));
+  assert.equal(r.ok, true, r.errors.join('; '));
+});
+
+// 這一題最陰險：老師只要打開題目編輯器再存檔，
+// 每一題就會被塞一個空的 options 陣列。`q.options || g.options` 把 []
+// 當成有值，題組層的選項整組被蓋掉，之後每個考生都看到沒有選項的單選題。
+test('正規化：題目層的空選項陣列要拿掉，不能蓋掉題組層的選項', () => {
+  const p = normalizePaper(readingWith([
+    {
+      type: 'mcq_single', options: [{ key: 'A', text: 'a' }, { key: 'B', text: 'b' }],
+      questions: [{ number: 1, text: 'Q?', answers: ['A'], options: [] }],
+    },
+  ]));
+  const q = p.modules[0].sections[0].groups[0].questions[0];
+  assert.equal(q.options, undefined, '空陣列要消失，讓它退回題組層的選項');
+  assert.equal(validatePaper(p).ok, true);
+});
+
+test('正規化：早期的 prompt 欄位要併成 text，否則學生端題幹一片空白', () => {
+  const p = normalizePaper(readingWith([
+    { type: 'tfng', questions: [{ number: 1, prompt: 'Statement one.', answers: ['TRUE'] }] },
+  ]));
+  const q = p.modules[0].sections[0].groups[0].questions[0];
+  assert.equal(q.text, 'Statement one.');
+  assert.equal(validatePaper(p).ok, true, '用 prompt 寫的舊題庫不能因此壞掉');
+});
+
+test('答案不會外流：答案、解析、範文都不能送到學生端', () => {
+  const safe = stripAnswers(normalizePaper({
+    title: 'x', testType: 'academic',
+    modules: [{
+      module: 'listening',
+      sections: [{
+        title: 'S1', transcript: 'WOMAN: the answer is nine.',
+        groups: [{
+          type: 'gap_fill', bodyHtml: 'Opens at [[1]].',
+          questions: [{ number: 1, answers: ['nine'], explanation: '第三句', sampleAnswer: 'nine' }],
+        }],
+      }],
+    }],
+  }));
+  const j = JSON.stringify(safe);
+  assert.ok(!/"answers"/.test(j), '答案欄位整個不能留');
+  assert.ok(!j.includes('第三句'), '解析不能給學生');
+  assert.ok(!/"sampleAnswer"/.test(j), '範文不能給學生');
+  // 逐字稿不歸 stripAnswers 管，是 GET /exam/:id 另外拿掉的，
+  // 所以這裡只確認它還在，別讓人以為 stripAnswers 已經處理過了。
+  assert.ok(safe.modules[0].sections[0].transcript, '逐字稿由考卷路由負責移除');
+});

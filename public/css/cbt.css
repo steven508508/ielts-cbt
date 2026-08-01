@@ -363,3 +363,8 @@ mark.hl.has-note{background:var(--c-note); border-bottom:2px dotted currentColor
   display: block; max-width: 100%; height: auto; margin: .6rem 0;
   border: 1px solid var(--c-line, #ccc); border-radius: 4px; background: #fff;
 }
+
+/* 口說控制列：結束測驗要看得出是不可逆的動作 */
+.cbt-btn.danger { border-color: var(--c-danger); color: var(--c-danger); }
+.cbt-btn.danger:hover:not(:disabled) { background: var(--c-danger); color: #fff; }
+.cbt-btn:disabled { opacity: .5; cursor: default; }

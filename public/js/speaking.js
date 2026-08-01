@@ -339,6 +339,12 @@ registerProcessor('cap', Cap);`;
       case 'finishing': setStage('測驗結束，正在評分…'); break;
       case 'final_score': S.finalScore = msg; break;
       case 'done': finishRealtime(); break;
+      case 'nudged': setStage('已請考官接話'); break;
+      case 'stt_failed': toast(msg.message, 'err'); break;
+      case 'stalled':
+        setStage('考官沒有接話');
+        toast(msg.message, 'warn');
+        break;
       case 'error': toast(msg.message, 'err'); break;
       case 'fatal':
         Exam.notice('無法開始即時對話', el('div', {},
@@ -409,8 +415,52 @@ registerProcessor('cap', Cap);`;
       el('div', { class: 'cbt-livescore', id: 'sp-live' }),
       el('div', { class: 'cbt-chat', id: 'sp-chat' }),
       el('div', { class: 'cbt-actions', style: { justifyContent: 'center' } },
-        el('button', { class: 'cbt-btn', onclick: () => S.ws?.send(JSON.stringify({ type: 'skip' })) }, '進入下一部分 →'),
-        el('button', { class: 'cbt-btn', onclick: () => S.ws?.send(JSON.stringify({ type: 'finish' })) }, '結束測驗')));
+        el('button', {
+          class: 'cbt-btn',
+          onclick: (e) => {
+            if (!liveSend({ type: 'nudge' }, e.target)) return;
+            setStage('請考官接話…');
+          },
+        }, '🔔 叫考官接話'),
+        el('button', {
+          class: 'cbt-btn',
+          onclick: (e) => { if (liveSend({ type: 'skip' }, e.target)) setStage('切換中…'); },
+        }, '進入下一部分 →'),
+        el('button', {
+          class: 'cbt-btn danger',
+          onclick: async (e) => {
+            const ok = await Exam.dlg({
+              title: '結束口說測驗？',
+              body: el('p', {}, '結束之後就不能再說話了，系統會立刻開始評分。'),
+              actions: [{ label: '再考一下', value: false }, { label: '確定結束', primary: true, value: true }],
+            });
+            if (!ok) return;
+            if (liveSend({ type: 'finish' }, e.target)) setStage('正在結束…');
+          },
+        }, '結束測驗')));
+  }
+
+  /**
+   * 送控制訊息給伺服器。
+   * 以前是 `S.ws?.send(...)` —— 連線斷掉時整句是 undefined，按鈕按下去
+   * 完全沒有任何反應，學生只會覺得「這顆按鈕壞了」。
+   */
+  function liveSend(msg, btn) {
+    if (S.ws?.readyState !== 1) {
+      toast('與考官的連線已中斷，請重新整理頁面', 'err');
+      return false;
+    }
+    try {
+      S.ws.send(JSON.stringify(msg));
+      if (btn) {
+        btn.disabled = true;
+        setTimeout(() => { btn.disabled = false; }, 1200);
+      }
+      return true;
+    } catch (e) {
+      toast(`送不出去：${e.message}`, 'err');
+      return false;
+    }
   }
 
   const setStage = (t) => { const n = $('#sp-stage'); if (n) n.textContent = t; };
