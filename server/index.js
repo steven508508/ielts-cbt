@@ -31,16 +31,21 @@ app.use('/uploads', express.static(config.UPLOAD_DIR, {
 }));
 
 // API
-app.use('/api/auth', require('./routes/auth'));
-app.use('/api/users', require('./routes/users'));
-app.use('/api/tests', require('./routes/tests'));
-app.use('/api/import', require('./routes/importer'));
-app.use('/api/media', require('./routes/media'));
-app.use('/api/exam', require('./routes/exam'));
-app.use('/api/speaking', require('./routes/speaking'));
-app.use('/api/results', require('./routes/results'));
-app.use('/api/ai', require('./routes/ai'));
-app.use('/api/manage', require('./routes/manage'));
+// wrapRouter：Express 4 接不住 async handler 的 rejection，沒包的話
+// 一旦出錯請求會整個卡住（沒有回應也沒有日誌）。包過之後一律回 500。
+const { wrapRouter } = require('./middleware/asyncRoutes');
+const api = (p, mod) => app.use(p, wrapRouter(require(mod)));
+
+api('/api/auth', './routes/auth');
+api('/api/users', './routes/users');
+api('/api/tests', './routes/tests');
+api('/api/import', './routes/importer');
+api('/api/media', './routes/media');
+api('/api/exam', './routes/exam');
+api('/api/speaking', './routes/speaking');
+api('/api/results', './routes/results');
+api('/api/ai', './routes/ai');
+api('/api/manage', './routes/manage');
 
 app.get('/api/health', async (req, res) => {
   try {

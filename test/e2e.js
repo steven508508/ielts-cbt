@@ -12,13 +12,28 @@ function ok(cond, label, extra = '') {
   else { fail += 1; console.log(`  ✗ ${label}${extra ? ' — ' + extra : ''}`); }
 }
 
+/** 單一請求的上限。卡住的時候要馬上講是哪一支 API，不要等到 undici 五分鐘後才報一句 fetch failed */
+const CALL_TIMEOUT = Number(process.env.CALL_TIMEOUT || 45000);
+
 async function call(method, path, body, token) {
   const headers = {};
   if (token) headers.authorization = `Bearer ${token}`;
   if (body) headers['content-type'] = 'application/json';
-  const res = await fetch(`${BASE}/api${path}`, {
-    method, headers, body: body ? JSON.stringify(body) : undefined,
-  });
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), CALL_TIMEOUT);
+  let res;
+  try {
+    res = await fetch(`${BASE}/api${path}`, {
+      method, headers, body: body ? JSON.stringify(body) : undefined, signal: ctrl.signal,
+    });
+  } catch (e) {
+    clearTimeout(timer);
+    if (e?.name === 'AbortError' || /aborted/i.test(e?.message || '')) {
+      return { status: 0, timedOut: true, data: { error: `${method} ${path} 超過 ${CALL_TIMEOUT / 1000} 秒沒有回應` } };
+    }
+    throw e;
+  }
+  clearTimeout(timer);
   const text = await res.text();
   let data;
   try { data = JSON.parse(text); } catch { data = { text }; }
@@ -807,11 +822,20 @@ async function call(method, path, body, token) {
   const plainPassage = plainBack.modules[0].sections[0].passage;
   ok(/<p>第一段。<\/p><p>第二段。<\/p>/.test(plainPassage), '貼純文字會自動補成段落');
 
-  await call('POST', '/manage/results/bulk', { action: 'delete', ids: [mAttempt], force: true }, adm);
-  await call('DELETE', `/tests/assignments/${mAsgId}`, null, adm);
-  await call('DELETE', `/tests/${mediaTestId}`, null, adm);
-  await call('DELETE', `/tests/${holed.data.id}`, null, adm);
-  await call('DELETE', `/tests/${plainText.data.id}`, null, adm);
+  // 收尾。刪不掉不該讓整個測試掛掉，但要講出來
+  const cleanup = [
+    ['刪成績', () => call('POST', '/manage/results/bulk', { action: 'delete', ids: [mAttempt], force: true }, adm)],
+    ['刪指派', () => call('DELETE', `/tests/assignments/${mAsgId}`, null, adm)],
+    ['刪試卷', () => call('DELETE', `/tests/${mediaTestId}`, null, adm)],
+    ['刪缺素材試卷', () => call('DELETE', `/tests/${holed.data.id}`, null, adm)],
+    ['刪純文字試卷', () => call('DELETE', `/tests/${plainText.data.id}`, null, adm)],
+  ];
+  const stuck = [];
+  for (const [label, fn] of cleanup) {
+    const r = await fn().catch((e) => ({ status: 0, data: { error: e.message } }));
+    if (r.timedOut || r.status === 0 || r.status >= 500) stuck.push(`${label}(${r.status})`);
+  }
+  ok(stuck.length === 0, stuck.length ? `收尾卡住：${stuck.join('、')}` : '素材測試資料收尾完成');
 
   // ── AI 背景工作（整份試卷產生）─────────────────────────
   console.log('\nAI 背景工作');

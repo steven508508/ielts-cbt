@@ -253,3 +253,58 @@ test('照答案卷作答可以拿滿分', () => {
     assert.equal(score, total, `${mod} 只拿到 ${score}/${total}`);
   }
 });
+
+// ── async route handler 的錯誤要接得住 ─────────────────────────
+// Express 4 只接得住同步 throw。沒有包裝的話，async handler 一旦 reject，
+// 伺服器不會回應也不會報錯，瀏覽器就一直轉圈 —— 這種故障最難查。
+test('會 reject 的 async route 回 500，不會把請求掛住', async () => {
+  const express = require('express');
+  const { wrapRouter } = require('../server/middleware/asyncRoutes');
+
+  const r = express.Router();
+  r.get('/boom', async () => { throw new Error('故意炸掉'); });
+  r.get('/sync-boom', () => { throw new Error('同步炸掉'); });
+  r.get('/fine', (req, res) => res.json({ ok: true }));
+
+  const app = express();
+  app.use('/t', wrapRouter(r));
+  app.use((err, req, res, _next) => res.status(500).json({ error: err.message }));
+
+  const srv = await new Promise((resolve) => {
+    const s = app.listen(0, () => resolve(s));
+  });
+  const base = `http://127.0.0.1:${srv.address().port}`;
+
+  const get = async (p) => {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 4000);
+    try {
+      const res = await fetch(base + p, { signal: ctrl.signal });
+      return { status: res.status, body: await res.json() };
+    } finally { clearTimeout(timer); }
+  };
+
+  try {
+    assert.equal((await get('/t/fine')).status, 200, '正常的 route 不受影響');
+
+    const boom = await get('/t/boom');
+    assert.equal(boom.status, 500, 'async 例外要變成 500，而不是一直沒有回應');
+    assert.equal(boom.body.error, '故意炸掉', '錯誤訊息要傳到錯誤處理中介層');
+
+    const sync = await get('/t/sync-boom');
+    assert.equal(sync.status, 500, '同步例外照樣是 500');
+    assert.equal(sync.body.error, '同步炸掉');
+  } finally {
+    srv.close();
+  }
+});
+
+test('wrapRouter 不會去動錯誤處理中介層', () => {
+  const { wrap } = require('../server/middleware/asyncRoutes');
+  const errMw = (err, req, res, next) => next(err);
+  assert.equal(wrap(errMw), errMw, '四個參數的中介層要原封不動');
+  const normal = (req, res, next) => next();
+  const once = wrap(normal);
+  assert.notEqual(once, normal, '一般中介層要被包起來');
+  assert.equal(wrap(once), once, '已經包過的不會再包一層');
+});
