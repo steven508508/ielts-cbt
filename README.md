@@ -117,6 +117,42 @@ server {
 然後 `sudo certbot --nginx -d ielts.example.com` 取得憑證即可。
 `.env` 裡記得保持 `TRUST_PROXY=1`，系統才讀得到真實來源 IP。
 
+#### ⚠️ 不要在反向代理加 `Permissions-Policy`
+
+網路上的 Nginx 安全強化範本幾乎都有這一行：
+
+```nginx
+add_header Permissions-Policy "geolocation=(), microphone=(), camera=()";   # ← 會讓口說完全不能用
+```
+
+貼進去之後，**Chrome 的口說會整個壞掉**，而且症狀極度誤導：
+
+- 學生看到的是「權限被拒絕」，網站設定裡按幾次「允許」都沒用
+- `navigator.permissions.query` 會回報 `denied`，看起來就像是使用者自己封鎖的
+- **Safari 一切正常** —— Safari 沒有實作這個標頭的麥克風限制
+
+系統本身已經送了正確的 `microphone=(self)`。同名標頭出現兩份時瀏覽器會取交集，
+所以代理只要多加一份 `microphone=()`，就會把系統送的允許蓋掉。
+
+**不需要自己加這個標頭。** 真的要加的話，`microphone` 必須是 `(self)`：
+
+```nginx
+add_header Permissions-Policy "geolocation=(), microphone=(self), camera=()" always;
+```
+
+Cloudflare 也要看一下 Rules → Transform Rules → Modify Response Header 與 Managed Transforms。
+
+確認方式（應該只有一行，而且含 `microphone=(self)`）：
+
+```bash
+curl -sI https://你的網址 | grep -i permissions-policy
+```
+
+> nginx 的 `add_header` 有繼承陷阱：只要某個 `location` 區塊裡有任何一個 `add_header`，
+> 父層的 `add_header` 就**全部失效**。改的時候每一層都要確認。
+
+考前環境檢查（`#/check`）會自動抓出這個情況，並把實際收到的標頭直接列出來。
+
 ---
 
 ## 手動安裝
@@ -560,6 +596,7 @@ docker compose exec app node server/scripts/resetPassword.js admin 新的密碼
 | 情況 | 系統怎麼說 |
 |---|---|
 | 網址不是 HTTPS | 「這不是瀏覽器設定的問題」，並附上目前網址與請管理員加 HTTPS 的說明。這種情況下叫學生去點網址列的鎖頭是白費工，那裡根本沒有「麥克風」選項 |
+| 被 `Permissions-Policy` 標頭擋掉 | 反向代理或 Cloudflare 多加了 `microphone=()`。會**直接把實際收到的標頭列出來**，並附上 Nginx／Cloudflare 的修法與 `curl` 確認指令。這一種最難自己看出來 —— 錯誤訊息跟「使用者自己封鎖」一模一樣，而且 Safari 完全正常 |
 | 瀏覽器記住了封鎖 | 用 Permissions API 判斷出來的。給兩條路：點網址列圖示，或到 `chrome://settings/content/microphone` 把這個網站移出封鎖清單（網址列指令會依瀏覽器換成 edge://、about:preferences 等） |
 | 只是把詢問視窗關掉 | 直接按「再測一次」就會再問一次，不用去設定 |
 | 系統政策擋住 | 給資訊組看的：作業系統隱私設定、群組原則的 `AudioCaptureAllowed`、把網址加進 `AudioCaptureAllowedUrls` |

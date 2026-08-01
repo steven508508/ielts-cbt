@@ -159,6 +159,31 @@ window.Check = (() => {
     return { url: 'chrome://settings/content/microphone', how: '網址列貼上 chrome://settings/content/microphone' };
   }
 
+  /**
+   * 這個「頁面」本身有沒有被 Permissions-Policy 標頭擋掉麥克風。
+   *
+   * 這一項跟使用者的瀏覽器設定完全無關 —— 標頭擋掉的話，
+   * 網站設定裡按幾次「允許」都沒有用，getUserMedia 一樣丟 NotAllowedError，
+   * 而且 permissions.query 會回報 denied，看起來就像「使用者自己封鎖的」。
+   * Safari 沒有實作這個標頭的麥克風限制，所以會出現「Chrome 不行、Safari 可以」。
+   */
+  function micBlockedByPolicy() {
+    try {
+      const fp = document.permissionsPolicy || document.featurePolicy;
+      if (fp && typeof fp.allowsFeature === 'function') return !fp.allowsFeature('microphone');
+    } catch { /* Safari 沒有這個 API */ }
+    return false;
+  }
+
+  /** 把這一頁實際收到的標頭讀回來，好直接指給管理員看是哪一段擋的 */
+  async function permissionsPolicyHeader() {
+    try {
+      const r = await fetch(location.pathname || '/', { method: 'HEAD', cache: 'no-store' });
+      // 同名標頭會被瀏覽器用 ", " 併成一條，重複加的那一份也看得到
+      return r.headers.get('permissions-policy') || r.headers.get('feature-policy') || '';
+    } catch { return ''; }
+  }
+
   /** 瀏覽器有沒有記住「已封鎖」——記住的話點不點網址列圖示都沒用，要去設定裡解 */
   async function micPermissionState() {
     try {
@@ -182,6 +207,14 @@ window.Check = (() => {
     if (!window.isSecureContext) {
       return R('fail', `這個網址（${location.origin}）不是安全連線，瀏覽器不會給麥克風權限。`
         + '這不是瀏覽器設定的問題，要請老師或管理員替考試網站加上 HTTPS。', 'insecure');
+    }
+
+    // 標頭擋掉的話，連問都不用問 —— 而且錯誤長得跟「使用者封鎖」一模一樣，
+    // 不先分辨出來，學生會被指去改一個改了也沒用的設定。
+    if (micBlockedByPolicy()) {
+      S.ppHeader = await permissionsPolicyHeader();
+      return R('fail', '這個網站的伺服器用 Permissions-Policy 標頭把麥克風關掉了。'
+        + '這跟你的瀏覽器設定無關 —— 在網站設定裡按幾次「允許」都不會有用，要改伺服器。', 'policyHeader');
     }
 
     let stream;
@@ -415,7 +448,35 @@ window.Check = (() => {
       }, '🎙 再測一次麥克風');
 
       const p = micSettingsPath();
-      const steps = r.kind === 'insecure'
+      const steps = r.kind === 'policyHeader'
+        ? el('div', {},
+            el('p', {}, '這一項學生自己改不了，請把下面這段給架站的人：'),
+            S.ppHeader
+              ? el('p', {}, '這一頁實際收到的標頭是：',
+                  el('code', { style: { userSelect: 'all' } }, S.ppHeader))
+              : null,
+            el('ol', {},
+              el('li', {}, '考試系統本身送的是 ', el('code', {}, 'microphone=(self)'),
+                '（允許），所以多出來的限制幾乎都來自',
+                el('b', {}, '反向代理或 Cloudflare'), '。'),
+              el('li', {}, 'Nginx：找設定檔裡的 ', el('code', {}, 'add_header Permissions-Policy'),
+                '，把 ', el('code', {}, 'microphone=()'), ' 拿掉或改成 ',
+                el('code', {}, 'microphone=(self)'), '。',
+                el('br'),
+                el('span', { class: 'small' },
+                  '⚠️ nginx 的 ', el('code', {}, 'add_header'),
+                  ' 有繼承陷阱：只要子 location 裡有任何一個 add_header，父層那些就全部失效。'
+                  + '改完記得每一層都確認。')),
+              el('li', {}, 'Cloudflare：Rules → Transform Rules → Modify Response Header，'
+                + '以及 Managed Transforms，看有沒有加上 Permissions-Policy。'),
+              el('li', {}, '改完在伺服器上確認：',
+                el('code', { style: { userSelect: 'all' } },
+                  `curl -sI ${location.origin} | grep -i permissions-policy`),
+                '　應該只看到一行，而且含 ', el('code', {}, 'microphone=(self)'), '。')),
+            el('p', { class: 'small muted' },
+              'Safari 沒有實作這個標頭的麥克風限制，所以「Safari 可以、Chrome 不行」正是這個問題的典型症狀 —— '
+              + 'Safari 能用不代表設定沒問題，正式考試用 Chrome 的學生一樣會卡住。'))
+        : r.kind === 'insecure'
         ? el('div', {},
             el('p', {}, '這一項不是學生自己能解決的，請把下面這段給老師或管理員：'),
             el('ol', {},
