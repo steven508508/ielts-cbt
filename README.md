@@ -731,7 +731,31 @@ API 金鑰只留在伺服器端，不會外流到瀏覽器。整場對話另外�
 音檔，老師事後可以聆聽。
 
 **需要什麼**：一個 OpenAI 相容、提供 `/realtime` WebSocket 端點的模型。
-到「系統設定 → AI → 即時對話模型」填模型名稱（預設 `gpt-4o-realtime-preview`）。
+到「系統設定 → AI → 即時對話模型」填模型名稱（預設 `gpt-realtime`）。
+
+#### GA 與 Beta 兩種協定
+
+OpenAI 已經把 Realtime 從 Beta 轉成正式版（GA），兩件事同時變了：
+
+- **不能再送 `OpenAI-Beta: realtime=v1` 標頭** —— 送了會被直接拒絕，
+  學生看到的是 `The Realtime Beta API is no longer supported.`
+- **`session.update` 換了結構**：`audio.input` / `audio.output` 巢狀、
+  `format` 從字串 `"pcm16"` 變成物件 `{type:"audio/pcm", rate:24000}`、
+  `modalities` → `output_modalities`，並多了 `session.type: "realtime"`。
+  串流事件也改名（`response.audio.delta` → `response.output_audio.delta` 等）。
+
+但自架或代理的相容端點很多還停在 Beta，所以系統**兩種都支援**：
+
+| 設定 | 行為 |
+|---|---|
+| 自動偵測（預設） | 先用 GA 連；被拒絕就自動退回 Beta 重連一次 |
+| 強制 GA | 只用 GA |
+| 強制 Beta | 只用 Beta（給還沒升級的自架端點） |
+
+收訊時兩種事件名稱都認得，所以不管談成哪一版，功能完全一樣。
+談不成的時候錯誤訊息會直接告訴老師要去哪裡改設定，而不是丟一句英文原文。
+
+也可以用環境變數固定：`.env` 加 `REALTIME_API=ga`。
 
 ### ② 語音問答（沒有 Realtime 端點時的備援）
 
@@ -1036,7 +1060,7 @@ ielts-cbt/
 ### 測試
 
 ```bash
-npm test                # 單元測試（89 項：批改、換算、驗證、匯入、自動組卷、SMTP、紀律分級、環境診斷、出題難度、檢討素材）
+npm test                # 單元測試（92 項：批改、換算、驗證、匯入、自動組卷、SMTP、紀律分級、環境診斷、出題難度、檢討素材、Realtime 協定）
 npm start               # 另開一個終端機
 node test/e2e.js        # 端對端測試（397 項）：登入 → 作答 → 交卷 → 批改 → 成績單
                         # → 老師改分 → 檔案管理 → 成績批次操作 → 保留政策與清理

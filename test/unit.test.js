@@ -868,3 +868,54 @@ test('檢討素材：配合題的選項真的帶到每一題上（不是只有�
     assert.equal((q.options || []).length, 2, `第 ${q.number} 題應該拿得到選項`);
   }
 });
+
+// ── Realtime 協定版本 ─────────────────────────────────────
+// OpenAI 把 Realtime 從 Beta 轉成 GA：不能再送 OpenAI-Beta 標頭，
+// session.update 也換了結構。兩種都要能組得出來。
+const realtime = require('../server/lib/realtime');
+
+test('Realtime：GA 與 Beta 的 session.update 結構不同', () => {
+  // 直接用模組匯出的組裝函式驗，不需要真的連線
+  const script = realtime.buildScript({ modules: [{ module: 'speaking', sections: [{ groups: [{
+    type: 'speaking_part',
+    questions: [{ part: 1, topic: 'Home', items: ['Where do you live?'] }],
+  }] }] }] });
+  assert.equal(script.part1.length, 1, 'buildScript 抓得到 Part 1');
+
+  const inst = realtime.examinerInstructions(script, 'part1');
+  assert.match(inst, /Where do you live\?/, '題目有進到考官指示裡');
+  assert.match(inst, /Part 1/, '階段名稱也在');
+});
+
+test('Realtime：GA 事件名稱對得回舊名', () => {
+  const a = realtime.GA_EVENT_ALIASES;
+  assert.equal(a['response.output_audio.delta'], 'response.audio.delta');
+  assert.equal(a['response.output_audio_transcript.delta'], 'response.audio_transcript.delta');
+  assert.equal(a['response.output_audio_transcript.done'], 'response.audio_transcript.done');
+  assert.equal(a['conversation.item.audio_transcription.completed'],
+    'conversation.item.input_audio_transcription.completed');
+});
+
+test('Realtime：sessionPayload 兩種協定各自正確', () => {
+  const S = realtime.buildSessionPayload;
+  const script = { part1: [], part2: null, part3: [], rounding: [] };
+  const cfg = { voice: 'marin', sttModel: 'whisper-1' };
+
+  const beta = S({ script, phase: 'part1', cfg, flavor: 'beta' });
+  assert.deepEqual(beta.session.modalities, ['text', 'audio'], 'Beta 用 modalities');
+  assert.equal(beta.session.input_audio_format, 'pcm16', 'Beta 的 format 是字串');
+  assert.equal(beta.session.voice, 'marin');
+  assert.equal(beta.session.turn_detection.type, 'server_vad');
+  assert.ok(!beta.session.audio, 'Beta 沒有 audio 巢狀');
+
+  const ga = S({ script, phase: 'part1', cfg, flavor: 'ga' });
+  assert.equal(ga.session.type, 'realtime', 'GA 一定要有 session.type');
+  assert.deepEqual(ga.session.output_modalities, ['audio'], 'GA 用 output_modalities');
+  assert.deepEqual(ga.session.audio.input.format, { type: 'audio/pcm', rate: 24000 },
+    'GA 的 format 是物件不是字串');
+  assert.equal(ga.session.audio.output.voice, 'marin', 'voice 移到 audio.output 底下');
+  assert.equal(ga.session.audio.input.transcription.model, 'whisper-1');
+  assert.equal(ga.session.audio.input.turn_detection.type, 'server_vad');
+  assert.ok(!ga.session.modalities && !ga.session.input_audio_format,
+    'GA 不能夾帶舊欄位，夾了會被端點拒絕');
+});

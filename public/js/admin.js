@@ -1504,8 +1504,13 @@ const Admin = (() => {
           el('label', { class: 'field' }, el('span', {}, 'TTS 模型'), txt('ttsModel', a.ttsModel)),
           el('label', { class: 'field' }, el('span', {}, '考官聲音'), txt('ttsVoice', a.ttsVoice)),
           el('label', { class: 'field' }, el('span', {}, '即時對話模型 Realtime'),
-            txt('realtimeModel', a.realtimeModel, 'gpt-4o-realtime-preview'),
-            el('span', { class: 'small muted' }, '口說即時語音對話用；留空或沒有此模型會自動退回問答模式'))),
+            txt('realtimeModel', a.realtimeModel, 'gpt-realtime'),
+            el('span', { class: 'small muted' }, '口說即時語音對話用；留空或沒有此模型會自動退回問答模式')),
+          el('label', { class: 'field' }, el('span', {}, 'Realtime 協定版本'),
+            sel('realtimeApi', [['auto', '自動偵測（建議）'], ['ga', '強制 GA（新版）'], ['beta', '強制 Beta（舊版）']], a.realtimeApi || 'auto'),
+            el('span', { class: 'small muted' },
+              'OpenAI 已把 Realtime 轉為 GA，舊的 Beta 協定會被拒絕。自動偵測會先試 GA，'
+              + '被拒絕再退回 Beta，自架或代理的舊端點也能用'))),
 
         el('div', { style: { display: 'flex', gap: '.5rem', marginTop: '.8rem' } },
           el('button', { class: 'btn primary', onclick: saveSettings }, '儲存設定'),
@@ -1654,7 +1659,7 @@ const Admin = (() => {
       for (const k of ['provider', 'anthropicApiKey', 'anthropicBaseUrl', 'anthropicModel',
         'openaiApiKey', 'openaiBaseUrl', 'openaiModel', 'customProtocol', 'customApiKey',
         'customBaseUrl', 'customModel', 'sttProvider', 'sttModel', 'ttsProvider', 'ttsModel',
-        'ttsVoice', 'realtimeModel']) {
+        'ttsVoice', 'realtimeModel', 'realtimeApi']) {
         if (f[k]) aiPatch[k] = f[k].value;
       }
       const bandTables = {};

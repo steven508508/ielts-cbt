@@ -108,6 +108,75 @@ Say "Thank you. That is the end of the speaking test." and nothing else.`,
   return `${base}\n\n${phases[phase] || phases.part1}`;
 }
 
+/** GA 改掉的事件名稱 → 舊名（內部一律用舊名處理，Beta 端點也能吃）*/
+const GA_EVENT_ALIASES = {
+  'response.output_audio.delta': 'response.audio.delta',
+  'response.output_audio.done': 'response.audio.done',
+  'response.output_audio_transcript.delta': 'response.audio_transcript.delta',
+  'response.output_audio_transcript.done': 'response.audio_transcript.done',
+  'response.output_text.delta': 'response.text.delta',
+  'response.output_text.done': 'response.text.done',
+  'conversation.item.audio_transcription.completed':
+    'conversation.item.input_audio_transcription.completed',
+};
+
+/**
+ * session.update 的內容。
+ *
+ * OpenAI 把 Realtime 轉成 GA 之後結構整個換了：audio.input / audio.output 巢狀、
+ * format 從字串 "pcm16" 變成物件 {type:'audio/pcm', rate:24000}、
+ * modalities → output_modalities，而且多了 session.type:'realtime'。
+ * 抽成純函式才測得到，不用真的連上端點。
+ */
+function buildSessionPayload({ script, phase, cfg = {}, flavor = 'ga' }) {
+  const instructions = examinerInstructions(script, phase);
+  const voice = cfg.voice || 'alloy';
+  const sttModel = cfg.sttModel || 'whisper-1';
+  const vad = {
+    type: 'server_vad',
+    threshold: 0.5,
+    prefix_padding_ms: 300,
+    silence_duration_ms: 700,
+    create_response: true,
+  };
+
+  if (flavor === 'beta') {
+    return {
+      type: 'session.update',
+      session: {
+        modalities: ['text', 'audio'],
+        instructions,
+        voice,
+        input_audio_format: 'pcm16',
+        output_audio_format: 'pcm16',
+        input_audio_transcription: { model: sttModel },
+        turn_detection: vad,
+        temperature: 0.8,
+      },
+    };
+  }
+
+  return {
+    type: 'session.update',
+    session: {
+      type: 'realtime',
+      output_modalities: ['audio'],
+      instructions,
+      audio: {
+        input: {
+          format: { type: 'audio/pcm', rate: 24000 },
+          transcription: { model: sttModel },
+          turn_detection: vad,
+        },
+        output: {
+          format: { type: 'audio/pcm', rate: 24000 },
+          voice,
+        },
+      },
+    },
+  };
+}
+
 // ── 每一場考試的狀態 ──────────────────────────────────────────
 const sessions = new Map();   // attemptId → session
 
@@ -120,6 +189,7 @@ class Session {
     this.cfg = cfg;
     this.script = buildScript(paper);
     this.phase = 'intro';
+    this.flavor = 'ga';   // connectUpstream() 會改成實際談成的版本
     this.turns = [];               // {role:'examiner'|'candidate', text, at}
     this.qIndex = { 1: 0, 2: 0, 3: 0 };
     this.upstream = null;
@@ -137,52 +207,109 @@ class Session {
   log(...a) { console.log(`[rt:${this.attempt.id}]`, ...a); }
 
   // ── 連線到 Realtime 模型 ──────────────────────────────────
+  /**
+   * GA 不能送 `OpenAI-Beta: realtime=v1`（送了直接被拒），Beta 端點卻一定要送。
+   * 自架與代理的相容端點很多還停在 Beta，所以預設先試 GA，被拒絕就自動退回，
+   * 老師不必知道自己接的是哪一版。
+   */
   async connectUpstream() {
-    const { baseUrl, apiKey, model, protocol } = this.cfg;
+    const { apiKey, protocol } = this.cfg;
     if (protocol !== 'openai') throw new Error('即時語音需要 OpenAI 相容的 Realtime 端點');
     if (!apiKey) throw new Error('尚未設定語音供應商的 API Key');
 
+    const want = ['ga', 'beta'].includes(this.cfg.apiFlavor) ? [this.cfg.apiFlavor] : ['ga', 'beta'];
+    let lastErr = null;
+    for (const flavor of want) {
+      try {
+        const up = await this.openUpstream(flavor);
+        this.flavor = flavor;
+        this.upstream = up;
+        up.on('message', (raw) => this.onUpstream(raw));
+        up.on('close', () => { if (!this.closed) this.send({ type: 'upstream_closed' }); });
+        up.on('error', (e) => this.send({ type: 'error', message: e.message }));
+        this.log('upstream ready', flavor);
+        return;
+      } catch (e) {
+        lastErr = e;
+        this.log(`upstream(${flavor}) 失敗：`, e.message);
+      }
+    }
+
+    // 全部談不成。翻成老師看得懂、而且知道下一步的訊息。
+    const raw = lastErr?.message || '連不上即時語音端點';
+    let hint = '';
+    if (/beta/i.test(raw)) {
+      hint = 'OpenAI 已把 Realtime 轉成 GA，舊的 Beta 協定不再支援。'
+        + '請到「系統設定 → 語音 → Realtime 協定版本」改成「自動偵測」或「強制 GA」。';
+    } else if (/401|unauthor|api key|invalid_api_key/i.test(raw)) {
+      hint = '請確認「系統設定 → AI」的 API Key 有開通 Realtime 權限。';
+    } else if (/404|not found|model/i.test(raw)) {
+      hint = '請確認「即時對話模型 Realtime」填的模型名稱正確（例如 gpt-realtime）。';
+    }
+    const err = new Error(hint ? `${raw}\n\n${hint}` : raw);
+    err.friendly = !!hint;
+    throw err;
+  }
+
+  /** 開一條上游連線，並確認 session 設定被接受 */
+  openUpstream(flavor) {
+    const { baseUrl, apiKey, model } = this.cfg;
     const wsUrl = `${baseUrl.replace(/^http/, 'ws').replace(/\/+$/, '')}/realtime?model=${encodeURIComponent(model)}`;
-    this.log('connect', wsUrl);
+    this.log('connect', flavor, wsUrl);
 
-    const up = new WebSocket(wsUrl, {
-      headers: { Authorization: `Bearer ${apiKey}`, 'OpenAI-Beta': 'realtime=v1' },
+    return new Promise((resolve, reject) => {
+      const headers = { Authorization: `Bearer ${apiKey}` };
+      if (flavor === 'beta') headers['OpenAI-Beta'] = 'realtime=v1';
+
+      let up;
+      try { up = new WebSocket(wsUrl, { headers }); } catch (e) { return reject(e); }
+
+      let settled = false;
+      let probe = null;
+      let grace = null;
+      const finish = (err) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        clearTimeout(grace);
+        if (probe) up.off('message', probe);
+        up.removeAllListeners('error');
+        up.removeAllListeners('unexpected-response');
+        if (err) { try { up.close(); } catch { /* 本來就沒連上 */ } return reject(err); }
+        return resolve(up);
+      };
+      const timer = setTimeout(() => finish(new Error('連線逾時')), 20000);
+
+      up.once('unexpected-response', (_req, res) => finish(new Error(`端點回 HTTP ${res.statusCode}`)));
+      up.once('error', (e) => finish(e));
+
+      up.once('open', () => {
+        try { up.send(JSON.stringify(this.sessionPayload(flavor))); }
+        catch (e) { return finish(e); }
+
+        // session.updated = 設定被接受；error = 這一版協定不對，換另一版
+        probe = (raw) => {
+          let ev;
+          try { ev = JSON.parse(raw.toString()); } catch { return; }
+          if (ev.type === 'session.updated') return finish(null);
+          if (ev.type === 'error') return finish(new Error(ev.error?.message || 'session 設定被拒絕'));
+          return undefined;
+        };
+        up.on('message', probe);
+
+        // 有些相容端點根本不回 session.updated，等一下就當它接受了
+        grace = setTimeout(() => finish(null), 3500);
+      });
     });
-    this.upstream = up;
+  }
 
-    await new Promise((resolve, reject) => {
-      const t = setTimeout(() => reject(new Error('連線逾時')), 20000);
-      up.once('open', () => { clearTimeout(t); resolve(); });
-      up.once('error', (e) => { clearTimeout(t); reject(e); });
-    });
-
-    up.on('message', (raw) => this.onUpstream(raw));
-    up.on('close', () => { if (!this.closed) this.send({ type: 'upstream_closed' }); });
-    up.on('error', (e) => this.send({ type: 'error', message: e.message }));
-
-    this.configureSession();
+  sessionPayload(flavor = this.flavor) {
+    return buildSessionPayload({ script: this.script, phase: this.phase, cfg: this.cfg, flavor });
   }
 
   configureSession() {
-    this.upstream.send(JSON.stringify({
-      type: 'session.update',
-      session: {
-        modalities: ['text', 'audio'],
-        instructions: examinerInstructions(this.script, this.phase),
-        voice: this.cfg.voice || 'alloy',
-        input_audio_format: 'pcm16',
-        output_audio_format: 'pcm16',
-        input_audio_transcription: { model: this.cfg.sttModel || 'whisper-1' },
-        turn_detection: {
-          type: 'server_vad',
-          threshold: 0.5,
-          prefix_padding_ms: 300,
-          silence_duration_ms: 700,
-          create_response: true,
-        },
-        temperature: 0.8,
-      },
-    }));
+    if (this.upstream?.readyState !== WebSocket.OPEN) return;
+    this.upstream.send(JSON.stringify(this.sessionPayload()));
   }
 
   /** 切換階段：更新指示，必要時要求模型立刻發話 */
@@ -213,11 +340,13 @@ class Session {
     let ev;
     try { ev = JSON.parse(raw.toString()); } catch { return; }
 
-    switch (ev.type) {
+    // GA 改了好幾個事件名稱。統一翻回舊名再處理，底下就不用寫兩份。
+    const type = GA_EVENT_ALIASES[ev.type] || ev.type;
+
+    switch (type) {
       case 'session.created':
-        this.send({ type: 'ready' });
-        // 開場白
-        this.setPhase('intro');
+        // 連線與 session 設定已經在 openUpstream() 裡確認過了，
+        // 開場白改在連上之後明確觸發 —— GA 握手時這顆事件已經被讀掉。
         break;
 
       case 'input_audio_buffer.speech_started':
@@ -451,8 +580,15 @@ function attach(server) {
     let session = null;
 
     const fail = (msg) => {
-      try { ws.send(JSON.stringify({ type: 'fatal', message: msg })); } catch {}
-      ws.close();
+      // 等 send 的 callback 再關，不然訊息還在緩衝區就被關掉了
+      try {
+        ws.send(JSON.stringify({ type: 'fatal', message: msg }), () => {
+          try { ws.close(); } catch { /* 已經斷了 */ }
+        });
+        setTimeout(() => { try { ws.close(); } catch { /* 已經斷了 */ } }, 1500);
+      } catch {
+        try { ws.close(); } catch { /* 已經斷了 */ }
+      }
     };
 
     try {
@@ -486,8 +622,22 @@ function attach(server) {
          ON DUPLICATE KEY UPDATE status='live'`,
         [attemptId]
       );
+
+      session.send({ type: 'ready', api: session.flavor });
+      session.setPhase('intro');
     } catch (e) {
-      try { session?.close(); } catch {}
+      /* 順序很重要：session.close() 會把「學生這一條」也關掉，
+         先關再 send 的話那則 fatal 永遠送不出去，學生只看到連線莫名斷掉。
+         這裡只收上游與計時器，錯誤訊息送出去之後才關學生那條。 */
+      try {
+        if (session) {
+          session.closed = true;
+          clearTimeout(session.phaseTimer);
+          clearTimeout(session.finishTimer);
+          try { session.upstream?.close(); } catch { /* 本來就沒連上 */ }
+          if (sessions.get(attemptId) === session) sessions.delete(attemptId);
+        }
+      } catch { /* 清理失敗不影響回報 */ }
       return fail(e.message);
     }
 
@@ -558,9 +708,11 @@ async function realtimeConfig() {
     protocol: ep.protocol,
     baseUrl: ep.baseUrl,
     apiKey: ep.apiKey,
-    model: cfg.realtimeModel || 'gpt-4o-realtime-preview',
+    model: cfg.realtimeModel || 'gpt-realtime',
     voice: cfg.ttsVoice || 'alloy',
     sttModel: cfg.sttModel || 'whisper-1',
+    // auto = 先試 GA，被拒絕再退回 Beta
+    apiFlavor: ['ga', 'beta'].includes(cfg.realtimeApi) ? cfg.realtimeApi : 'auto',
   };
 }
 
@@ -568,10 +720,16 @@ async function realtimeConfig() {
 async function isAvailable() {
   try {
     const c = await realtimeConfig();
-    return { ok: c.protocol === 'openai' && !!c.apiKey && !!c.baseUrl, model: c.model, provider: c.protocol };
+    return {
+      ok: c.protocol === 'openai' && !!c.apiKey && !!c.baseUrl,
+      model: c.model, provider: c.protocol, api: c.apiFlavor || 'auto',
+    };
   } catch (e) {
     return { ok: false, error: e.message };
   }
 }
 
-module.exports = { attach, closeAll, isAvailable, realtimeConfig, buildScript, examinerInstructions, sessions };
+module.exports = {
+  attach, closeAll, isAvailable, realtimeConfig, buildScript, examinerInstructions,
+  buildSessionPayload, GA_EVENT_ALIASES, sessions,
+};

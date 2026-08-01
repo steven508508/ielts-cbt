@@ -70,6 +70,8 @@ module.exports = {
     ttsModel: process.env.TTS_MODEL || 'gpt-4o-mini-tts',
     ttsVoice: process.env.TTS_VOICE || 'alloy',
     // 口說即時語音對話用的 Realtime 模型（需 OpenAI 相容的 /realtime WebSocket 端點）
-    realtimeModel: process.env.REALTIME_MODEL || 'gpt-4o-realtime-preview',
+    realtimeModel: process.env.REALTIME_MODEL || 'gpt-realtime',
+    // auto = 先試 GA 協定，被拒絕再自動退回 Beta；也可強制 'ga' 或 'beta'
+    realtimeApi: process.env.REALTIME_API || 'auto',
   },
 };
