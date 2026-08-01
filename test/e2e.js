@@ -718,6 +718,44 @@ async function call(method, path, body, token) {
   const bankGone = await call('GET', `/ai/bank?q=${encodeURIComponent(stamp)}`, null, tea);
   ok(bankGone.data.items.length === 0, '刪掉的題組真的不見了');
 
+  // ── 螢光筆與註記要留得住 ────────────────────────────────
+  console.log('\n螢光筆與註記');
+  const marks = {
+    'reading:0:passage': [
+      { hid: 1, start: 18, end: 58, note: null },
+      { hid: 2, start: 120, end: 160, note: '這裡是關鍵句' },
+    ],
+    'reading:0:questions': [{ hid: 3, start: 5, end: 30, note: null }],
+    'listening:1:questions': [{ hid: 4, start: 0, end: 12, note: '注意數字' }],
+  };
+  const saveMk = await call('POST', `/exam/${attemptId}/state`, { ui: { marks } }, stu);
+  ok(saveMk.status === 200, '畫記可以存到伺服器');
+
+  const reloadMk = await call('GET', `/exam/${attemptId}`, null, stu);
+  const mkBack = reloadMk.data.state?.ui?.marks;
+  ok(!!mkBack, '重新載入考卷時拿得回畫記');
+  ok(mkBack?.['reading:0:passage']?.length === 2, '同一段落的多筆畫記都在');
+  ok(mkBack?.['reading:0:passage']?.[1]?.note === '這裡是關鍵句', '註記文字完整保留');
+  ok(mkBack?.['reading:0:questions']?.length === 1 && mkBack?.['listening:1:questions']?.length === 1,
+    '題目區與其他科目的畫記各自獨立');
+  ok(mkBack?.['listening:1:questions']?.[0]?.start === 0, '位移是數字，重畫時才塗得回原位');
+
+  // 畫記是位移，不含題目原文，所以不會夾帶答案
+  ok(!JSON.stringify(mkBack).includes('answers'), '畫記資料不含任何答案欄位');
+
+  const otherStu = await call('POST', '/auth/login', { username: 'student2', password: 'ielts1234' });
+  if (otherStu.data.token) {
+    const peek = await call('GET', `/exam/${attemptId}`, null, otherStu.data.token);
+    ok(peek.status === 403, '別的學生看不到這場考試的畫記');
+  } else {
+    ok(true, '（沒有 student2，略過跨學生檢查）');
+  }
+
+  // 清空
+  await call('POST', `/exam/${attemptId}/state`, { ui: { marks: {} } }, stu);
+  const cleared = await call('GET', `/exam/${attemptId}`, null, stu);
+  ok(Object.keys(cleared.data.state?.ui?.marks || {}).length === 0, '可以整批清掉畫記');
+
   // ── 素材（文章／音檔／圖片）不能在路上掉光 ──────────────
   console.log('\n素材保全');
   const MEDIA_PAPER = {
@@ -761,9 +799,9 @@ async function call(method, path, body, token) {
   const mediaTestId = mkTest.data.id;
   ok(mediaTestId > 0, '建立含完整素材的試卷');
 
-  const mkBack = (await call('GET', `/tests/${mediaTestId}`, null, tea)).data.paper;
-  const mkR = mkBack.modules.find((m) => m.module === 'reading').sections[0];
-  const mkL = mkBack.modules.find((m) => m.module === 'listening').sections[0];
+  const savedPaper = (await call('GET', `/tests/${mediaTestId}`, null, tea)).data.paper;
+  const mkR = savedPaper.modules.find((m) => m.module === 'reading').sections[0];
+  const mkL = savedPaper.modules.find((m) => m.module === 'listening').sections[0];
   ok(!!mkR.passage && /<img/.test(mkR.passage), '存進資料庫後文章與文章內的圖片都還在');
   ok(!!mkR.passageTitle && !!mkR.source, '文章標題與出處都在');
   ok(!!mkL.audio && !!mkL.image && !!mkL.groups[0].image && !!mkL.groups[0].questions[0].image,

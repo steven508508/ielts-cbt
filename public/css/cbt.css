@@ -110,8 +110,9 @@
 .cbt-passage h2{font-size:1.18em; margin:0 0 .1em}
 .cbt-passage .sub{opacity:.7; font-size:.85em; margin-bottom:.8rem}
 .cbt-passage p{line-height:1.75; margin:0 0 .85rem}
-.cbt-passage mark.hl{background:var(--c-hl); color:inherit; padding:0 .04em}
-.cbt-passage mark.hl.has-note{background:var(--c-note); border-bottom:2px dotted currentColor; cursor:pointer}
+/* 螢光筆：文章、題目、寫作題目區都要能畫（官方機考四科都可以畫記） */
+mark.hl{background:var(--c-hl); color:inherit; padding:0 .04em; border-radius:2px}
+mark.hl.has-note{background:var(--c-note); border-bottom:2px dotted currentColor; cursor:pointer}
 
 /* ── 題組 ───────────────────────────────────────────────── */
 .cbt-group{margin-bottom:1.8rem}

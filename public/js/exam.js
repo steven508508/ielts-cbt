@@ -74,10 +74,15 @@ const Exam = (() => {
       leaveCount: Number(data.leaveCount || 0),
       answers: {}, review: {}, writing: {}, writingDirty: {},
       module: null, section: 0, current: null, endsAt: null,
-      warned: {}, notes: (data.state?.notes || []),
+      warned: {},
+      // 螢光筆／註記：key = `科目:段落:區塊`，值是 [{hid,start,end,note}]
+      marks: (data.state?.ui?.marks && typeof data.state.ui.marks === 'object') ? data.state.ui.marks : {},
+      nextHid: 1,   // 下面依還原的資料重算，避免和既有畫記撞號
       counts: data.counts, savedSpeaking: data.saved.speaking || [],
       timerHidden: false,
     };
+    S.nextHid = Math.max(0, ...Object.values(S.marks).flat().map((r) => Number(r.hid) || 0)) + 1;
+
     for (const m of ['listening', 'reading']) { S.answers[m] = {}; S.review[m] = new Set(); }
     for (const a of data.saved.answers || []) {
       S.answers[a.module] = S.answers[a.module] || {};
@@ -237,6 +242,11 @@ const Exam = (() => {
           $('#hide-lbl').textContent = S.timerHidden ? 'Show' : 'Hide';
         },
       }, el('span', { id: 'hide-lbl' }, 'Hide')),
+      withTools && el('button', {
+        class: 'cbt-tool', id: 'note-count', title: '看我寫過的註記',
+        style: { display: 'none' },
+        onclick: showAllNotes,
+      }, ''),
       el('button', { class: 'cbt-tool', onclick: showHelp }, '❓ Help'),
       el('button', { class: 'cbt-tool', onclick: showSettings }, '⚙ Settings'));
   }
@@ -285,7 +295,10 @@ const Exam = (() => {
       el('p', {}, el('b', {}, '題號列：'), '畫面最下方。深色＝已作答，橘點＝已標記 Review，外框＝目前這題。點 Part 名稱可切換段落。'),
       el('p', {}, el('b', {}, 'Review：'), '左下角的核取方塊可以把目前這題標記起來，稍後回頭檢查。'),
       el('p', {}, el('b', {}, '箭頭：'), '右下角 ◀ ▶ 可以上一題／下一題。'),
-      el('p', {}, el('b', {}, '螢光筆與註記：'), '選取文字後按滑鼠右鍵，可以選擇 Highlight（畫線）或 Notes（加註記）。'),
+      el('p', {}, el('b', {}, '螢光筆與註記：'),
+        '選取文字後按滑鼠右鍵，可以選擇 Highlight（畫線）或 Notes（加註記）。'
+        + '文章、題目、寫作題目都可以畫，畫記會一直留到這一科結束，'
+        + '換段落、重新整理都不會消失。右上角的 📝 可以一次看完所有註記。'),
       el('p', {}, el('b', {}, 'Settings：'), '可調整文字大小與高對比配色。'),
       el('p', {}, el('b', {}, '字數限制：'), 'ONE WORD / NO MORE THAN TWO WORDS 等限制務必遵守，超過一律不給分。')));
   }
@@ -676,8 +689,12 @@ const Exam = (() => {
       if (p) p.scrollTop = scroll;
     }
     refreshFoot();
-    if (name === 'reading') { setupSplit(); setupContextMenu(); }
+    if (name === 'reading') setupSplit();
     if (name === 'listening') setupAudio();
+    // 畫記在重畫後要塗回去 —— 這是官方機考的行為，畫記整科都留著
+    setupContextMenu();
+    restoreMarks();
+    refreshNoteCount();
   }
 
   function bandBar(name, sec) {
@@ -777,25 +794,153 @@ const Exam = (() => {
     sp.addEventListener('touchmove', (e) => { move(e.touches[0].clientX); }, { passive: true });
   }
 
-  // ── 右鍵：螢光筆 / 註記 ─────────────────────────────────
+  /* ═══════════════════════════════════════════════════════════
+     螢光筆與註記
+
+     畫記不能存在 DOM 裡。作答、換段落、重新整理都會把畫面重畫一次，
+     存在 DOM 的 <mark> 會跟著被清掉 —— 官方機考裡畫記是整科都留著的。
+
+     所以改成記「文字位移」：每一筆畫記存成該區塊純文字裡的 {start, end}，
+     重畫之後再依位移重新塗上去。位移只跟題目內容有關，重畫幾次都一樣。
+     ═══════════════════════════════════════════════════════════ */
+
+  // 可以畫記的區塊。key 用來分別存放，換科換段落互不干擾。
+  const MARK_SCOPES = [
+    { sel: '#pane-passage', scope: 'passage' },              // 閱讀文章
+    { sel: '.cbt-pane.right:not(.cbt-write)', scope: 'questions' },  // 閱讀題目（寫作右欄是作答區，不畫）
+    { sel: '.cbt-pane.single', scope: 'questions' },          // 聽力題目
+    { sel: '.cbt-pane.left:not(.cbt-passage)', scope: 'prompt' },    // 寫作題目
+  ];
+
+  const scopeOf = (host) => MARK_SCOPES.find((s) => $(s.sel) === host)?.scope || 'questions';
+
+  const markKey = (scope) => `${S.module}:${S.section}:${scope}`;
+
+  /** 區塊裡所有可以畫記的文字節點（textarea/input 不算） */
+  function textNodes(host) {
+    const out = [];
+    const w = document.createTreeWalker(host, NodeFilter.SHOW_TEXT, {
+      acceptNode(n) {
+        if (!n.nodeValue) return NodeFilter.FILTER_REJECT;
+        const p = n.parentElement;
+        if (!p || ['TEXTAREA', 'SCRIPT', 'STYLE', 'INPUT', 'OPTION'].includes(p.tagName)) {
+          return NodeFilter.FILTER_REJECT;
+        }
+        return NodeFilter.FILTER_ACCEPT;
+      },
+    });
+    let n;
+    while ((n = w.nextNode())) out.push(n);
+    return out;
+  }
+
+  /** DOM 位置 → 純文字位移 */
+  function offsetIn(host, container, offset) {
+    const nodes = textNodes(host);
+    if (container.nodeType === 1) {
+      const child = container.childNodes[offset];
+      let pos = 0;
+      for (const n of nodes) {
+        if (child && (n === child || child.contains(n))) return pos;
+        pos += n.nodeValue.length;
+      }
+      return pos;
+    }
+    let pos = 0;
+    for (const n of nodes) {
+      if (n === container) return pos + offset;
+      pos += n.nodeValue.length;
+    }
+    return -1;
+  }
+
+  /**
+   * 依文字位移把 [start, end) 塗上顏色。
+   * 跨段落時會逐個文字節點分別包起來 —— 舊版用 extractContents 一次包，
+   * 只要選取跨越了段落就會失敗，只能跳出「這段文字沒辦法畫線」。
+   */
+  function paintRange(host, start, end, hid, note) {
+    const segments = [];
+    let pos = 0;
+    for (const n of textNodes(host)) {
+      const len = n.nodeValue.length;
+      const s = Math.max(start, pos);
+      const e = Math.min(end, pos + len);
+      if (e > s && !n.parentElement.closest('mark.hl')) {
+        segments.push({ node: n, s: s - pos, e: e - pos });
+      }
+      pos += len;
+      if (pos >= end) break;
+    }
+    // 由後往前包，前面的文字節點才不會被切開影響
+    const made = [];
+    for (let i = segments.length - 1; i >= 0; i -= 1) {
+      const { node, s, e } = segments[i];
+      const r = document.createRange();
+      try {
+        r.setStart(node, s);
+        r.setEnd(node, e);
+        const m = document.createElement('mark');
+        m.className = 'hl';
+        m.dataset.hid = String(hid);
+        r.surroundContents(m);
+        made.push(m);
+      } catch { /* 這一小段包不起來就跳過，其他照樣畫 */ }
+    }
+    made.reverse();
+    if (note && made[0]) {
+      made.forEach((m) => m.classList.add('has-note'));
+      made[0].dataset.note = note;
+      made[0].title = note;
+    }
+    made.forEach((m) => m.addEventListener('click', () => {
+      const rec = findMark(host, m.dataset.hid);
+      if (rec?.note) openNote(host, m, rec);
+    }));
+    return made;
+  }
+
+  function listFor(host) {
+    const key = markKey(scopeOf(host));
+    if (!S.marks[key]) S.marks[key] = [];
+    return S.marks[key];
+  }
+
+  const findMark = (host, hid) => listFor(host).find((r) => String(r.hid) === String(hid));
+
+  /** 重畫之後把畫記塗回去 */
+  function restoreMarks() {
+    for (const { sel } of MARK_SCOPES) {
+      const host = $(sel);
+      if (!host) continue;
+      for (const rec of listFor(host)) paintRange(host, rec.start, rec.end, rec.hid, rec.note);
+    }
+  }
+
+  function saveMarks() {
+    API.post(`/exam/${S.attemptId}/state`, { ui: { marks: S.marks } }).catch(() => {});
+    refreshNoteCount();
+  }
+
+  // ── 右鍵選單 ────────────────────────────────────────────
   let menuEl = null;
   function closeMenu() { menuEl?.remove(); menuEl = null; }
 
   function setupContextMenu() {
-    const targets = ['#pane-passage', '.cbt-pane.right'];
-    for (const sel of targets) {
+    for (const { sel } of MARK_SCOPES) {
       const host = $(sel);
-      if (!host) continue;
+      if (!host || host.dataset.hlReady) continue;
+      host.dataset.hlReady = '1';
       host.addEventListener('contextmenu', (e) => {
         const mark = e.target.closest('mark.hl');
-        const sel2 = window.getSelection();
-        const hasSel = sel2 && !sel2.isCollapsed && host.contains(sel2.anchorNode);
-        if (!mark && !hasSel) return;      // 沒選字也沒點到畫線 → 用瀏覽器原生選單
+        const s = window.getSelection();
+        const hasSel = s && !s.isCollapsed && host.contains(s.anchorNode);
+        if (!mark && !hasSel) return;      // 沒選字也沒點到畫記 → 用瀏覽器原生選單
         e.preventDefault();
         openMenu(e.clientX, e.clientY, { mark, host });
       });
     }
-    document.addEventListener('click', closeMenu, { once: false });
+    document.addEventListener('click', closeMenu);
     document.addEventListener('scroll', closeMenu, true);
   }
 
@@ -803,21 +948,24 @@ const Exam = (() => {
     closeMenu();
     const items = [];
     if (!mark) {
-      items.push(['🖍 Highlight　畫線', () => wrapSelection(false)]);
-      items.push(['📝 Notes　加註記', () => wrapSelection(true)]);
+      items.push(['🖍 Highlight　畫線', () => addMark(host, false)]);
+      items.push(['📝 Notes　加註記', () => addMark(host, true)]);
     } else {
-      if (mark.dataset.note) items.push(['📝 編輯註記', () => openNote(mark)]);
-      else items.push(['📝 加註記', () => { mark.classList.add('has-note'); openNote(mark); }]);
-      items.push(['✖ 清除這一段', () => { mark.replaceWith(...mark.childNodes); persistNotes(); }]);
+      const rec = findMark(host, mark.dataset.hid);
+      items.push([rec?.note ? '📝 編輯註記' : '📝 加註記', () => openNote(host, mark, rec)]);
+      items.push(['✖ 清除這一段', () => removeMark(host, mark.dataset.hid)]);
     }
-    items.push(['🧽 清除全部畫線', () => {
-      $$('mark.hl', host).forEach((m) => m.replaceWith(...m.childNodes));
-      persistNotes();
-    }]);
+    if (listFor(host).length) {
+      items.push(['🧽 清除這一頁全部畫記', () => {
+        S.marks[markKey(scopeOf(host))] = [];
+        renderExam(true);
+        saveMarks();
+      }]);
+    }
 
     menuEl = el('div', { class: 'cbt-menu', style: { left: `${x}px`, top: `${y}px` } },
       items.map(([label, fn], i) => [
-        i === items.length - 1 ? el('hr') : null,
+        i === items.length - 1 && items.length > 1 ? el('hr') : null,
         el('button', { onclick: (e) => { e.stopPropagation(); closeMenu(); fn(); } }, label),
       ]));
     (document.querySelector('.cbt') || document.body).append(menuEl);
@@ -827,28 +975,49 @@ const Exam = (() => {
     if (r.bottom > innerHeight) menuEl.style.top = `${innerHeight - r.height - 8}px`;
   }
 
-  function wrapSelection(withNote) {
+  function addMark(host, withNote) {
     const sel = window.getSelection();
     if (!sel || sel.isCollapsed) return;
-    try {
-      const range = sel.getRangeAt(0);
-      const mark = document.createElement('mark');
-      mark.className = 'hl' + (withNote ? ' has-note' : '');
-      mark.appendChild(range.extractContents());
-      range.insertNode(mark);
-      sel.removeAllRanges();
-      mark.addEventListener('click', () => { if (mark.dataset.note) openNote(mark); });
-      if (withNote) openNote(mark);
-      persistNotes();
-    } catch {
-      toast('這段文字沒辦法畫線，請選取同一個段落內的文字', 'err');
+    const range = sel.getRangeAt(0);
+    const start = offsetIn(host, range.startContainer, range.startOffset);
+    const end = offsetIn(host, range.endContainer, range.endOffset);
+    sel.removeAllRanges();
+    if (start < 0 || end <= start) return;
+
+    const list = listFor(host);
+    // 和既有畫記重疊就合併，避免一層包一層
+    const overlap = list.filter((r) => r.start < end && r.end > start);
+    const rec = {
+      hid: S.nextHid++,
+      start: Math.min(start, ...overlap.map((o) => o.start)),
+      end: Math.max(end, ...overlap.map((o) => o.end)),
+      note: overlap.map((o) => o.note).filter(Boolean).join('\n') || null,
+    };
+    for (const o of overlap) list.splice(list.indexOf(o), 1);
+    list.push(rec);
+    list.sort((a, b) => a.start - b.start);
+
+    renderExam(true);
+    saveMarks();
+    if (withNote) {
+      const m = $(`mark.hl[data-hid="${rec.hid}"]`);
+      if (m) openNote(host, m, rec);
     }
   }
 
-  function openNote(mark) {
+  function removeMark(host, hid) {
+    const list = listFor(host);
+    const i = list.findIndex((r) => String(r.hid) === String(hid));
+    if (i >= 0) list.splice(i, 1);
+    renderExam(true);
+    saveMarks();
+  }
+
+  function openNote(host, mark, rec) {
     $$('.cbt-note').forEach((n) => n.remove());
+    if (!rec) return;
     const r = mark.getBoundingClientRect();
-    const ta = el('textarea', { placeholder: '寫下你的想法…' }, mark.dataset.note || '');
+    const ta = el('textarea', { placeholder: '寫下你的想法…' }, rec.note || '');
     const box = el('div', {
       class: 'cbt-note',
       style: { left: `${Math.min(r.left, innerWidth - 280)}px`, top: `${Math.min(r.bottom + 6, innerHeight - 170)}px` },
@@ -856,19 +1025,56 @@ const Exam = (() => {
       ta,
       el('div', { class: 'acts' },
         el('button', {
-          onclick: () => { delete mark.dataset.note; mark.classList.remove('has-note'); box.remove(); persistNotes(); },
-        }, '刪除'),
+          onclick: () => { rec.note = null; box.remove(); renderExam(true); saveMarks(); },
+        }, '刪除註記'),
         el('button', {
-          onclick: () => { mark.dataset.note = ta.value; mark.classList.toggle('has-note', !!ta.value); box.remove(); persistNotes(); },
+          onclick: () => { rec.note = ta.value.trim() || null; box.remove(); renderExam(true); saveMarks(); },
         }, '儲存')));
     (document.querySelector('.cbt') || document.body).append(box);
     ta.focus();
     box.addEventListener('click', (e) => e.stopPropagation());
   }
 
-  function persistNotes() {
-    S.notes = $$('mark.hl[data-note]').map((m) => ({ text: m.textContent.slice(0, 60), note: m.dataset.note }));
-    API.post(`/exam/${S.attemptId}/state`, { ui: { notes: S.notes } }).catch(() => {});
+  /** 目前這一科總共有幾筆註記（顯示在工具列，免得學生忘記自己寫過） */
+  function refreshNoteCount() {
+    const n = Object.entries(S.marks)
+      .filter(([k]) => k.startsWith(`${S.module}:`))
+      .reduce((sum, [, list]) => sum + list.filter((r) => r.note).length, 0);
+    const badge = $('#note-count');
+    if (badge) {
+      badge.textContent = n ? `📝 ${n}` : '';
+      badge.style.display = n ? '' : 'none';
+    }
+  }
+
+  /** 列出這一科所有註記，可以直接跳過去 */
+  function showAllNotes() {
+    const rows = [];
+    for (const [key, list] of Object.entries(S.marks)) {
+      const [mod, si] = key.split(':');
+      if (mod !== S.module) continue;
+      for (const rec of list) {
+        if (rec.note) rows.push({ si: Number(si), rec });
+      }
+    }
+    UI.modal({
+      title: '我的註記',
+      width: '560px',
+      body: rows.length
+        ? el('div', {}, rows.map(({ si, rec }) => el('div', {
+            style: { padding: '.5rem 0', borderBottom: '1px solid #ddd', cursor: 'pointer' },
+            onclick: () => {
+              $$('.modal-back').forEach((b) => b.remove());
+              if (S.section !== si) { S.section = si; renderExam(); }
+              setTimeout(() => $(`mark.hl[data-hid="${rec.hid}"]`)?.scrollIntoView({ block: 'center' }), 80);
+            },
+          },
+            el('div', { class: 'small muted' },
+              `${S.module === 'reading' ? 'Passage' : 'Part'} ${si + 1}`),
+            el('div', { style: { whiteSpace: 'pre-wrap' } }, rec.note))))
+        : el('p', { class: 'muted' }, '這一科還沒有任何註記。選取文字後按滑鼠右鍵就可以加。'),
+      actions: [{ label: '關閉', value: true }],
+    });
   }
 
   // ── 寫作 ────────────────────────────────────────────────
