@@ -633,6 +633,27 @@ docker compose up -d --build
 
 新版的 `docker-compose.yml` 已經寫了 `pull_policy: build`，`git pull` 之後就不會再遇到。
 
+**帳號密碼明明是對的，卻登不進去**
+
+管理員帳號**只在資料庫第一次初始化時建立一次**。如果你先啟動過一次、之後才改
+`.env` 的 `ADMIN_PASSWORD`，資料庫裡存的仍然是舊密碼。用內建工具重設：
+
+```bash
+# 先看看有哪些帳號
+docker compose exec app node server/scripts/resetPassword.js --list
+
+# 重設密碼（帳號、新密碼）
+docker compose exec app node server/scripts/resetPassword.js admin 新的密碼
+
+# 手動安裝的話
+npm run reset-password -- admin 新的密碼
+```
+
+這個工具也用來處理「學生忘記密碼」「老師帳號被停用」等狀況，重設時會一併把帳號設為啟用。
+
+另外注意：同一個 IP 十分鐘內登入失敗 20 次會被暫時擋下（回 429），
+一直試不進去時先等幾分鐘再說。
+
 **啟動時顯示「無法連線到 MySQL」**
 檢查 `.env` 的 `DB_HOST` / `DB_USER` / `DB_PASSWORD` / `DB_NAME`，以及 MySQL 服務是否已啟動。
 若 MySQL 8 出現認證錯誤，可執行

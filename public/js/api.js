@@ -24,9 +24,16 @@ const API = (() => {
     }
     const res = await fetch(`/api${path}`, { method, headers, body: payload });
 
-    if (res.status === 401) {
+    // 401 有兩種完全不同的情況，不能混為一談：
+    //   1. 登入請求本身失敗 → 是帳號密碼錯，要把伺服器的原始訊息顯示出來
+    //   2. 其他請求的 token 失效 → 才是「登入已過期」，需要導回登入頁
+    const isLoginRequest = path === '/auth/login';
+    if (res.status === 401 && !isLoginRequest) {
+      const hadToken = !!token;
       setSession('', null);
-      if (!location.hash.startsWith('#/login')) location.hash = '#/login';
+      // 本來就沒 token（例如已經在登入頁）就不要再導轉，
+      // 否則 hashchange 會重新渲染登入頁，把錯誤訊息和已輸入的帳密一起洗掉
+      if (hadToken && !location.hash.startsWith('#/login')) location.hash = '#/login';
       throw new Error('登入已過期，請重新登入');
     }
     if (opts.raw) {

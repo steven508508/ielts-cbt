@@ -1,6 +1,6 @@
 {
   "name": "ielts-cbt",
-  "version": "2.2.0",
+  "version": "2.2.1",
   "description": "IELTS Computer-Delivered Test simulation — official-style UI, realtime AI speaking, full teacher data management",
   "main": "server/index.js",
   "type": "commonjs",
@@ -12,7 +12,8 @@
     "test": "node --test test/*.test.js",
     "test:e2e": "node test/e2e.js",
     "docker:up": "docker compose up -d --build",
-    "docker:logs": "docker compose logs -f app"
+    "docker:logs": "docker compose logs -f app",
+    "reset-password": "node server/scripts/resetPassword.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
