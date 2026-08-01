@@ -770,9 +770,10 @@ async function call(method, path, body, token) {
     '音檔、節圖片、題組圖片、單題圖片都在');
 
   const mAsg = await call('POST', '/tests/assignments', {
-    testId: mediaTestId, userId: me.data.user.id, modules: ['listening', 'reading', 'writing'],
+    testId: mediaTestId, userIds: [me.data.user.id], modules: 'listening,reading,writing',
   }, tea);
-  const mAsgId = mAsg.data.id || mAsg.data.assignmentId;
+  const mAsgId = (mAsg.data.ids || [])[0];
+  ok(Number.isInteger(mAsgId), `指派給學生（assignment #${mAsgId}）`);
   const mStart = await call('POST', '/exam/start', { assignmentId: mAsgId, testId: mediaTestId }, stu);
   const mAttempt = mStart.data.attemptId;
   const sPaper = (await call('GET', `/exam/${mAttempt}`, null, stu)).data.paper;
@@ -833,9 +834,17 @@ async function call(method, path, body, token) {
   const stuck = [];
   for (const [label, fn] of cleanup) {
     const r = await fn().catch((e) => ({ status: 0, data: { error: e.message } }));
-    if (r.timedOut || r.status === 0 || r.status >= 500) stuck.push(`${label}(${r.status})`);
+    if (r.timedOut || r.status === 0 || r.status >= 500) {
+      stuck.push(`${label}(${r.status}: ${r.data?.error || ''})`);
+    }
   }
   ok(stuck.length === 0, stuck.length ? `收尾卡住：${stuck.join('、')}` : '素材測試資料收尾完成');
+
+  // 亂七八糟的 id 要回 400，不能變成 500
+  const badId = await call('DELETE', '/tests/assignments/undefined', null, adm);
+  ok(badId.status === 400, '非數字的指派編號回 400，不會噴 500');
+  const goneId = await call('DELETE', '/tests/assignments/999999', null, adm);
+  ok(goneId.status === 404, '不存在的指派回 404');
 
   // ── AI 背景工作（整份試卷產生）─────────────────────────
   console.log('\nAI 背景工作');

@@ -190,7 +190,12 @@ router.post('/assignments', requireStaff, async (req, res) => {
 });
 
 router.delete('/assignments/:id', requireStaff, async (req, res) => {
-  await db.exec('DELETE FROM assignments WHERE id = ?', [req.params.id]);
+  const id = Number(req.params.id);
+  // 沒有這道檢查的話，非數字的 id 會直接送進 SQL：
+  // MySQL 嚴格模式會丟出 Truncated incorrect DOUBLE value，變成看不懂的 500
+  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: '指派編號不正確' });
+  const r = await db.exec('DELETE FROM assignments WHERE id = ?', [id]);
+  if (!r.affectedRows) return res.status(404).json({ error: '找不到這筆指派' });
   res.json({ ok: true });
 });
 
