@@ -1,0 +1,1274 @@
+/* ═══════════════════════════════════════════════════════════
+   老師 / 管理員後台
+   ═══════════════════════════════════════════════════════════ */
+const Admin = (() => {
+  const { el, $, sanitize, toast, band, fmtDate } = UI;
+
+  // ── 試卷管理 ────────────────────────────────────────────
+  async function tests(mount) {
+    UI.render(mount, el('div', { class: 'empty' }, '載入中…'));
+    const { tests: list } = await API.get('/tests');
+    UI.render(mount, 
+      el('div', { class: 'toolbar' },
+        el('h2', { style: { margin: 0 } }, '試卷管理'),
+        el('span', { style: { flex: 1 } }),
+        el('a', { class: 'btn', href: '#/admin/import' }, '＋ 匯入題目'),
+        el('a', { class: 'btn primary', href: '#/admin/generate' }, '✨ AI 出題')),
+      el('div', { class: 'card' },
+        list.length === 0
+          ? el('div', { class: 'empty' }, '還沒有試卷。先到「匯入題目」上傳，或用 AI 產生一份。')
+          : el('table', { class: 'data' },
+              el('thead', {}, el('tr', {},
+                el('th', {}, '標題'), el('th', {}, '類型'), el('th', {}, '狀態'),
+                el('th', {}, '建立者'), el('th', {}, '更新時間'), el('th', {}, ''))),
+              el('tbody', {}, list.map((t) => el('tr', {},
+                el('td', {}, el('b', {}, t.title), t.description ? el('div', { class: 'small muted' }, t.description) : null),
+                el('td', {}, t.test_type === 'general' ? 'General' : 'Academic'),
+                el('td', {}, t.published ? el('span', { class: 'pill ok' }, '已發布') : el('span', { class: 'pill' }, '草稿')),
+                el('td', { class: 'small' }, t.author || '—'),
+                el('td', { class: 'small muted' }, fmtDate(t.updated_at)),
+                el('td', { style: { whiteSpace: 'nowrap' } },
+                  el('button', { class: 'btn sm', onclick: () => preview(t.id) }, '預覽'),
+                  ' ',
+                  el('button', {
+                    class: 'btn sm',
+                    onclick: async () => {
+                      await API.put(`/tests/${t.id}`, { published: !t.published });
+                      toast(t.published ? '已取消發布' : '已發布', 'ok'); tests(mount);
+                    },
+                  }, t.published ? '取消發布' : '發布'),
+                  ' ',
+                  el('button', {
+                    class: 'btn sm', onclick: () => { location.hash = `#/admin/assign?test=${t.id}`; },
+                  }, '指派'),
+                  ' ',
+                  el('button', {
+                    class: 'btn sm',
+                    onclick: () => window.open(`/api/import/export/${t.id}?token=${encodeURIComponent(API.token)}`),
+                  }, '匯出'),
+                  ' ',
+                  el('button', {
+                    class: 'btn sm danger',
+                    onclick: async () => {
+                      if (!(await UI.confirm(`確定刪除「${t.title}」？相關成績也會一併刪除。`))) return;
+                      await API.del(`/tests/${t.id}`); toast('已刪除', 'ok'); tests(mount);
+                    },
+                  }, '刪除'))))))));
+  }
+
+  async function preview(id) {
+    const d = await API.get(`/tests/${id}`);
+    const p = d.paper;
+    const body = el('div', {},
+      el('p', { class: 'small muted' }, `聽力 ${d.stats.listening} 題　閱讀 ${d.stats.reading} 題`),
+      p.modules.map((m) => el('details', { open: true, style: { marginBottom: '.5rem' } },
+        el('summary', {}, el('b', {}, UI.MODULE_LABEL[m.module]), ` — ${m.sections.length} 個 section`),
+        el('div', { style: { paddingLeft: '1rem' } }, m.sections.map((s) =>
+          el('div', { style: { padding: '.35rem 0', borderBottom: '1px solid var(--line-2)' } },
+            el('b', { class: 'small' }, s.title),
+            s.audio ? el('span', { class: 'pill info', style: { marginLeft: '.4rem' } }, '有音檔') : null,
+            s.passage ? el('span', { class: 'pill', style: { marginLeft: '.4rem' } }, '有文章') : null,
+            el('div', { class: 'small muted' }, (s.groups || []).map((g) =>
+              `${g.type}（${g.questions?.length || 0} 題）`).join('、'))))))));
+    UI.modal({ title: p.title, body, width: '760px', actions: [{ label: '關閉', value: true }] });
+  }
+
+  // ── 匯入 ────────────────────────────────────────────────
+  function importPage(mount) {
+    let staged = null;   // 待儲存的試卷
+
+    const out = el('div', { class: 'card' }, el('p', { class: 'muted' }, '匯入結果會顯示在這裡。'));
+
+    function showResult(r) {
+      staged = r.ok ? r.paper : null;
+      UI.render(out, 
+        el('h3', {}, r.ok ? '✅ 解析成功' : '❌ 有錯誤需要修正'),
+        r.stats && el('p', {}, `聽力 ${r.stats.listening} 題　閱讀 ${r.stats.reading} 題　寫作 ${r.stats.writingTasks} 題　口說 ${r.stats.speakingParts} 個部分`),
+        r.errors?.length ? el('div', {}, el('b', { style: { color: 'var(--err)' } }, '錯誤：'),
+          el('ul', { class: 'small' }, r.errors.map((e) => el('li', { style: { color: 'var(--err)' } }, e)))) : null,
+        r.warnings?.length ? el('div', {}, el('b', { style: { color: 'var(--warn)' } }, '提醒：'),
+          el('ul', { class: 'small' }, r.warnings.map((w) => el('li', { class: 'muted' }, w)))) : null,
+        r.paper ? el('details', {}, el('summary', { class: 'small muted' }, '看解析後的 JSON'),
+          el('pre', { style: { maxHeight: '320px', overflow: 'auto', background: '#fafafa', padding: '.7rem', fontSize: '.78rem' } },
+            JSON.stringify(r.paper, null, 2))) : null,
+        r.ok ? el('div', { style: { marginTop: '.8rem', display: 'flex', gap: '.5rem' } },
+          el('button', { class: 'btn primary', onclick: save }, '存成新試卷'),
+          el('button', { class: 'btn', onclick: mergeInto }, '併入既有試卷'),
+          el('button', {
+            class: 'btn', onclick: () => UI.download('paper.json', JSON.stringify(r.paper, null, 2)),
+          }, '下載 JSON')) : null);
+    }
+
+    async function save() {
+      if (!staged) return;
+      const title = prompt('試卷名稱', staged.title || '新試卷');
+      if (!title) return;
+      staged.title = title;
+      try {
+        const r = await API.post('/tests', { paper: staged, published: false });
+        toast('已建立試卷', 'ok');
+        location.hash = '#/admin/tests';
+      } catch (e) { UI.alert(e.details?.errors?.join('\n') || e.message); }
+    }
+
+    async function mergeInto() {
+      const { tests: list } = await API.get('/tests');
+      const sel = el('select', {}, list.map((t) => el('option', { value: t.id }, t.title)));
+      const ok = await UI.modal({
+        title: '併入既有試卷', body: el('div', {}, el('p', {}, '選擇要併入的試卷：'), sel),
+        actions: [{ label: '取消', value: false }, { label: '併入', class: 'primary', value: true }],
+      });
+      if (!ok) return;
+      try {
+        await API.post('/import/merge', { testId: Number(sel.value), paper: staged });
+        toast('已併入', 'ok'); location.hash = '#/admin/tests';
+      } catch (e) { UI.alert(e.message); }
+    }
+
+    // ① JSON
+    const jsonPane = el('div', {},
+      el('p', { class: 'small muted' }, '上傳 .json 檔，或直接把 JSON 貼在下方。格式請參考範例檔（samples 資料夾）。'),
+      el('input', { type: 'file', accept: '.json', onchange: async (e) => {
+        const f = e.target.files[0]; if (!f) return;
+        const fd = new FormData(); fd.append('file', f);
+        try { showResult(await API.post('/import/json', fd)); } catch (er) { UI.alert(er.message); }
+      } }),
+      el('textarea', { id: 'json-text', rows: 8, placeholder: '{ "title": …, "modules": [...] }', style: { marginTop: '.7rem' } }),
+      el('button', { class: 'btn', style: { marginTop: '.5rem' }, onclick: async () => {
+        try { showResult(await API.post('/import/json', { paper: $('#json-text').value })); }
+        catch (er) { UI.alert(er.message); }
+      } }, '解析貼上的 JSON'));
+
+    // ② Excel / CSV
+    const xlsPane = el('div', {},
+      el('p', { class: 'small muted' }, '一列一題，同題組填相同的 group 值。先下載範本比較快。'),
+      el('a', { class: 'btn', href: `/api/import/template.xlsx?token=${API.token}` }, '⬇ 下載 Excel 範本'),
+      el('div', { class: 'row', style: { marginTop: '.9rem' } },
+        el('label', { class: 'field' }, el('span', {}, '試卷名稱'), el('input', { id: 'x-title', type: 'text', placeholder: '例：劍橋 18 Test 1' })),
+        el('label', { class: 'field' }, el('span', {}, '類型'),
+          el('select', { id: 'x-type' }, el('option', { value: 'academic' }, 'Academic'), el('option', { value: 'general' }, 'General Training')))),
+      el('input', { type: 'file', accept: '.xlsx,.xls,.csv', onchange: async (e) => {
+        const f = e.target.files[0]; if (!f) return;
+        const fd = new FormData();
+        fd.append('file', f);
+        fd.append('title', $('#x-title').value || f.name.replace(/\.\w+$/, ''));
+        fd.append('testType', $('#x-type').value);
+        try { showResult(await API.post('/import/spreadsheet', fd)); } catch (er) { UI.alert(er.message); }
+      } }));
+
+    // ③ 貼上 + AI 解析
+    const pastePane = el('div', {},
+      el('p', { class: 'small muted' }, '把 Word / PDF 複製出來的題目直接貼進來，AI 會判斷題型並轉成系統格式。轉完請務必人工檢查。'),
+      el('div', { class: 'row' },
+        el('label', { class: 'field' }, el('span', {}, '這是哪一科'),
+          el('select', { id: 'p-mod' },
+            el('option', { value: '' }, '讓 AI 自己判斷'),
+            el('option', { value: 'listening' }, 'Listening'),
+            el('option', { value: 'reading' }, 'Reading'),
+            el('option', { value: 'writing' }, 'Writing'),
+            el('option', { value: 'speaking' }, 'Speaking'))),
+        el('label', { class: 'field' }, el('span', {}, '試卷名稱'), el('input', { id: 'p-title', type: 'text' }))),
+      el('label', { class: 'field' }, el('span', {}, '題目原文（含文章／指示語）'),
+        el('textarea', { id: 'p-text', rows: 12, placeholder: 'READING PASSAGE 1\n\nYou should spend about 20 minutes…' })),
+      el('label', { class: 'field' }, el('span', {}, '答案卷（選填，一行一題或 1. B 這種格式都可以）'),
+        el('textarea', { id: 'p-key', rows: 5 })),
+      el('button', { class: 'btn primary', onclick: async (e) => {
+        e.target.disabled = true; e.target.textContent = 'AI 解析中…（可能要 30 秒）';
+        try {
+          showResult(await API.post('/import/parse', {
+            text: $('#p-text').value, answerKey: $('#p-key').value,
+            moduleHint: $('#p-mod').value, title: $('#p-title').value,
+          }));
+        } catch (er) { UI.alert(er.message); }
+        e.target.disabled = false; e.target.textContent = '交給 AI 解析';
+      } }, '交給 AI 解析'));
+
+    // ④ 媒體
+    const mediaPane = el('div', { id: 'media-pane' });
+    loadMedia(mediaPane);
+
+    const panes = { json: jsonPane, xls: xlsPane, paste: pastePane, media: mediaPane };
+    const holder = el('div', {}, jsonPane);
+    const bar = el('div', { class: 'tabs' },
+      [['json', 'JSON 檔'], ['xls', 'Excel / CSV'], ['paste', '貼上原文 + AI 解析'], ['media', '媒體庫（音檔／圖片）']]
+        .map(([k, label], i) => el('button', {
+          class: i === 0 ? 'active' : '',
+          onclick: (e) => {
+            [...bar.children].forEach((c) => c.classList.remove('active'));
+            e.target.classList.add('active');
+            UI.render(holder, panes[k]);
+          },
+        }, label)));
+
+    UI.render(mount, 
+      el('h2', {}, '匯入題目'),
+      bar,
+      el('div', { class: 'card' }, holder),
+      out);
+  }
+
+  async function loadMedia(pane) {
+    const render = async () => {
+      const { media } = await API.get('/media');
+      UI.render(pane, 
+        el('p', { class: 'small muted' }, '上傳後把「網址」欄的路徑貼到題目的 audio / image 欄位即可。'),
+        el('input', {
+          type: 'file', multiple: true, accept: 'audio/*,image/*',
+          onchange: async (e) => {
+            const fd = new FormData();
+            [...e.target.files].forEach((f) => fd.append('files', f));
+            try { await API.post('/media', fd); toast('上傳完成', 'ok'); render(); }
+            catch (er) { UI.alert(er.message); }
+          },
+        }),
+        el('table', { class: 'data', style: { marginTop: '1rem' } },
+          el('thead', {}, el('tr', {}, el('th', {}, '檔名'), el('th', {}, '類型'), el('th', {}, '網址'), el('th', {}, '預覽'), el('th', {}, ''))),
+          el('tbody', {}, media.map((m) => el('tr', {},
+            el('td', { class: 'small' }, m.name),
+            el('td', {}, el('span', { class: 'pill' }, m.kind)),
+            el('td', {}, el('code', { class: 'small', style: { cursor: 'pointer' }, onclick: () => { navigator.clipboard?.writeText(m.url); toast('已複製網址', 'ok'); } }, m.url)),
+            el('td', {}, m.kind === 'audio'
+              ? el('audio', { controls: true, src: m.url, style: { height: '30px', maxWidth: '200px' } })
+              : el('img', { src: m.url, style: { maxHeight: '46px', borderRadius: '3px' } })),
+            el('td', {}, el('button', {
+              class: 'btn sm danger',
+              onclick: async () => { await API.del(`/media/${m.id}`); render(); },
+            }, '刪除')))))));
+    };
+    render();
+  }
+
+  // ── AI 出題 ─────────────────────────────────────────────
+  async function generate(mount) {
+    const { types } = await API.get('/tests/question-types');
+    const objectiveTypes = Object.entries(types).filter(([, v]) => v.objective);
+
+    const f = {};
+    const result = el('div', { class: 'card' }, el('p', { class: 'muted' }, '產生結果會顯示在這裡。'));
+
+    const single = el('div', {},
+      el('div', { class: 'row' },
+        el('label', { class: 'field' }, el('span', {}, '科目'),
+          (f.module = el('select', {},
+            el('option', { value: 'listening' }, 'Listening'),
+            el('option', { value: 'reading', selected: true }, 'Reading')))),
+        el('label', { class: 'field' }, el('span', {}, '題型'),
+          (f.type = el('select', {}, objectiveTypes.map(([k, v]) => el('option', { value: k }, v.label))))),
+        el('label', { class: 'field' }, el('span', {}, '題數'), (f.count = el('input', { type: 'number', value: 6, min: 1, max: 14 })))),
+      el('div', { class: 'row' },
+        el('label', { class: 'field' }, el('span', {}, '主題'), (f.topic = el('input', { type: 'text', placeholder: '例：都市綠化、遠距工作、海洋塑膠' }))),
+        el('label', { class: 'field' }, el('span', {}, '難度'),
+          (f.difficulty = el('select', {},
+            el('option', { value: 'band 5-6' }, 'Band 5–6'),
+            el('option', { value: 'band 6-7', selected: true }, 'Band 6–7'),
+            el('option', { value: 'band 7-8' }, 'Band 7–8'),
+            el('option', { value: 'band 8-9' }, 'Band 8–9')))),
+        el('label', { class: 'field' }, el('span', {}, '起始題號'), (f.startNumber = el('input', { type: 'number', value: 1, min: 1 })))),
+      el('label', { class: 'field' },
+        el('span', {}, el('input', { type: 'checkbox', id: 'withPassage', checked: true, style: { width: 'auto', marginRight: '.4rem' } }), '同時產生文章／聽力逐字稿')),
+      el('label', { class: 'field' }, el('span', {}, '已有文章或逐字稿？貼在這裡（AI 會只依這段內容出題）'),
+        (f.passage = el('textarea', { rows: 5 }))),
+      el('label', { class: 'field' }, el('span', {}, '額外要求'), (f.extra = el('input', { type: 'text', placeholder: '例：至少 2 題是 NOT GIVEN' }))),
+      el('button', {
+        class: 'btn primary',
+        onclick: async (e) => {
+          e.target.disabled = true; e.target.textContent = 'AI 出題中…';
+          try {
+            const body = {
+              module: f.module.value, type: f.type.value, count: Number(f.count.value),
+              topic: f.topic.value, difficulty: f.difficulty.value,
+              startNumber: Number(f.startNumber.value),
+              withPassage: $('#withPassage').checked,
+              extra: f.extra.value,
+            };
+            if (f.passage.value.trim()) {
+              if (body.module === 'listening') body.transcript = f.passage.value;
+              else body.passage = f.passage.value;
+              body.withPassage = false;
+            }
+            const r = await API.post('/ai/generate', body);
+            showGenerated(r, body);
+          } catch (er) { UI.alert(er.message); }
+          e.target.disabled = false; e.target.textContent = '產生題目';
+        },
+      }, '產生題目'));
+
+    const wholeF = {};
+    const whole = el('div', {},
+      el('p', { class: 'small muted' }, '一次產生四科完整試卷（40+40 題、兩篇寫作、完整口說）。需要 2–5 分鐘，且相當耗用 API 額度。'),
+      el('div', { class: 'row' },
+        el('label', { class: 'field' }, el('span', {}, '類型'),
+          (wholeF.testType = el('select', {}, el('option', { value: 'academic' }, 'Academic'), el('option', { value: 'general' }, 'General Training')))),
+        el('label', { class: 'field' }, el('span', {}, '主題風格'), (wholeF.theme = el('input', { type: 'text', placeholder: '例：環境與科技' })))),
+      el('button', {
+        class: 'btn primary',
+        onclick: async (e) => {
+          e.target.disabled = true; e.target.textContent = '產生中…請不要關閉頁面';
+          try {
+            const r = await API.post('/ai/generate-paper', { testType: wholeF.testType.value, theme: wholeF.theme.value });
+            UI.render(result, 
+              el('h3', {}, r.ok ? '✅ 產生完成' : '⚠️ 產生完成但有格式問題'),
+              r.errors?.length ? el('ul', { class: 'small' }, r.errors.map((x) => el('li', { style: { color: 'var(--err)' } }, x))) : null,
+              r.warnings?.length ? el('ul', { class: 'small' }, r.warnings.map((x) => el('li', { class: 'muted' }, x))) : null,
+              el('div', { style: { display: 'flex', gap: '.5rem', marginTop: '.6rem' } },
+                el('button', {
+                  class: 'btn primary',
+                  onclick: async () => {
+                    try {
+                      await API.post('/tests', { paper: r.paper, published: false });
+                      toast('已存成試卷', 'ok'); location.hash = '#/admin/tests';
+                    } catch (er) { UI.alert(er.details?.errors?.join('\n') || er.message); }
+                  },
+                }, '存成試卷'),
+                el('button', { class: 'btn', onclick: () => UI.download('ai-paper.json', JSON.stringify(r.paper, null, 2)) }, '下載 JSON')));
+          } catch (er) { UI.alert(er.message); }
+          e.target.disabled = false; e.target.textContent = '產生完整試卷';
+        },
+      }, '產生完整試卷'));
+
+    function showGenerated(r, body) {
+      const group = r.group;
+      UI.render(result, 
+        el('h3', {}, '產生結果'),
+        r.passageTitle && el('p', {}, el('b', {}, r.passageTitle)),
+        r.passage && el('details', {}, el('summary', { class: 'small muted' }, '文章'),
+          el('div', { class: 'passage', html: sanitize(r.passage) })),
+        r.transcript && el('details', {}, el('summary', { class: 'small muted' }, '聽力逐字稿'),
+          el('pre', { style: { whiteSpace: 'pre-wrap', fontSize: '.85rem' } }, r.transcript)),
+        el('div', { class: 'rubric small' }, group?.instructions || ''),
+        el('table', { class: 'data' },
+          el('thead', {}, el('tr', {}, el('th', {}, '#'), el('th', {}, '題目'), el('th', {}, '答案'), el('th', {}, '解析'))),
+          el('tbody', {}, (group?.questions || []).map((q) => el('tr', {},
+            el('td', {}, String(q.number)),
+            el('td', { class: 'small' }, q.text || '(填空)'),
+            el('td', {}, el('b', {}, (q.answers || []).join(' / '))),
+            el('td', { class: 'small muted' }, q.explanation || ''))))),
+        el('div', { style: { display: 'flex', gap: '.5rem', marginTop: '.8rem' } },
+          el('button', {
+            class: 'btn primary',
+            onclick: async () => {
+              const paper = {
+                title: `AI 題組 — ${body.topic || group.type}`,
+                testType: 'academic',
+                modules: [{
+                  module: body.module,
+                  sections: [{
+                    title: body.module === 'reading' ? 'Reading Passage 1' : 'Section 1',
+                    passageTitle: r.passageTitle, passage: r.passage, transcript: r.transcript,
+                    groups: [group],
+                  }],
+                }],
+              };
+              try {
+                await API.post('/tests', { paper, published: false });
+                toast('已存成新試卷', 'ok'); location.hash = '#/admin/tests';
+              } catch (er) { UI.alert(er.details?.errors?.join('\n') || er.message); }
+            },
+          }, '存成新試卷'),
+          el('button', {
+            class: 'btn',
+            onclick: async () => {
+              await API.post('/ai/bank', { module: body.module, type: body.type, topic: body.topic, difficulty: body.difficulty, payload: { group, passage: r.passage, transcript: r.transcript } });
+              toast('已存進題庫', 'ok');
+            },
+          }, '存進題庫'),
+          el('button', { class: 'btn', onclick: () => UI.download('group.json', JSON.stringify(r, null, 2)) }, '下載 JSON')));
+    }
+
+    const holder = el('div', {}, single);
+    const bar = el('div', { class: 'tabs' },
+      [['單一題組', single], ['整份試卷', whole]].map(([label, pane], i) =>
+        el('button', {
+          class: i === 0 ? 'active' : '',
+          onclick: (e) => {
+            [...bar.children].forEach((c) => c.classList.remove('active'));
+            e.target.classList.add('active');
+            UI.render(holder, pane);
+          },
+        }, label)));
+
+    UI.render(mount, 
+      el('h2', {}, 'AI 出題'),
+      el('p', { class: 'small muted' }, 'AI 產生的題目請務必人工校對後再使用。'),
+      bar, el('div', { class: 'card' }, holder), result);
+  }
+
+  // ── 學生管理 ────────────────────────────────────────────
+  async function students(mount) {
+    const { users } = await API.get('/users?role=student');
+    const rows = el('tbody', {}, users.map((u) => el('tr', {},
+      el('td', {}, el('b', {}, u.name), el('div', { class: 'small muted' }, u.username)),
+      el('td', {}, u.class_group || '—'),
+      el('td', {}, u.candidate_no || '—'),
+      el('td', {}, u.active ? el('span', { class: 'pill ok' }, '啟用') : el('span', { class: 'pill err' }, '停用')),
+      el('td', { style: { whiteSpace: 'nowrap' } },
+        el('button', { class: 'btn sm', onclick: () => editStudent(u, mount) }, '編輯'),
+        ' ',
+        el('button', {
+          class: 'btn sm',
+          onclick: async () => {
+            const p = prompt(`為 ${u.name} 設定新密碼`);
+            if (!p) return;
+            await API.put(`/users/${u.id}`, { password: p });
+            toast('密碼已更新', 'ok');
+          },
+        }, '重設密碼')))));
+
+    UI.render(mount, 
+      el('div', { class: 'toolbar' },
+        el('h2', { style: { margin: 0 } }, `學生管理（${users.length} 人）`),
+        el('span', { style: { flex: 1 } }),
+        el('button', { class: 'btn', onclick: () => bulkAdd(mount) }, '批次新增'),
+        el('button', { class: 'btn primary', onclick: () => editStudent(null, mount) }, '＋ 新增學生')),
+      el('div', { class: 'card' },
+        users.length === 0 ? el('div', { class: 'empty' }, '還沒有學生，先按「批次新增」貼上名單。')
+          : el('table', { class: 'data' },
+              el('thead', {}, el('tr', {}, el('th', {}, '姓名 / 帳號'), el('th', {}, '班級'), el('th', {}, '考生編號'), el('th', {}, '狀態'), el('th', {}, ''))),
+              rows)));
+  }
+
+  async function editStudent(u, mount) {
+    const f = {};
+    const body = el('div', {},
+      el('div', { class: 'row' },
+        el('label', { class: 'field' }, el('span', {}, '姓名 *'), (f.name = el('input', { type: 'text', value: u?.name || '' }))),
+        el('label', { class: 'field' }, el('span', {}, '帳號 *'), (f.username = el('input', { type: 'text', value: u?.username || '', disabled: !!u })))),
+      !u && el('label', { class: 'field' }, el('span', {}, '密碼 *'), (f.password = el('input', { type: 'text', value: 'ielts1234' }))),
+      el('div', { class: 'row' },
+        el('label', { class: 'field' }, el('span', {}, '班級'), (f.classGroup = el('input', { type: 'text', value: u?.class_group || '' }))),
+        el('label', { class: 'field' }, el('span', {}, '考生編號'), (f.candidateNo = el('input', { type: 'text', value: u?.candidate_no || '' })))),
+      el('div', { class: 'row' },
+        el('label', { class: 'field' }, el('span', {}, '出生日期'), (f.dateOfBirth = el('input', { type: 'date', value: u?.date_of_birth || '' }))),
+        el('label', { class: 'field' }, el('span', {}, '國籍'), (f.nationality = el('input', { type: 'text', value: u?.nationality || '' })))));
+
+    const ok = await UI.modal({
+      title: u ? `編輯 ${u.name}` : '新增學生', body,
+      actions: [{ label: '取消', value: false }, { label: '儲存', class: 'primary', value: true }],
+    });
+    if (!ok) return;
+    const payload = Object.fromEntries(Object.entries(f).map(([k, v]) => [k, v.value]));
+    try {
+      if (u) await API.put(`/users/${u.id}`, payload);
+      else await API.post('/users', { ...payload, role: 'student' });
+      toast('已儲存', 'ok'); students(mount);
+    } catch (e) { UI.alert(e.message); }
+  }
+
+  async function bulkAdd(mount) {
+    const ta = el('textarea', { rows: 10, placeholder: '王小明,ming01,pass1234,A班,0001\n陳大文,wen02\n李美美' });
+    const cls = el('input', { type: 'text', placeholder: '沒填班級的人統一放這班' });
+    const ok = await UI.modal({
+      title: '批次新增學生', width: '640px',
+      body: el('div', {},
+        el('p', { class: 'small muted' }, '一行一位，格式：姓名, 帳號, 密碼, 班級, 考生編號。後面欄位可以省略；沒填帳號會自動產生，沒填密碼預設 ielts1234。'),
+        el('label', { class: 'field' }, el('span', {}, '預設班級'), cls),
+        ta),
+      actions: [{ label: '取消', value: false }, { label: '建立', class: 'primary', value: true }],
+    });
+    if (!ok) return;
+    try {
+      const r = await API.post('/users/bulk', { text: ta.value, classGroup: cls.value });
+      await UI.alert(el('div', {},
+        el('p', {}, `成功建立 ${r.created.length} 位。`),
+        r.skipped.length ? el('p', { style: { color: 'var(--warn)' } }, `略過 ${r.skipped.length} 位：${r.skipped.join('、')}`) : null,
+        el('table', { class: 'data' },
+          el('thead', {}, el('tr', {}, el('th', {}, '姓名'), el('th', {}, '帳號'), el('th', {}, '密碼'))),
+          el('tbody', {}, r.created.map((c) => el('tr', {}, el('td', {}, c.name), el('td', {}, c.username), el('td', {}, c.password))))),
+        el('button', {
+          class: 'btn sm', onclick: () => UI.download('students.csv',
+            '姓名,帳號,密碼,班級\n' + r.created.map((c) => `${c.name},${c.username},${c.password},${c.classGroup || ''}`).join('\n'), 'text/csv'),
+        }, '下載帳密清單 CSV')), '建立結果');
+      students(mount);
+    } catch (e) { UI.alert(e.message); }
+  }
+
+  // ── 指派考試 ────────────────────────────────────────────
+  async function assign(mount, params) {
+    const [{ tests: list }, { users }, { classes }, { assignments }] = await Promise.all([
+      API.get('/tests'), API.get('/users?role=student'), API.get('/users/classes'), API.get('/tests/assignments/all'),
+    ]);
+
+    const f = {};
+    const studentBox = el('div', {
+      style: { maxHeight: '220px', overflow: 'auto', border: '1px solid var(--line)', borderRadius: '4px', padding: '.5rem' },
+    }, users.map((u) => el('label', { style: { display: 'block', padding: '.15rem 0' } },
+      el('input', { type: 'checkbox', value: u.id, style: { width: 'auto', marginRight: '.4rem' } }),
+      `${u.name}（${u.username}）`, u.class_group ? el('span', { class: 'muted small' }, ` · ${u.class_group}`) : null)));
+
+    UI.render(mount, 
+      el('h2', {}, '指派考試'),
+      el('div', { class: 'card' },
+        el('div', { class: 'row' },
+          el('label', { class: 'field' }, el('span', {}, '試卷'),
+            (f.testId = el('select', {}, list.map((t) => el('option', { value: t.id, selected: String(t.id) === params?.test }, t.title))))),
+          el('label', { class: 'field' }, el('span', {}, '指派給整個班級'),
+            (f.classGroup = el('select', {}, el('option', { value: '' }, '（不指定）'),
+              classes.map((c) => el('option', { value: c.name }, `${c.name}（${c.n} 人）`)))))),
+        el('label', { class: 'field' }, el('span', {}, '或個別挑選學生'), studentBox),
+        el('div', { class: 'row', style: { marginTop: '.8rem' } },
+          el('label', { class: 'field' }, el('span', {}, '要考的科目'),
+            (f.modules = el('select', {},
+              el('option', { value: 'listening,reading,writing,speaking' }, '四科全考'),
+              el('option', { value: 'listening,reading' }, '只考聽力＋閱讀'),
+              el('option', { value: 'listening' }, '只考聽力'),
+              el('option', { value: 'reading' }, '只考閱讀'),
+              el('option', { value: 'writing' }, '只考寫作'),
+              el('option', { value: 'speaking' }, '只考口說')))),
+          el('label', { class: 'field' }, el('span', {}, '寫作評分'),
+            (f.writingGrading = el('select', {}, el('option', { value: 'ai' }, 'AI 自動批改'), el('option', { value: 'human' }, '老師人工批改')))),
+          el('label', { class: 'field' }, el('span', {}, '口說評分'),
+            (f.speakingGrading = el('select', {}, el('option', { value: 'ai' }, 'AI 自動評分'), el('option', { value: 'human' }, '老師人工評分'))))),
+        el('div', { class: 'row' },
+          el('label', { class: 'field' }, el('span', {}, '開放時間'), (f.openFrom = el('input', { type: 'datetime-local' }))),
+          el('label', { class: 'field' }, el('span', {}, '截止時間'), (f.openUntil = el('input', { type: 'datetime-local' }))),
+          el('label', { class: 'field' }, el('span', {}, '可考次數'), (f.maxAttempts = el('input', { type: 'number', value: 1, min: 1, max: 10 })))),
+        el('button', {
+          class: 'btn primary',
+          onclick: async () => {
+            const userIds = [...studentBox.querySelectorAll('input:checked')].map((i) => Number(i.value));
+            if (!userIds.length && !f.classGroup.value) return UI.alert('請選擇班級或至少一位學生');
+            try {
+              await API.post('/tests/assignments', {
+                testId: Number(f.testId.value), userIds, classGroup: f.classGroup.value || null,
+                modules: f.modules.value, writingGrading: f.writingGrading.value,
+                speakingGrading: f.speakingGrading.value,
+                openFrom: f.openFrom.value ? f.openFrom.value.replace('T', ' ') + ':00' : null,
+                openUntil: f.openUntil.value ? f.openUntil.value.replace('T', ' ') + ':00' : null,
+                maxAttempts: Number(f.maxAttempts.value),
+              });
+              toast('已指派並自動發布試卷', 'ok');
+              assign(mount, params);
+            } catch (e) { UI.alert(e.message); }
+          },
+        }, '確認指派')),
+
+      el('div', { class: 'card' },
+        el('h3', {}, '已指派'),
+        assignments.length === 0 ? el('p', { class: 'muted' }, '尚未指派任何考試。')
+          : el('table', { class: 'data' },
+              el('thead', {}, el('tr', {}, el('th', {}, '試卷'), el('th', {}, '對象'), el('th', {}, '科目'), el('th', {}, '評分'), el('th', {}, '期間'), el('th', {}, ''))),
+              el('tbody', {}, assignments.map((a) => el('tr', {},
+                el('td', {}, a.test_title),
+                el('td', {}, a.class_group ? `班級：${a.class_group}` : a.student_name || '—'),
+                el('td', { class: 'small' }, a.modules.split(',').map((m) => UI.MODULE_LABEL[m]?.split(' ')[0]).join('、')),
+                el('td', { class: 'small' }, `寫作 ${a.writing_grading === 'ai' ? 'AI' : '人工'} / 口說 ${a.speaking_grading === 'ai' ? 'AI' : '人工'}`),
+                el('td', { class: 'small muted' }, a.open_from ? `${fmtDate(a.open_from)} ~ ${fmtDate(a.open_until)}` : '不限'),
+                el('td', {}, el('button', {
+                  class: 'btn sm danger',
+                  onclick: async () => { await API.del(`/tests/assignments/${a.id}`); assign(mount, params); },
+                }, '取消'))))))));
+  }
+
+  // ── 成績總覽 ────────────────────────────────────────────
+  async function results(mount) {
+    const [{ results: list }, stats] = await Promise.all([API.get('/results'), API.get('/results/stats/overview')]);
+    UI.render(mount, 
+      el('div', { class: 'toolbar' },
+        el('h2', { style: { margin: 0 } }, '成績總覽'),
+        stats.pending ? el('span', { class: 'pill warn' }, `${stats.pending} 份待批改`) : null),
+      el('div', { class: 'card' },
+        el('h3', {}, '各班平均'),
+        stats.byClass.length === 0 ? el('p', { class: 'muted' }, '還沒有已批改的成績。')
+          : stats.byClass.map((c) => el('div', { class: 'crit-bar' },
+              el('span', { class: 'lbl' }, c.class_group || '未分班'),
+              el('span', { class: 'meter' }, el('i', { style: { width: `${(Number(c.avg_overall) / 9) * 100}%` } })),
+              el('span', { class: 'val' }, band(c.avg_overall))))),
+      el('div', { class: 'card' },
+        el('h3', {}, '所有考試紀錄'),
+        el('div', { style: { overflowX: 'auto' } },
+          el('table', { class: 'data' },
+            el('thead', {}, el('tr', {},
+              el('th', {}, '學生'), el('th', {}, '班級'), el('th', {}, '試卷'), el('th', {}, '狀態'),
+              el('th', {}, 'L'), el('th', {}, 'R'), el('th', {}, 'W'), el('th', {}, 'S'), el('th', {}, '總分'),
+              el('th', {}, '交卷時間'), el('th', {}, ''))),
+            el('tbody', {}, list.map((r) => el('tr', {},
+              el('td', {}, el('b', {}, r.student_name), el('div', { class: 'small muted' }, r.username)),
+              el('td', { class: 'small' }, r.class_group || '—'),
+              el('td', { class: 'small' }, r.test_title),
+              el('td', {}, statusPill(r.status)),
+              el('td', {}, band(r.listening_band)), el('td', {}, band(r.reading_band)),
+              el('td', {}, band(r.writing_band)), el('td', {}, band(r.speaking_band)),
+              el('td', {}, el('b', { style: { color: 'var(--brand)' } }, band(r.overall_band))),
+              el('td', { class: 'small muted' }, fmtDate(r.submitted_at)),
+              el('td', {}, el('a', { class: 'btn sm', href: `#/result/${r.id}` }, '檢視'))))))),
+        el('div', { style: { marginTop: '.8rem' } },
+          el('button', {
+            class: 'btn sm',
+            onclick: () => UI.download('results.csv',
+              '﻿學生,帳號,班級,試卷,聽力,閱讀,寫作,口說,總分,交卷時間\n' +
+              list.map((r) => [r.student_name, r.username, r.class_group || '', r.test_title,
+                band(r.listening_band), band(r.reading_band), band(r.writing_band), band(r.speaking_band),
+                band(r.overall_band), r.submitted_at || ''].join(',')).join('\n'), 'text/csv'),
+          }, '⬇ 匯出 CSV'))));
+  }
+
+  function statusPill(s) {
+    const map = {
+      in_progress: ['作答中', ''], submitted: ['已交卷', 'info'],
+      grading: ['批改中', 'warn'], graded: ['已完成', 'ok'],
+    };
+    const [t, k] = map[s] || [s, ''];
+    return el('span', { class: `pill ${k}` }, t);
+  }
+
+  // ── 系統設定 ────────────────────────────────────────────
+  async function settings(mount) {
+    const s = await API.get('/ai/settings');
+    const a = s.ai;
+    const f = {};
+
+    const sel = (key, opts, val) => (f[key] = el('select', {}, opts.map(([v, t]) => el('option', { value: v, selected: val === v }, t))));
+    const txt = (key, val, ph = '') => (f[key] = el('input', { type: 'text', value: val || '', placeholder: ph }));
+
+    UI.render(mount, 
+      el('h2', {}, '系統設定'),
+
+      el('div', { class: 'card' },
+        el('h3', {}, 'AI 供應商'),
+        el('p', { class: 'small muted' }, '出題、貼上解析、寫作批改、口說評分都會用這裡設定的模型。金鑰只存在你自己的伺服器資料庫，不會外流。'),
+        el('label', { class: 'field' }, el('span', {}, '主要供應商'),
+          sel('provider', [['anthropic', 'Anthropic（Claude）'], ['openai', 'OpenAI'], ['custom', '自訂端點']], a.provider)),
+
+        el('details', { open: a.provider === 'anthropic' }, el('summary', {}, el('b', {}, 'Anthropic / Claude')),
+          el('div', { class: 'row', style: { marginTop: '.6rem' } },
+            el('label', { class: 'field' }, el('span', {}, 'API Key'), txt('anthropicApiKey', a.anthropicApiKey, 'sk-ant-…')),
+            el('label', { class: 'field' }, el('span', {}, 'Base URL'), txt('anthropicBaseUrl', a.anthropicBaseUrl)),
+            el('label', { class: 'field' }, el('span', {}, '模型'), txt('anthropicModel', a.anthropicModel)))),
+
+        el('details', { open: a.provider === 'openai' }, el('summary', {}, el('b', {}, 'OpenAI（或任何 OpenAI 相容服務）')),
+          el('div', { class: 'row', style: { marginTop: '.6rem' } },
+            el('label', { class: 'field' }, el('span', {}, 'API Key'), txt('openaiApiKey', a.openaiApiKey, 'sk-…')),
+            el('label', { class: 'field' }, el('span', {}, 'Base URL'), txt('openaiBaseUrl', a.openaiBaseUrl)),
+            el('label', { class: 'field' }, el('span', {}, '模型'), txt('openaiModel', a.openaiModel)))),
+
+        el('details', { open: a.provider === 'custom' }, el('summary', {}, el('b', {}, '自訂端點（Azure / DeepSeek / Groq / Ollama / one-api …）')),
+          el('div', { class: 'row', style: { marginTop: '.6rem' } },
+            el('label', { class: 'field' }, el('span', {}, 'API 格式'),
+              sel('customProtocol', [['openai', 'OpenAI 相容'], ['anthropic', 'Anthropic 相容']], a.customProtocol)),
+            el('label', { class: 'field' }, el('span', {}, 'API Key'), txt('customApiKey', a.customApiKey)),
+            el('label', { class: 'field' }, el('span', {}, 'Base URL'), txt('customBaseUrl', a.customBaseUrl, 'https://your-host/v1')),
+            el('label', { class: 'field' }, el('span', {}, '模型'), txt('customModel', a.customModel)))),
+
+        el('h4', { style: { marginTop: '1rem' } }, '語音'),
+        el('div', { class: 'row' },
+          el('label', { class: 'field' }, el('span', {}, '語音轉文字 供應商'),
+            sel('sttProvider', [['openai', 'OpenAI（Whisper）'], ['custom', '自訂端點'], ['none', '不使用（改用瀏覽器辨識）']], a.sttProvider)),
+          el('label', { class: 'field' }, el('span', {}, 'STT 模型'), txt('sttModel', a.sttModel)),
+          el('label', { class: 'field' }, el('span', {}, '文字轉語音 供應商'),
+            sel('ttsProvider', [['openai', 'OpenAI'], ['custom', '自訂端點'], ['none', '不使用（改用瀏覽器語音）']], a.ttsProvider)),
+          el('label', { class: 'field' }, el('span', {}, 'TTS 模型'), txt('ttsModel', a.ttsModel)),
+          el('label', { class: 'field' }, el('span', {}, '考官聲音'), txt('ttsVoice', a.ttsVoice)),
+          el('label', { class: 'field' }, el('span', {}, '即時對話模型 Realtime'),
+            txt('realtimeModel', a.realtimeModel, 'gpt-4o-realtime-preview'),
+            el('span', { class: 'small muted' }, '口說即時語音對話用；留空或沒有此模型會自動退回問答模式'))),
+
+        el('div', { style: { display: 'flex', gap: '.5rem', marginTop: '.8rem' } },
+          el('button', { class: 'btn primary', onclick: saveSettings }, '儲存設定'),
+          el('button', {
+            class: 'btn',
+            onclick: async (e) => {
+              e.target.disabled = true; e.target.textContent = '測試中…';
+              try { const r = await API.post('/ai/test', { role: 'chat' }); UI.alert(`連線成功：${r.provider} / ${r.model}\n回覆：${r.reply}`); }
+              catch (er) { UI.alert(`連線失敗：${er.message}`); }
+              e.target.disabled = false; e.target.textContent = '測試文字模型';
+            },
+          }, '測試文字模型'),
+          el('button', {
+            class: 'btn',
+            onclick: async (e) => {
+              e.target.disabled = true;
+              try { const r = await API.post('/ai/test', { role: 'tts' }); UI.alert(`語音合成正常（${r.bytes} bytes）`); }
+              catch (er) { UI.alert(`語音合成失敗：${er.message}\n\n口說仍可使用瀏覽器內建語音。`); }
+              e.target.disabled = false;
+            },
+          }, '測試語音'))),
+
+      el('div', { class: 'card' },
+        el('h3', {}, '批改規則'),
+        el('label', { class: 'field' }, el('span', {},
+          (f.allowSpellingVariants = el('input', { type: 'checkbox', checked: s.marking.allowSpellingVariants, style: { width: 'auto', marginRight: '.4rem' } })),
+          '接受英式／美式拼法差異（colour = color、centre = center）')),
+        el('label', { class: 'field' }, el('span', {},
+          (f.hyphenEqualsSpace = el('input', { type: 'checkbox', checked: s.marking.hyphenEqualsSpace, style: { width: 'auto', marginRight: '.4rem' } })),
+          '連字號與空白視為相同（well-known = well known）')),
+        el('label', { class: 'field' }, el('span', {},
+          (f.expandContractions = el('input', { type: 'checkbox', checked: s.marking.expandContractions, style: { width: 'auto', marginRight: '.4rem' } })),
+          '縮寫與完整寫法視為相同（don\'t = do not）')),
+        el('p', { class: 'small muted' }, '大小寫、句尾標點、前後空白一律忽略；括號內文字視為可有可無；超過字數限制一律不給分（官方規則）。')),
+
+      el('div', { class: 'card' },
+        el('h3', {}, '原始分 → Band 對照表'),
+        el('p', { class: 'small muted' }, '格式為「最低原始分:分數」，一行一個，由高到低。官方每場考試會微調，可依你的需求修改。'),
+        el('div', { class: 'row' },
+          ['listening', 'reading_academic', 'reading_general'].map((k) =>
+            el('label', { class: 'field' }, el('span', {}, k),
+              (f[`tbl_${k}`] = el('textarea', {
+                rows: 10, style: { fontFamily: 'monospace', fontSize: '.8rem' },
+              }, (s.marking.bandTables[k] || []).map(([n, b]) => `${n}:${b}`).join('\n')))))),
+        el('button', { class: 'btn primary', onclick: saveSettings }, '儲存設定')));
+
+    async function saveSettings() {
+      const aiPatch = {};
+      for (const k of ['provider', 'anthropicApiKey', 'anthropicBaseUrl', 'anthropicModel',
+        'openaiApiKey', 'openaiBaseUrl', 'openaiModel', 'customProtocol', 'customApiKey',
+        'customBaseUrl', 'customModel', 'sttProvider', 'sttModel', 'ttsProvider', 'ttsModel',
+        'ttsVoice', 'realtimeModel']) {
+        if (f[k]) aiPatch[k] = f[k].value;
+      }
+      const bandTables = {};
+      for (const k of ['listening', 'reading_academic', 'reading_general']) {
+        const lines = String(f[`tbl_${k}`].value).split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+        bandTables[k] = lines.map((l) => l.split(':').map(Number)).filter((p) => p.length === 2 && !p.some(Number.isNaN));
+      }
+      try {
+        await API.put('/ai/settings', {
+          ai: aiPatch,
+          marking: {
+            allowSpellingVariants: f.allowSpellingVariants.checked,
+            hyphenEqualsSpace: f.hyphenEqualsSpace.checked,
+            expandContractions: f.expandContractions.checked,
+            bandTables,
+          },
+        });
+        toast('設定已儲存', 'ok');
+      } catch (e) { UI.alert(e.message); }
+    }
+  }
+
+  // ══ 檔案管理 ══════════════════════════════════════════════
+  const fmtBytes = (b) => {
+    b = Number(b || 0);
+    if (b < 1024) return `${b} B`;
+    if (b < 1048576) return `${(b / 1024).toFixed(1)} KB`;
+    if (b < 1073741824) return `${(b / 1048576).toFixed(1)} MB`;
+    return `${(b / 1073741824).toFixed(2)} GB`;
+  };
+
+  async function files(mount) {
+    const filter = { kind: '', folder: '', q: '', unusedOnly: false };
+    const selected = new Set();
+
+    const box = el('div');
+    const summary = el('div', { class: 'small muted' });
+
+    async function load() {
+      const qs = new URLSearchParams();
+      if (filter.kind) qs.set('kind', filter.kind);
+      if (filter.folder) qs.set('folder', filter.folder);
+      if (filter.q) qs.set('q', filter.q);
+      if (filter.unusedOnly) qs.set('unusedOnly', '1');
+      const d = await API.get(`/manage/media?${qs}`);
+
+      summary.textContent = `${d.media.length} 個檔案 · 共 ${fmtBytes(d.total.bytes)}`;
+      UI.render(box,
+        d.media.length === 0
+          ? el('div', { class: 'empty' }, '沒有符合條件的檔案。')
+          : el('table', { class: 'data' },
+              el('thead', {}, el('tr', {},
+                el('th', {}, el('input', {
+                  type: 'checkbox',
+                  onchange: (e) => {
+                    selected.clear();
+                    if (e.target.checked) d.media.forEach((m) => selected.add(m.id));
+                    load();
+                  },
+                })),
+                el('th', {}, '預覽'), el('th', {}, '檔名'), el('th', {}, '資料夾'),
+                el('th', {}, '大小'), el('th', {}, '使用中'), el('th', {}, '網址'), el('th', {}, ''))),
+              el('tbody', {}, d.media.map((m) => el('tr', {},
+                el('td', {}, el('input', {
+                  type: 'checkbox', checked: selected.has(m.id),
+                  onchange: (e) => { e.target.checked ? selected.add(m.id) : selected.delete(m.id); },
+                })),
+                el('td', {}, m.kind === 'audio'
+                  ? el('audio', { controls: true, src: m.url, style: { height: '30px', maxWidth: '170px' } })
+                  : el('img', { src: m.url, style: { maxHeight: '42px', borderRadius: '3px' } })),
+                el('td', {}, el('div', {}, m.name),
+                  el('div', { class: 'small muted' }, UI.fmtDate(m.createdAt), m.uploader ? ` · ${m.uploader}` : '')),
+                el('td', {}, el('input', {
+                  type: 'text', value: m.folder || '', placeholder: '（無）',
+                  style: { width: '110px', padding: '.2rem .35rem', fontSize: '.85rem' },
+                  onchange: async (e) => {
+                    await API.put(`/manage/media/${m.id}`, { label: m.label, folder: e.target.value, tags: m.tags });
+                    toast('已更新', 'ok'); load();
+                  },
+                })),
+                el('td', { class: 'small' }, fmtBytes(m.size)),
+                el('td', {}, m.usedBy.length
+                  ? el('span', { class: 'pill ok', title: m.usedBy.map((t) => t.title).join('\n') }, `${m.usedBy.length} 份試卷`)
+                  : el('span', { class: 'pill warn' }, '沒用到')),
+                el('td', {}, el('code', {
+                  class: 'small', style: { cursor: 'pointer' },
+                  onclick: () => { navigator.clipboard?.writeText(m.url); toast('已複製網址', 'ok'); },
+                }, m.url)),
+                el('td', {}, el('button', {
+                  class: 'btn sm danger',
+                  onclick: async () => {
+                    if (!(await UI.confirm(`刪除「${m.name}」？`))) return;
+                    try {
+                      await API.post('/manage/media/bulk', { action: 'delete', ids: [m.id] });
+                      toast('已刪除', 'ok'); load();
+                    } catch (e) {
+                      if (!(await UI.confirm(`${e.message}。仍要強制刪除嗎？`))) return;
+                      await API.post('/manage/media/bulk', { action: 'delete', ids: [m.id], force: true });
+                      load();
+                    }
+                  },
+                }, '刪除')))))));
+
+      UI.render(folderSel,
+        el('option', { value: '' }, '全部資料夾'),
+        d.folders.map((f) => el('option', { value: f.name, selected: filter.folder === f.name },
+          `${f.name}（${f.n}）`)));
+    }
+
+    const folderSel = el('select', { onchange: (e) => { filter.folder = e.target.value; load(); } });
+    const uploadFolder = el('input', { type: 'text', placeholder: '資料夾（選填）', style: { maxWidth: '170px' } });
+
+    UI.render(mount,
+      el('div', { class: 'toolbar' },
+        el('h2', { style: { margin: 0 } }, '檔案管理'),
+        el('span', { style: { flex: 1 } }),
+        summary),
+
+      el('div', { class: 'card' },
+        el('div', { class: 'toolbar' },
+          uploadFolder,
+          el('input', {
+            type: 'file', multiple: true, accept: 'audio/*,image/*',
+            onchange: async (e) => {
+              const fd = new FormData();
+              [...e.target.files].forEach((f) => fd.append('files', f));
+              if (uploadFolder.value) fd.append('folder', uploadFolder.value);
+              try { await API.post('/media', fd); toast('上傳完成', 'ok'); e.target.value = ''; load(); }
+              catch (er) { UI.alert(er.message); }
+            },
+          })),
+        el('div', { class: 'toolbar' },
+          el('input', {
+            type: 'text', placeholder: '搜尋檔名／標籤', style: { maxWidth: '220px' },
+            oninput: UI.debounce((e) => { filter.q = e.target.value; load(); }, 350),
+          }),
+          el('select', { onchange: (e) => { filter.kind = e.target.value; load(); } },
+            el('option', { value: '' }, '全部類型'),
+            el('option', { value: 'audio' }, '音檔'),
+            el('option', { value: 'image' }, '圖片')),
+          folderSel,
+          el('label', { class: 'small', style: { display: 'flex', alignItems: 'center', gap: '.3rem' } },
+            el('input', {
+              type: 'checkbox', style: { width: 'auto' },
+              onchange: (e) => { filter.unusedOnly = e.target.checked; load(); },
+            }), '只看沒被試卷用到的'),
+          el('span', { style: { flex: 1 } }),
+          el('button', {
+            class: 'btn sm',
+            onclick: async () => {
+              if (!selected.size) return UI.alert('請先勾選檔案');
+              const f = prompt('把選取的檔案移到哪個資料夾？（留空 = 移出資料夾）');
+              if (f === null) return;
+              await API.post('/manage/media/bulk', { action: 'move', ids: [...selected], folder: f });
+              toast('已移動', 'ok'); selected.clear(); load();
+            },
+          }, '移到資料夾'),
+          el('button', {
+            class: 'btn sm danger',
+            onclick: async () => {
+              if (!selected.size) return UI.alert('請先勾選檔案');
+              if (!(await UI.confirm(`確定刪除 ${selected.size} 個檔案？`))) return;
+              try {
+                const r = await API.post('/manage/media/bulk', { action: 'delete', ids: [...selected] });
+                toast(`已刪除 ${r.deleted} 個，釋放 ${fmtBytes(r.freedBytes)}`, 'ok');
+              } catch (e) {
+                if (!(await UI.confirm(`${e.message}。仍要強制刪除嗎？`))) return;
+                await API.post('/manage/media/bulk', { action: 'delete', ids: [...selected], force: true });
+              }
+              selected.clear(); load();
+            },
+          }, '刪除選取')),
+        box));
+
+    load();
+  }
+
+  // ══ 考試資料與成績管理 ════════════════════════════════════
+  async function data(mount) {
+    const holder = el('div');
+    const tabs = [['overview', '總覽與清理'], ['results', '成績管理'], ['papers', '試卷管理'], ['log', '維護紀錄']];
+    const bar = el('div', { class: 'tabs' }, tabs.map(([k, label], i) =>
+      el('button', {
+        class: i === 0 ? 'active' : '',
+        onclick: (e) => {
+          [...bar.children].forEach((c) => c.classList.remove('active'));
+          e.target.classList.add('active');
+          panes[k](holder);
+        },
+      }, label)));
+
+    UI.render(mount, el('h2', {}, '考試資料管理'), bar, holder);
+    panes.overview(holder);
+  }
+
+  const panes = {
+    async overview(host) {
+      UI.render(host, el('div', { class: 'empty' }, '載入中…'));
+      const d = await API.get('/manage/overview');
+      const p = d.policy;
+      const f = {};
+      const num = (key, label, hint) => el('label', { class: 'field' },
+        el('span', {}, label), (f[key] = el('input', { type: 'number', min: 0, value: p[key] })),
+        el('span', { class: 'small muted' }, hint));
+
+      const cleanupOut = el('div');
+
+      const runCleanup = async (dryRun) => {
+        const policy = {};
+        for (const k of Object.keys(f)) policy[k] = Number(f[k].value) || 0;
+        try {
+          const { report } = await API.post('/manage/cleanup', { dryRun, policy });
+          UI.render(cleanupOut, el('div', { class: 'card', style: { background: dryRun ? '#fbfbfb' : '#f3fbf5' } },
+            el('h3', {}, dryRun ? '試算結果（沒有真的刪除）' : '清理完成'),
+            report.items.length === 0
+              ? el('p', { class: 'muted' }, '目前沒有符合條件的資料。')
+              : el('table', { class: 'data' },
+                  el('thead', {}, el('tr', {}, el('th', {}, '項目'), el('th', {}, '筆數'), el('th', {}, '空間'), el('th', {}, '條件'))),
+                  el('tbody', {}, report.items.map((i) => el('tr', {},
+                    el('td', {}, i.action), el('td', {}, String(i.count)),
+                    el('td', {}, fmtBytes(i.bytes)), el('td', { class: 'small muted' }, i.detail))))),
+            el('p', {}, el('b', {}, `合計 ${report.affected} 筆，${fmtBytes(report.freedBytes)}`))));
+        } catch (e) { UI.alert(e.message); }
+      };
+
+      UI.render(host,
+        el('div', { class: 'card' },
+          el('h3', {}, '空間使用'),
+          el('div', { class: 'row' },
+            el('div', {}, el('div', { class: 'small muted' }, '資料庫'), el('div', { style: { fontSize: '1.5rem', fontWeight: '700' } }, fmtBytes(d.dbBytes))),
+            el('div', {}, el('div', { class: 'small muted' }, '上傳檔案'), el('div', { style: { fontSize: '1.5rem', fontWeight: '700' } }, fmtBytes(d.storage.totalBytes))),
+            el('div', {}, el('div', { class: 'small muted' }, '聽力音檔'), el('div', { style: { fontSize: '1.2rem' } }, `${fmtBytes(d.storage.audio.bytes)} / ${d.storage.audio.files} 個`)),
+            el('div', {}, el('div', { class: 'small muted' }, '圖片'), el('div', { style: { fontSize: '1.2rem' } }, `${fmtBytes(d.storage.image.bytes)} / ${d.storage.image.files} 個`)),
+            el('div', {}, el('div', { class: 'small muted' }, '口說錄音'), el('div', { style: { fontSize: '1.2rem' } }, `${fmtBytes(d.storage.speaking.bytes)} / ${d.storage.speaking.files} 個`))),
+          d.unusedMedia.count
+            ? el('p', { class: 'small', style: { marginTop: '.8rem' } },
+                el('span', { class: 'pill warn' }, `${d.unusedMedia.count} 個媒體檔沒有被任何試卷使用`),
+                ` 佔 ${fmtBytes(d.unusedMedia.bytes)}　`,
+                el('a', { href: '#/admin/files' }, '去檔案管理處理 →'))
+            : null),
+
+        el('div', { class: 'card' },
+          el('h3', {}, '資料筆數'),
+          el('div', { class: 'row' }, Object.entries({
+            使用者: d.counts.users, 試卷: d.counts.tests, 指派: d.counts.assignments,
+            考試場次: d.counts.attempts, 作答: d.counts.answers, 作文: d.counts.writing_responses,
+            口說: d.counts.speaking_responses, 媒體檔: d.counts.media, AI紀錄: d.counts.ai_logs,
+          }).map(([k, v]) => el('div', { style: { minWidth: '90px', flex: '0 0 auto' } },
+            el('div', { class: 'small muted' }, k),
+            el('div', { style: { fontSize: '1.3rem', fontWeight: '700' } }, String(v))))),
+          el('p', { class: 'small muted', style: { marginTop: '.6rem' } },
+            '最舊的成績：', UI.fmtDate(d.oldestResult)),
+          d.byMonth.length ? el('div', { style: { marginTop: '.8rem' } },
+            el('div', { class: 'small muted' }, '各月考試量'),
+            d.byMonth.slice(0, 12).map((m) => el('div', { class: 'crit-bar' },
+              el('span', { class: 'lbl small' }, m.ym || '—'),
+              el('span', { class: 'meter' }, el('i', {
+                style: { width: `${(Number(m.n) / Math.max(...d.byMonth.map((x) => Number(x.n)))) * 100}%` },
+              })),
+              el('span', { class: 'val small' }, String(m.n))))) : null),
+
+        el('div', { class: 'card' },
+          el('h3', {}, '自動清理設定'),
+          el('p', { class: 'small muted' }, '填 0 代表「永久保留、不自動刪除」。刪除無法復原，建議先按「試算」看看會刪掉什麼。'),
+          el('label', { class: 'field' }, el('span', {},
+            (f.enabled = el('input', { type: 'checkbox', checked: p.enabled, style: { width: 'auto', marginRight: '.4rem' } })),
+            '啟用每天自動清理')),
+          el('div', { class: 'row' },
+            num('keepResultsMonths', '成績保留（月）', '超過就連同作答、錄音一起刪除'),
+            num('keepSpeakingAudioMonths', '口說錄音保留（月）', '只刪音檔，逐字稿與分數保留'),
+            num('keepAbandonedDays', '未完成考試保留（天）', '開始了卻沒交卷的場次')),
+          el('div', { class: 'row' },
+            num('keepAiLogsDays', 'AI 呼叫紀錄保留（天）', ''),
+            num('deleteUnusedMediaDays', '未使用媒體檔保留（天）', '沒有任何試卷引用的檔案'),
+            num('runAtHour', '每天執行時間（點）', '0–23，伺服器時間')),
+          el('div', { class: 'toolbar', style: { marginTop: '.8rem' } },
+            el('button', {
+              class: 'btn primary',
+              onclick: async () => {
+                const policy = { enabled: f.enabled.checked };
+                for (const k of Object.keys(f)) if (k !== 'enabled') policy[k] = Number(f[k].value) || 0;
+                try { await API.put('/manage/policy', { policy }); toast('設定已儲存', 'ok'); }
+                catch (e) { UI.alert(e.message); }
+              },
+            }, '儲存設定'),
+            el('button', { class: 'btn', onclick: () => runCleanup(true) }, '🔍 試算（不刪除）'),
+            el('button', {
+              class: 'btn danger',
+              onclick: async () => {
+                if (!(await UI.confirm('確定要依上面的設定實際刪除資料嗎？此操作無法復原。', '執行清理'))) return;
+                await runCleanup(false);
+              },
+            }, '⚠ 立即執行清理')),
+          cleanupOut));
+    },
+
+    async results(host) {
+      const filter = { from: '', to: '', classGroup: '', testId: '', status: '', beforeMonths: '', archived: '' };
+      const selected = new Set();
+      const box = el('div');
+      const info = el('div', { class: 'small muted' });
+
+      const [{ tests: testList }, { classes }] = await Promise.all([
+        API.get('/tests'), API.get('/users/classes'),
+      ]);
+
+      const qs = () => {
+        const p = new URLSearchParams();
+        for (const [k, v] of Object.entries(filter)) if (v) p.set(k, v);
+        return p;
+      };
+
+      async function load() {
+        UI.render(box, el('div', { class: 'empty' }, '查詢中…'));
+        const d = await API.get(`/manage/results?${qs()}`);
+        info.textContent = `符合條件 ${d.summary.count} 筆，平均總分 ${d.summary.avgBand ? d.summary.avgBand.toFixed(2) : '—'}`
+          + (d.truncated ? '（只顯示前 500 筆）' : '');
+        UI.render(box, d.results.length === 0
+          ? el('div', { class: 'empty' }, '沒有符合條件的成績。')
+          : el('table', { class: 'data' },
+              el('thead', {}, el('tr', {},
+                el('th', {}, el('input', {
+                  type: 'checkbox',
+                  onchange: (e) => { selected.clear(); if (e.target.checked) d.results.forEach((r) => selected.add(r.id)); load(); },
+                })),
+                el('th', {}, '學生'), el('th', {}, '班級'), el('th', {}, '試卷'), el('th', {}, '狀態'),
+                el('th', {}, 'L'), el('th', {}, 'R'), el('th', {}, 'W'), el('th', {}, 'S'), el('th', {}, '總分'),
+                el('th', {}, '日期'), el('th', {}, ''))),
+              el('tbody', {}, d.results.map((r) => el('tr', { style: r.archived ? { opacity: '.55' } : {} },
+                el('td', {}, el('input', {
+                  type: 'checkbox', checked: selected.has(r.id),
+                  onchange: (e) => { e.target.checked ? selected.add(r.id) : selected.delete(r.id); },
+                })),
+                el('td', {}, el('b', {}, r.student_name), el('div', { class: 'small muted' }, r.username)),
+                el('td', { class: 'small' }, r.class_group || '—'),
+                el('td', { class: 'small' }, r.test_title),
+                el('td', {}, statusPill(r.status), r.archived ? el('span', { class: 'pill' }, '已封存') : null),
+                el('td', {}, band(r.listening_band)), el('td', {}, band(r.reading_band)),
+                el('td', {}, band(r.writing_band)), el('td', {}, band(r.speaking_band)),
+                el('td', {}, el('b', { style: { color: 'var(--brand)' } }, band(r.overall_band))),
+                el('td', { class: 'small muted' }, UI.fmtDate(r.submitted_at || r.started_at)),
+                el('td', {}, el('a', { class: 'btn sm', href: `#/result/${r.id}` }, '檢視')))))));
+      }
+
+      const bulk = async (action, needConfirm) => {
+        const useFilter = !selected.size;
+        if (useFilter && !Object.values(filter).some(Boolean))
+          return UI.alert('請先勾選資料，或至少設定一個篩選條件（避免誤刪全部）。');
+        const payload = useFilter ? { action, filter } : { action, ids: [...selected] };
+
+        if (needConfirm) {
+          const pre = await API.post('/manage/results/bulk', { ...payload, action: 'preview' });
+          const ok = await UI.confirm(`這會影響 ${pre.affected} 筆成績，且無法復原。確定執行嗎？`, '確定刪除');
+          if (!ok) return;
+        }
+        try {
+          const r = await API.post('/manage/results/bulk', payload);
+          toast(`完成：${r.deleted ?? r.affected} 筆`, 'ok');
+        } catch (e) {
+          if (e.details?.needsForce) {
+            const ok = await UI.confirm(`${e.message}\n再次確認要刪除嗎？`, '仍要刪除');
+            if (!ok) return;
+            const r = await API.post('/manage/results/bulk', { ...payload, force: true });
+            toast(`已刪除 ${r.deleted} 筆，釋放 ${fmtBytes(r.freedBytes)}`, 'ok');
+          } else return UI.alert(e.message);
+        }
+        selected.clear(); load();
+      };
+
+      UI.render(host,
+        el('div', { class: 'card' },
+          el('div', { class: 'row' },
+            el('label', { class: 'field' }, el('span', {}, '起始日期'),
+              el('input', { type: 'date', onchange: (e) => { filter.from = e.target.value; load(); } })),
+            el('label', { class: 'field' }, el('span', {}, '結束日期'),
+              el('input', { type: 'date', onchange: (e) => { filter.to = e.target.value; load(); } })),
+            el('label', { class: 'field' }, el('span', {}, '班級'),
+              el('select', { onchange: (e) => { filter.classGroup = e.target.value; load(); } },
+                el('option', { value: '' }, '全部'),
+                classes.map((c) => el('option', { value: c.name }, c.name)))),
+            el('label', { class: 'field' }, el('span', {}, '試卷'),
+              el('select', { onchange: (e) => { filter.testId = e.target.value; load(); } },
+                el('option', { value: '' }, '全部'),
+                testList.map((t) => el('option', { value: t.id }, t.title)))),
+            el('label', { class: 'field' }, el('span', {}, '狀態'),
+              el('select', { onchange: (e) => { filter.status = e.target.value; load(); } },
+                el('option', { value: '' }, '全部'),
+                el('option', { value: 'graded' }, '已完成'),
+                el('option', { value: 'grading' }, '批改中'),
+                el('option', { value: 'submitted' }, '已交卷'),
+                el('option', { value: 'in_progress' }, '作答中'))),
+            el('label', { class: 'field' }, el('span', {}, '只看幾個月前'),
+              el('select', { onchange: (e) => { filter.beforeMonths = e.target.value; load(); } },
+                el('option', { value: '' }, '不限'),
+                [3, 6, 12, 24, 36].map((m) => el('option', { value: m }, `${m} 個月以前`))))),
+          el('div', { class: 'toolbar' },
+            info,
+            el('span', { style: { flex: 1 } }),
+            el('a', { class: 'btn sm', href: `#`, onclick: (e) => { e.preventDefault(); window.open(`/api/manage/results/export.csv?${qs()}&token=${encodeURIComponent(API.token)}`); } }, '⬇ 匯出 CSV'),
+            el('button', { class: 'btn sm', onclick: () => bulk('archive', false) }, '封存'),
+            el('button', { class: 'btn sm', onclick: () => bulk('unarchive', false) }, '取消封存'),
+            el('button', { class: 'btn sm danger', onclick: () => bulk('delete', true) }, '刪除')),
+          el('p', { class: 'small muted' },
+            '沒有勾選任何一列時，批次動作會套用到「目前篩選條件」的全部資料 —— 例如選「24 個月以前」再按刪除，就會清掉兩年前的成績。'),
+          box));
+
+      load();
+    },
+
+    async papers(host) {
+      const selected = new Set();
+      const box = el('div');
+
+      async function load() {
+        const { tests: list } = await API.get('/manage/tests');
+        UI.render(box, el('table', { class: 'data' },
+          el('thead', {}, el('tr', {},
+            el('th', {}, el('input', {
+              type: 'checkbox',
+              onchange: (e) => { selected.clear(); if (e.target.checked) list.forEach((t) => selected.add(t.id)); load(); },
+            })),
+            el('th', {}, '標題'), el('th', {}, '狀態'), el('th', {}, '考試紀錄'),
+            el('th', {}, '指派'), el('th', {}, '大小'), el('th', {}, '更新'), el('th', {}, ''))),
+          el('tbody', {}, list.map((t) => el('tr', { style: t.archived ? { opacity: '.55' } : {} },
+            el('td', {}, el('input', {
+              type: 'checkbox', checked: selected.has(t.id),
+              onchange: (e) => { e.target.checked ? selected.add(t.id) : selected.delete(t.id); },
+            })),
+            el('td', {}, el('b', {}, t.title),
+              el('div', { class: 'small muted' }, t.test_type === 'general' ? 'General Training' : 'Academic', ' · ', t.author || '')),
+            el('td', {},
+              t.archived ? el('span', { class: 'pill' }, '已封存')
+                : t.published ? el('span', { class: 'pill ok' }, '已發布') : el('span', { class: 'pill' }, '草稿')),
+            el('td', {}, String(t.attempts)),
+            el('td', {}, String(t.assignments)),
+            el('td', { class: 'small' }, fmtBytes(t.content_bytes)),
+            el('td', { class: 'small muted' }, UI.fmtDate(t.updated_at)),
+            el('td', { style: { whiteSpace: 'nowrap' } },
+              el('button', {
+                class: 'btn sm',
+                onclick: () => window.open(`/api/manage/backup/test/${t.id}.json?token=${encodeURIComponent(API.token)}`),
+              }, '完整備份'),
+              ' ',
+              el('button', {
+                class: 'btn sm',
+                onclick: () => window.open(`/api/import/export/${t.id}?token=${encodeURIComponent(API.token)}`),
+              }, '匯出題目')))))));
+      }
+
+      const bulk = async (action) => {
+        if (!selected.size) return UI.alert('請先勾選試卷');
+        try {
+          const r = await API.post('/manage/tests/bulk', { action, ids: [...selected] });
+          toast(`完成：${r.affected ?? r.deleted} 份`, 'ok');
+        } catch (e) {
+          if (e.details?.needsForce) {
+            const ok = await UI.confirm(`${e.message}`, '仍要刪除');
+            if (!ok) return;
+            await API.post('/manage/tests/bulk', { action, ids: [...selected], force: true });
+            toast('已刪除', 'ok');
+          } else return UI.alert(e.message);
+        }
+        selected.clear(); load();
+      };
+
+      UI.render(host,
+        el('div', { class: 'card' },
+          el('div', { class: 'toolbar' },
+            el('button', { class: 'btn sm', onclick: () => bulk('publish') }, '發布'),
+            el('button', { class: 'btn sm', onclick: () => bulk('unpublish') }, '取消發布'),
+            el('button', { class: 'btn sm', onclick: () => bulk('archive') }, '封存'),
+            el('button', { class: 'btn sm', onclick: () => bulk('unarchive') }, '取消封存'),
+            el('span', { style: { flex: 1 } }),
+            el('button', { class: 'btn sm danger', onclick: () => bulk('delete') }, '刪除')),
+          el('p', { class: 'small muted' }, '封存的試卷不會出現在學生端，但成績與題目都保留。刪除會連同底下所有考試紀錄一起移除。'),
+          box));
+      load();
+    },
+
+    async log(host) {
+      const { log } = await API.get('/manage/log');
+      UI.render(host, el('div', { class: 'card' },
+        el('h3', {}, '維護紀錄'),
+        log.length === 0
+          ? el('div', { class: 'empty' }, '目前沒有紀錄。')
+          : el('table', { class: 'data' },
+              el('thead', {}, el('tr', {}, el('th', {}, '時間'), el('th', {}, '動作'),
+                el('th', {}, '筆數'), el('th', {}, '釋放空間'), el('th', {}, '執行者'), el('th', {}, '明細'))),
+              el('tbody', {}, log.map((r) => el('tr', {},
+                el('td', { class: 'small' }, UI.fmtDate(r.created_at)),
+                el('td', {}, r.action),
+                el('td', {}, String(r.affected)),
+                el('td', {}, fmtBytes(r.freed_bytes)),
+                el('td', { class: 'small' }, r.actor || '—'),
+                el('td', { class: 'small muted' },
+                  Array.isArray(r.detail)
+                    ? r.detail.map((d) => (typeof d === 'string' ? d : `${d.action} ${d.count}`)).join('、')
+                    : JSON.stringify(r.detail || '').slice(0, 120))))))));
+    },
+  };
+
+  // ══ 口說即時監看 ══════════════════════════════════════════
+  let monitorTimer = null;
+  async function monitor(mount) {
+    clearInterval(monitorTimer);
+    const box = el('div');
+    UI.render(mount,
+      el('div', { class: 'toolbar' },
+        el('h2', { style: { margin: 0 } }, '口說即時監看'),
+        el('span', { class: 'pill info' }, '每 4 秒自動更新')),
+      el('p', { class: 'small muted' }, '顯示最近 2 小時內進行過口說測驗的學生，以及 AI 考官給出的即時分數與逐字稿。'),
+      box);
+
+    const L = { FC: '流利', LR: '詞彙', GRA: '文法', PRO: '發音' };
+    async function load() {
+      let d;
+      try { d = await API.get('/speaking/monitor/active'); } catch { return; }
+      UI.render(box, d.sessions.length === 0
+        ? el('div', { class: 'card' }, el('div', { class: 'empty' }, '目前沒有進行中的口說測驗。'))
+        : d.sessions.map((s) => el('div', { class: 'card' },
+            el('div', { style: { display: 'flex', gap: '1rem', alignItems: 'flex-start', flexWrap: 'wrap' } },
+              el('div', { style: { flex: '1 1 240px' } },
+                el('h3', { style: { margin: 0, border: 'none', padding: 0 } }, s.student_name,
+                  el('span', { class: 'small muted' }, `　${s.class_group || ''}`)),
+                el('div', { class: 'small muted' }, s.test_title, ' · ', UI.fmtDate(s.updated_at)),
+                el('div', { class: 'small' },
+                  el('span', { class: `pill ${s.status === 'final' ? 'ok' : 'warn'}` },
+                    s.status === 'final' ? '已完成' : '進行中'),
+                  `　Part ${s.part || 1}　已回答 ${s.turns} 輪`)),
+              el('div', { style: { textAlign: 'right' } },
+                el('div', { class: 'small muted' }, '即時總分'),
+                el('div', { style: { fontSize: '2rem', fontWeight: '700', color: 'var(--brand)' } }, band(s.band)))),
+            s.criteria ? el('div', { style: { marginTop: '.6rem' } },
+              Object.entries(L).map(([k, lab]) => el('div', { class: 'crit-bar' },
+                el('span', { class: 'lbl small' }, lab),
+                el('span', { class: 'meter' }, el('i', { style: { width: `${((Number(s.criteria[k]) || 0) / 9) * 100}%` } })),
+                el('span', { class: 'val small' }, String(s.criteria[k] ?? '—'))))) : null,
+            s.notes ? el('p', { class: 'small' }, el('b', {}, '即時評語：'), s.notes) : null,
+            el('div', { class: 'toolbar', style: { marginTop: '.5rem' } },
+              el('button', {
+                class: 'btn sm',
+                onclick: async () => {
+                  const r = await API.get(`/speaking/${s.attempt_id}/live`);
+                  UI.modal({
+                    title: `${s.student_name} 的逐字稿`, width: '760px',
+                    body: el('pre', { style: { whiteSpace: 'pre-wrap', fontSize: '.85rem', lineHeight: '1.7' } },
+                      r.live?.transcript || '（尚無逐字稿）'),
+                    actions: [{ label: '關閉', value: true }],
+                  });
+                },
+              }, '看逐字稿'),
+              el('a', { class: 'btn sm', href: `#/result/${s.attempt_id}` }, '看成績')))));
+    }
+    load();
+    monitorTimer = setInterval(load, 4000);
+  }
+
+  return { tests, importPage, generate, students, assign, results, settings, files, data, monitor };
+})();

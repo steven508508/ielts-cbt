@@ -1,0 +1,34 @@
+{
+  "module": "writing",
+  "durationSec": 3600,
+  "sections": [
+    {
+      "title": "Writing",
+      "groups": [
+        {
+          "type": "writing_task",
+          "questions": [
+            {
+              "number": 1,
+              "taskNo": 1,
+              "minWords": 150,
+              "durationSec": 1200,
+              "image": "/uploads/image/task1-chart.png",
+              "visualDescription": "A grouped (clustered) vertical bar chart titled \"How commuters travelled to work in Riverton, 2000 and 2020\". The vertical axis is labelled \"Percentage of commuters (%)\" and runs from 0 to 60 in steps of 10. The horizontal axis shows four categories of transport: Car, Bus, Train, Bicycle. Each category has two bars side by side, one for 2000 (dark blue) and one for 2020 (light orange), with a legend in the top right. Values are: Car 55% in 2000 and 38% in 2020; Bus 22% in 2000 and 18% in 2020; Train 13% in 2000 and 26% in 2020; Bicycle 10% in 2000 and 18% in 2020. Each year's four figures total exactly 100%. Data labels are printed above each bar.",
+              "prompt": "<p>The bar chart below shows the percentage of commuters in the European city of Riverton who travelled to work by four different means of transport in 2000 and in 2020.</p><p>Summarise the information by selecting and reporting the main features, and make comparisons where relevant.</p><p><strong>Write at least 150 words.</strong></p>",
+              "sampleAnswer": "The bar chart compares the proportions of commuters in the European city of Riverton who used four different means of transport to get to work in 2000 and 2020.\n\nOverall, the private car remained the most popular option throughout the period, although its share fell substantially. Meanwhile, the two modes that gained ground were the train and the bicycle, the latter of which recorded the sharpest relative increase.\n\nIn 2000, over half of all commuters, at 55%, drove to work, more than twice the figure for the next most common mode, the bus, at 22%. Rail travel accounted for 13% of journeys, while just one commuter in ten cycled.\n\nTwenty years later, the picture had become considerably more balanced. Car use had dropped by 17 percentage points to 38%, and although driving was still the leading choice, its dominance was much less pronounced. Train use, by contrast, had doubled to 26%, overtaking the bus to become the second most popular option. Cycling also grew markedly, from 10% to 18%, while the bus was the only other mode to decline, slipping modestly to the same 18% share."
+            },
+            {
+              "number": 2,
+              "taskNo": 2,
+              "minWords": 250,
+              "durationSec": 2400,
+              "prompt": "<p>Some people believe that all secondary school students should be required to complete a period of unpaid work in their local community before they are allowed to graduate.</p><p>To what extent do you agree or disagree?</p><p>Give reasons for your answer and include any relevant examples from your own knowledge or experience.</p><p><strong>Write at least 250 words.</strong></p>",
+              "sampleAnswer": "It has been suggested that no student should leave secondary school without first having spent time volunteering in their local area. I largely agree with this proposal, provided that the placements are properly designed and do not degenerate into a box-ticking exercise.\n\nThe strongest argument in favour of compulsory community service is that it teaches lessons which cannot be delivered in a classroom. Adolescents who spend a term helping in a food bank, a care home or a primary school are confronted at first hand with the realities of poverty, ageing and disadvantage, and this tends to produce a degree of empathy and civic awareness that no textbook can generate. In Germany, where a voluntary social year has long been an established route for school leavers, participants consistently report that the experience shaped both their values and their eventual choice of career.\n\nA second benefit is more practical. Employers routinely complain that young applicants lack the so-called soft skills of punctuality, teamwork and communication, and a placement outside the sheltered environment of school is an inexpensive way of developing them. A seventeen-year-old who has had to organise a weekly activity session for elderly residents has learned to plan, negotiate and take responsibility in a way that written examinations simply do not test.\n\nThe obvious objection is that compulsion sits awkwardly with the spirit of volunteering, and that already overloaded students may come to resent a further demand on their time. This is a fair concern, but it is an argument for careful implementation rather than for abandoning the idea altogether: a modest requirement of, say, forty hours spread across two years, combined with a genuine choice of placement, would keep the burden manageable.\n\nIn conclusion, while such a scheme must be sensitively managed, I believe the social and personal benefits of requiring community service clearly outweigh the reservations about making it obligatory."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

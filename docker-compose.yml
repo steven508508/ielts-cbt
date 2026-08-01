@@ -1,0 +1,92 @@
+# ─────────────────────────────────────────────────────────────
+#  一行指令把整套系統跑起來：
+#     cp .env.docker.example .env  &&  編輯 .env  &&  docker compose up -d
+# ─────────────────────────────────────────────────────────────
+
+services:
+  db:
+    image: mysql:8.0
+    container_name: ielts-db
+    restart: unless-stopped
+    command: >
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --default-authentication-plugin=mysql_native_password
+      --max_allowed_packet=64M
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?請在 .env 設定 DB_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${DB_NAME:-ielts_cbt}
+      MYSQL_USER: ${DB_USER:-ielts}
+      MYSQL_PASSWORD: ${DB_PASSWORD:?請在 .env 設定 DB_PASSWORD}
+      TZ: ${TZ:-Asia/Taipei}
+    volumes:
+      - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    # 預設不對外開放資料庫連接埠；要用工具連進來再打開下面兩行
+    # ports:
+    #   - "127.0.0.1:3306:3306"
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ielts-cbt:latest
+    container_name: ielts-app
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      TZ: ${TZ:-Asia/Taipei}
+      UPLOAD_DIR: /data/uploads
+
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_NAME: ${DB_NAME:-ielts_cbt}
+      DB_USER: ${DB_USER:-ielts}
+      DB_PASSWORD: ${DB_PASSWORD}
+
+      JWT_SECRET: ${JWT_SECRET:?請在 .env 設定 JWT_SECRET（一長串隨機字元）}
+      TOKEN_TTL: ${TOKEN_TTL:-12h}
+      TRUST_PROXY: ${TRUST_PROXY:-1}
+
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin1234}
+      ADMIN_NAME: ${ADMIN_NAME:-系統管理員}
+
+      # 第一次啟動要不要匯入範例試卷與示範帳號
+      SEED_DEMO: ${SEED_DEMO:-0}
+
+      # AI（留空也能跑，之後在網頁「系統設定」填即可）
+      AI_PROVIDER: ${AI_PROVIDER:-anthropic}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-https://api.anthropic.com}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-sonnet-4-5}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o}
+      CUSTOM_PROTOCOL: ${CUSTOM_PROTOCOL:-openai}
+      CUSTOM_API_KEY: ${CUSTOM_API_KEY:-}
+      CUSTOM_BASE_URL: ${CUSTOM_BASE_URL:-}
+      CUSTOM_MODEL: ${CUSTOM_MODEL:-}
+      STT_PROVIDER: ${STT_PROVIDER:-openai}
+      STT_MODEL: ${STT_MODEL:-whisper-1}
+      TTS_PROVIDER: ${TTS_PROVIDER:-openai}
+      TTS_MODEL: ${TTS_MODEL:-gpt-4o-mini-tts}
+      TTS_VOICE: ${TTS_VOICE:-alloy}
+      REALTIME_MODEL: ${REALTIME_MODEL:-gpt-4o-realtime-preview}
+    volumes:
+      - uploads:/data/uploads
+    ports:
+      - "${APP_PORT:-3000}:3000"
+
+volumes:
+  db_data:
+  uploads:

@@ -1,0 +1,635 @@
+{
+  "module": "reading",
+  "durationSec": 3600,
+  "sections": [
+    {
+      "title": "Reading Passage 1",
+      "passageTitle": "The Frozen Harvest",
+      "passage": "<p>Long before mechanical refrigeration, the wealthy of several civilisations enjoyed chilled food and drink. In Persia, builders raised domed structures called yakhchals, whose thick clay walls and deep storage pits held winter ice through the desert summer. Chinese texts from the Zhou dynasty list court officials whose only duty was the filling of the royal ice cellars, and Roman authors grumbled at the price of snow carried down from the mountains to cool wine. In every one of these cases, however, ice was a luxury reserved for a small elite. What altered in the nineteenth century was not the science of keeping things cold, which changed remarkably little, but the scale on which ice could be gathered, moved and sold.</p><p>The change began with a young Bostonian named Frederic Tudor. In February 1806 he loaded ice cut from his family's pond onto the Favorite, a brig he had bought for the purpose, and sailed for the Caribbean island of Martinique, certain that the tropics would pay well for something New England discarded every spring. The voyage was a humiliation. Tudor had given almost no thought to what would happen once the cargo was landed: there was no ice house on the island, no established market for the product and no local habit of using it. Much of the cargo melted on the quayside while he searched for buyers, and he came home several thousand dollars in debt. Within a few years he had spent time in prison for money he owed.</p><p>He had, however, diagnosed the problem correctly, and he pursued it for the next forty years with a persistence that bordered on obsession. Ice, he came to understand, was not difficult to obtain; it was difficult to keep. Early cargoes were packed in hay and woollen blankets, which soaked up meltwater and rotted. The solution came from the sawmills of Maine, whose waste sawdust was almost free. Packed around the blocks, it trapped pockets of air, drained readily and did not decay, and losses on a long voyage fell from well over half the cargo to a small fraction of it. Tudor also redesigned the ice house itself, giving it double walls separated by an air gap and a raised floor that let meltwater drain away instead of pooling around the stack.</p><p>The second bottleneck was labour. Ice cut by hand with saws and chisels came out in blocks of uneven size which stacked badly, leaving air spaces through which warmth could travel. In 1825 Nathaniel Wyeth, a hotel manager who worked for Tudor, devised an ice cutter: iron blades fixed to a frame that a single horse could drag across a frozen pond, scoring the surface into a grid. The blocks prised out of that grid were square, uniform and could be packed tightly together. The cost of harvesting a tonne of ice fell by roughly nine-tenths, and one man with a horse did the work of a dozen with saws.</p><p>Supply was useless without demand, and Tudor's third innovation was commercial rather than technical. On reaching a new port he would give ice away to bar keepers and cafe owners on condition that they used it for a whole season. Customers who had grown accustomed to a cold drink would not willingly go back to a warm one, and when the free supply ended the merchants had little choice but to buy. Any rival who appeared was undercut, sometimes at a loss, until he withdrew.</p><p>The trade's most improbable success came in 1833, when the Tuscany sailed from Boston to Calcutta carrying about 180 tonnes of ice. The voyage crossed the equator twice and lasted four months. Roughly two-thirds of the cargo survived the journey, and the profits were such that the merchants of Calcutta raised a subscription and built a substantial store to receive future shipments. For much of the century, ice cut from ponds within a day's cart ride of Boston was on sale in India, Cuba, Brazil and the Philippines.</p><p>In Britain the product acquired something close to a brand name. Ice from Wenham Lake, north of Boston, was thought unusually clear, and from 1845 the Wenham Lake Ice Company kept premises in the Strand in London, where a block was displayed in the window each morning with a newspaper placed behind it so that passers-by could read through the ice. The name became a byword for quality, so much so that Norwegian exporters later renamed a lake near Oslo in order to sell their own ice under it.</p><p>The end came from two directions at once. From the 1870s onwards, machines that made ice by compressing and expanding ammonia became reliable and cheap enough to install in breweries, meat works and eventually ordinary shops, and they worked just as well in a warm winter as in a cold one. At the same time the natural product began to lose its reputation. Ponds and rivers near expanding cities were receiving untreated sewage, and public health officials linked contaminated ice to outbreaks of typhoid. A commodity whose chief virtue was purity could not long survive the suspicion that it carried disease. By 1920 the natural ice trade of North America had all but disappeared, though the insulated stores and delivery rounds it had created were inherited, almost unchanged, by the manufacturers who replaced it.</p>",
+      "groups": [
+        {
+          "type": "tfng",
+          "instructions": "Do the following statements agree with the information given in Reading Passage 1?\n\nWrite\n\nTRUE if the statement agrees with the information\nFALSE if the statement contradicts the information\nNOT GIVEN if there is no information on this",
+          "questions": [
+            {
+              "number": 1,
+              "text": "In ancient Persia, ice was available to people of every social class.",
+              "answers": [
+                "FALSE"
+              ],
+              "explanation": "The passage states: 'In every one of these cases, however, ice was a luxury reserved for a small elite.' This contradicts the idea that all social classes had access to ice."
+            },
+            {
+              "number": 2,
+              "text": "The whole of Tudor's first cargo had melted before he could sell any of it.",
+              "answers": [
+                "FALSE"
+              ],
+              "explanation": "The passage says only that 'Much of the cargo melted on the quayside while he searched for buyers', which contradicts the claim that the entire cargo was lost."
+            },
+            {
+              "number": 3,
+              "text": "Sawdust was adopted as a packing material partly because it cost almost nothing.",
+              "answers": [
+                "TRUE"
+              ],
+              "explanation": "The passage states: 'The solution came from the sawmills of Maine, whose waste sawdust was almost free.'"
+            },
+            {
+              "number": 4,
+              "text": "Wyeth originally designed his ice cutter for a purpose other than harvesting ice.",
+              "answers": [
+                "NOT GIVEN"
+              ],
+              "explanation": "The passage records only that Wyeth was 'a hotel manager who worked for Tudor' and that he 'devised an ice cutter'. Nothing is said about any other intended purpose for the device."
+            },
+            {
+              "number": 5,
+              "text": "Ice from Wenham Lake was sold in London at a higher price than ice from other sources.",
+              "answers": [
+                "NOT GIVEN"
+              ],
+              "explanation": "The passage describes the reputation of Wenham Lake ice and the shop in the Strand ('The name became a byword for quality'), but it makes no mention of the price at which it was sold."
+            },
+            {
+              "number": 6,
+              "text": "Machines that manufactured ice had an advantage over natural ice when winters were mild.",
+              "answers": [
+                "TRUE"
+              ],
+              "explanation": "The passage states that the ammonia machines 'worked just as well in a warm winter as in a cold one', an advantage natural ice, cut from frozen ponds, did not have."
+            }
+          ]
+        },
+        {
+          "type": "gap_fill",
+          "wordLimit": 2,
+          "instructions": "Complete the table below.\n\nChoose NO MORE THAN TWO WORDS from the passage for each answer.",
+          "bodyHtml": "<h4>Frederic Tudor and the natural ice trade</h4><table><tr><th>Problem</th><th>Solution or outcome</th></tr><tr><td>In 1806 Martinique had no [[7]] in which a cargo of ice could be kept.</td><td>Tudor failed to sell most of the shipment and returned home in debt.</td></tr><tr><td>Hay and woollen blankets soaked up meltwater and rotted.</td><td>Blocks were packed instead in [[8]], a waste product of the mills of Maine that cost almost nothing.</td></tr><tr><td>Blocks cut by hand were of uneven size and stacked badly.</td><td>From 1825 a horse-drawn [[9]] scored the pond into a grid; harvesting costs fell by about [[10]].</td></tr><tr><td>Calcutta had nowhere to keep the ice landed in 1833.</td><td>Merchants there raised a [[11]] and paid for a permanent store to be built.</td></tr></table>",
+          "questions": [
+            {
+              "number": 7,
+              "answers": [
+                "ice house"
+              ],
+              "explanation": "The passage states: 'there was no ice house on the island, no established market for the product and no local habit of using it.'"
+            },
+            {
+              "number": 8,
+              "answers": [
+                "sawdust"
+              ],
+              "explanation": "The passage states: 'The solution came from the sawmills of Maine, whose waste sawdust was almost free.'"
+            },
+            {
+              "number": 9,
+              "answers": [
+                "ice cutter"
+              ],
+              "explanation": "The passage states: 'In 1825 Nathaniel Wyeth, a hotel manager who worked for Tudor, devised an ice cutter: iron blades fixed to a frame that a single horse could drag across a frozen pond, scoring the surface into a grid.'"
+            },
+            {
+              "number": 10,
+              "answers": [
+                "nine-tenths"
+              ],
+              "explanation": "The passage states: 'The cost of harvesting a tonne of ice fell by roughly nine-tenths, and one man with a horse did the work of a dozen with saws.'"
+            },
+            {
+              "number": 11,
+              "answers": [
+                "subscription"
+              ],
+              "explanation": "The passage states: 'the merchants of Calcutta raised a subscription and built a substantial store to receive future shipments.'"
+            }
+          ]
+        },
+        {
+          "type": "short_answer",
+          "wordLimit": 3,
+          "instructions": "Answer the questions below.\n\nChoose NO MORE THAN THREE WORDS from the passage for each answer.",
+          "questions": [
+            {
+              "number": 12,
+              "text": "What was the name of the ship that carried Tudor's first cargo of ice?",
+              "answers": [
+                "(the) Favorite"
+              ],
+              "explanation": "The passage states: 'In February 1806 he loaded ice cut from his family's pond onto the Favorite, a brig he had bought for the purpose, and sailed for the Caribbean island of Martinique.'"
+            },
+            {
+              "number": 13,
+              "text": "In which London street did the Wenham Lake Ice Company have premises?",
+              "answers": [
+                "(the) Strand"
+              ],
+              "explanation": "The passage states: 'from 1845 the Wenham Lake Ice Company kept premises in the Strand in London.'"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Reading Passage 2",
+      "passageTitle": "The Forests Between the Tides",
+      "passage": "<p><strong>A</strong> Few forests are as easy to recognise, or as hard to love at first sight, as a mangrove. Seen from a boat at low tide, a mangrove stand is a thicket of glossy leaves balanced on a tangle of pale roots above grey, sulphurous mud. Yet the word mangrove does not describe a family of plants at all. It is an ecological label rather than a taxonomic one: some seventy species drawn from more than twenty unrelated plant families have independently arrived at the same way of life, growing in the intertidal zone of tropical and subtropical coasts where fresh water meets salt and where the ground is flooded and drained twice a day. What such plants share is not ancestry but circumstance.</p><p><strong>B</strong> The conditions they tolerate would kill almost any other tree. Seawater draws moisture out of ordinary root cells rather than supplying it, and mangroves meet this difficulty in two ways: an ultrafiltration membrane at the root surface excludes as much as nine-tenths of the salt in the water they take up, and glands in the leaves of some species excrete whatever gets through, leaving visible crystals on the surface. The mud poses a second problem, since waterlogged sediment holds almost no oxygen. Many mangroves therefore produce pneumatophores, pencil-shaped aerial roots that grow vertically out of the mud and admit air through pores when the tide is out. A third adaptation concerns reproduction. A seed dropped into moving salt water has little chance of finding anywhere to germinate, so many mangroves are viviparous: the seed sprouts while still attached to the parent, and what eventually drops is not a seed but a propagule, a ready-made seedling that may drift for weeks before lodging in soft mud and putting out roots within hours.</p><p><strong>C</strong> That root tangle, so awkward for anyone on foot, is the reason coastal fishing communities have always valued mangroves. The submerged prop roots create a maze of shaded, structurally complex water in which small animals can hide from larger ones, and a great many commercially important fish, crabs and prawns pass part of their life cycle there before moving out to open water or reef. Where mangroves have been cleared, catches of these species have generally fallen, and one widely cited set of estimates puts the annual value of a hectare of intact mangrove to nearby fisheries well above the return from most of the uses for which mangroves are cleared. That benefit, however, is spread thinly across many small operators rather than concentrated in a single owner, and so rarely appears on anybody's balance sheet.</p><p><strong>D</strong> The belief that mangroves shield the coast behind them is older than the evidence for it. After the Indian Ocean tsunami of December 2004, several rapid studies reported that villages standing behind wide belts of mangrove had suffered far fewer deaths than comparable villages on cleared shorelines. The more careful analyses that followed were considerably cooler. Some of the sheltered villages, it emerged, also lay behind sand ridges, or further from the water, or at greater elevation, and the statistical methods used could not separate the trees from the terrain. The position that has settled out of the argument is narrower but much better supported: against a wave of that size a belt of trees offers only limited protection, but against the ordinary, incessant forces that shape coastlines - wind-driven waves, storm surge and the erosion of the shore itself - mangroves are demonstrably effective.</p><p><strong>E</strong> The most recent argument for mangroves is one that nobody made at all until the present century. Hectare for hectare, mangrove forests lock away carbon several times faster than most tropical rainforest, and the greater part of the store - commonly more than two-thirds of it - is not in the wood above the water but in the sediment underneath. Waterlogged mud contains so little oxygen that the bacteria which normally break down dead plant material work extremely slowly, and organic matter simply accumulates for millennia. The implication is uncomfortable for anyone clearing a mangrove: felling the trees releases a few decades of growth, but draining and digging out the sediment releases the accumulation of millennia.</p><p><strong>F</strong> That is very largely what happened over the late twentieth century. Between 1980 and 2000 the world lost something in the region of a quarter of its mangroves, an unusually rapid decline for any forest type. Ponds for farmed prawns were the single largest cause across South-East Asia and Latin America, followed by rice paddy, salt pans, timber and charcoal cutting, and the ordinary spread of ports, roads and housing along a shoreline. Mangroves were an easy target: they stood on ground that few people owned outright, they were widely regarded as wasteland, and in several countries the law classified them as exactly that. Since 2000 the rate of loss has slowed markedly, partly because much of the accessible forest had already gone and partly because a number of governments began to protect what remained.</p><p><strong>G</strong> Protection has been accompanied by a great deal of replanting, and here the record is poor. Governments, aid agencies and companies have put many millions of seedlings into the ground, usually with volunteers and a photographer present, and follow-up surveys in the Philippines, Sri Lanka and elsewhere have repeatedly found survival rates below one-fifth after a few years. The commonest mistake is not botanical but geographical. Planters favour the genus Rhizophora because its long, heavy propagules are easy to collect, easy to carry and easy to push into soft ground; and they plant them on open mudflats and seagrass beds low in the tidal frame, because such places are empty and nobody objects. But mangroves do not naturally grow there. They grow higher up the shore, where the tide covers the ground for only part of the day, and a seedling planted below that zone is drowned by degrees.</p><p><strong>H</strong> The alternative approach, usually called ecological mangrove restoration, starts from the observation that mangroves are good at colonising suitable ground without any help; if they are absent from a place where they once grew, something is preventing them from returning. Its practitioners therefore begin by studying the movement of water across a degraded site and identifying the obstruction, most often the wall of an abandoned prawn pond or a road embankment that has cut the site off from the tide. Removing the barrier and restoring the flow will, at many sites, bring the forest back unaided within a few years, and with a mixture of species that no planting scheme would have chosen. Seedlings are used only where there is no source of propagules nearby. The remaining difficulty is not ecological but social: a degraded pond belongs to somebody, or is claimed by several people at once, and until the question of who holds the land has been settled, the hydrology will stay exactly as it is.</p>",
+      "groups": [
+        {
+          "type": "matching",
+          "optionsTitle": "List of Headings",
+          "instructions": "Reading Passage 2 has eight paragraphs, A-H.\n\nChoose the correct heading for paragraphs A-G from the list of headings below.\n\nWrite the correct number, i-x, in boxes 14-20 on your answer sheet.",
+          "options": [
+            {
+              "key": "i",
+              "text": "A comparison with the reefs offshore"
+            },
+            {
+              "key": "ii",
+              "text": "Carbon held in the ground"
+            },
+            {
+              "key": "iii",
+              "text": "Coping with salt, airless mud and moving water"
+            },
+            {
+              "key": "iv",
+              "text": "Good intentions on the wrong ground"
+            },
+            {
+              "key": "v",
+              "text": "Uncertainty about the number of species"
+            },
+            {
+              "key": "vi",
+              "text": "A group defined by habitat, not by ancestry"
+            },
+            {
+              "key": "vii",
+              "text": "Restoring the flow rather than planting trees"
+            },
+            {
+              "key": "viii",
+              "text": "Why the forests were cleared"
+            },
+            {
+              "key": "ix",
+              "text": "A refuge that supports a catch"
+            },
+            {
+              "key": "x",
+              "text": "Disputed protection against a great wave"
+            }
+          ],
+          "questions": [
+            {
+              "number": 14,
+              "text": "Paragraph A",
+              "answers": [
+                "vi"
+              ],
+              "explanation": "Paragraph A states: 'It is an ecological label rather than a taxonomic one: some seventy species drawn from more than twenty unrelated plant families have independently arrived at the same way of life ... What such plants share is not ancestry but circumstance.'"
+            },
+            {
+              "number": 15,
+              "text": "Paragraph B",
+              "answers": [
+                "iii"
+              ],
+              "explanation": "Paragraph B describes three adaptations in turn: salt exclusion and excretion, pneumatophores because 'waterlogged sediment holds almost no oxygen', and viviparous propagules for 'a seed dropped into moving salt water'."
+            },
+            {
+              "number": 16,
+              "text": "Paragraph C",
+              "answers": [
+                "ix"
+              ],
+              "explanation": "Paragraph C states: 'The submerged prop roots create a maze of shaded, structurally complex water in which small animals can hide from larger ones, and a great many commercially important fish, crabs and prawns pass part of their life cycle there.'"
+            },
+            {
+              "number": 17,
+              "text": "Paragraph D",
+              "answers": [
+                "x"
+              ],
+              "explanation": "Paragraph D reviews the argument over the 2004 tsunami: 'against a wave of that size a belt of trees offers only limited protection', following studies whose methods 'could not separate the trees from the terrain'."
+            },
+            {
+              "number": 18,
+              "text": "Paragraph E",
+              "answers": [
+                "ii"
+              ],
+              "explanation": "Paragraph E states: 'the greater part of the store - commonly more than two-thirds of it - is not in the wood above the water but in the sediment underneath.'"
+            },
+            {
+              "number": 19,
+              "text": "Paragraph F",
+              "answers": [
+                "viii"
+              ],
+              "explanation": "Paragraph F lists the causes of loss: 'Ponds for farmed prawns were the single largest cause across South-East Asia and Latin America, followed by rice paddy, salt pans, timber and charcoal cutting, and the ordinary spread of ports, roads and housing along a shoreline.'"
+            },
+            {
+              "number": 20,
+              "text": "Paragraph G",
+              "answers": [
+                "iv"
+              ],
+              "explanation": "Paragraph G states: 'The commonest mistake is not botanical but geographical ... they plant them on open mudflats and seagrass beds low in the tidal frame ... But mangroves do not naturally grow there.'"
+            }
+          ]
+        },
+        {
+          "type": "matching",
+          "optionsTitle": "List of Paragraphs",
+          "instructions": "Which paragraph contains the following information?\n\nWrite the correct letter, A-H, in boxes 21-24 on your answer sheet.\n\nNB You may use any letter more than once.",
+          "options": [
+            {
+              "key": "A",
+              "text": "Paragraph A"
+            },
+            {
+              "key": "B",
+              "text": "Paragraph B"
+            },
+            {
+              "key": "C",
+              "text": "Paragraph C"
+            },
+            {
+              "key": "D",
+              "text": "Paragraph D"
+            },
+            {
+              "key": "E",
+              "text": "Paragraph E"
+            },
+            {
+              "key": "F",
+              "text": "Paragraph F"
+            },
+            {
+              "key": "G",
+              "text": "Paragraph G"
+            },
+            {
+              "key": "H",
+              "text": "Paragraph H"
+            }
+          ],
+          "questions": [
+            {
+              "number": 21,
+              "text": "a figure for the proportion of planted seedlings that are still alive after several years",
+              "answers": [
+                "G"
+              ],
+              "explanation": "Paragraph G states: 'follow-up surveys in the Philippines, Sri Lanka and elsewhere have repeatedly found survival rates below one-fifth after a few years.'"
+            },
+            {
+              "number": 22,
+              "text": "a statistic for the amount of mangrove lost during a twenty-year period",
+              "answers": [
+                "F"
+              ],
+              "explanation": "Paragraph F states: 'Between 1980 and 2000 the world lost something in the region of a quarter of its mangroves, an unusually rapid decline for any forest type.'"
+            },
+            {
+              "number": 23,
+              "text": "a reference to how long a young mangrove plant can travel before it takes root",
+              "answers": [
+                "B"
+              ],
+              "explanation": "Paragraph B states that what drops from the tree is 'a propagule, a ready-made seedling that may drift for weeks before lodging in soft mud and putting out roots within hours.'"
+            },
+            {
+              "number": 24,
+              "text": "a reference to uncertainty over land ownership as a barrier to restoration",
+              "answers": [
+                "H"
+              ],
+              "explanation": "Paragraph H states: 'a degraded pond belongs to somebody, or is claimed by several people at once, and until the question of who holds the land has been settled, the hydrology will stay exactly as it is.'"
+            }
+          ]
+        },
+        {
+          "type": "mcq_single",
+          "instructions": "Choose the correct letter, A, B, C or D.\n\nWrite the correct letter in box 25 on your answer sheet.",
+          "options": [
+            {
+              "key": "A",
+              "text": "They were later shown to have relied on invented data."
+            },
+            {
+              "key": "B",
+              "text": "Their conclusions could not be separated from the effects of local landforms."
+            },
+            {
+              "key": "C",
+              "text": "They were disregarded by most researchers at the time."
+            },
+            {
+              "key": "D",
+              "text": "They underestimated the degree of protection mangroves provide."
+            }
+          ],
+          "questions": [
+            {
+              "number": 25,
+              "text": "What does the writer say in paragraph D about the studies published soon after the 2004 tsunami?",
+              "answers": [
+                "B"
+              ],
+              "explanation": "Paragraph D states: 'Some of the sheltered villages, it emerged, also lay behind sand ridges, or further from the water, or at greater elevation, and the statistical methods used could not separate the trees from the terrain.'"
+            }
+          ]
+        },
+        {
+          "type": "mcq_single",
+          "instructions": "Choose the correct letter, A, B, C or D.\n\nWrite the correct letter in box 26 on your answer sheet.",
+          "options": [
+            {
+              "key": "A",
+              "text": "It survives better than other genera in deep water."
+            },
+            {
+              "key": "B",
+              "text": "It is the only genus that will grow on seagrass beds."
+            },
+            {
+              "key": "C",
+              "text": "Its propagules are simple to gather, carry and plant."
+            },
+            {
+              "key": "D",
+              "text": "It grows more quickly than other mangrove species."
+            }
+          ],
+          "questions": [
+            {
+              "number": 26,
+              "text": "According to paragraph G, why is Rhizophora the genus most often chosen for planting?",
+              "answers": [
+                "C"
+              ],
+              "explanation": "Paragraph G states: 'Planters favour the genus Rhizophora because its long, heavy propagules are easy to collect, easy to carry and easy to push into soft ground.'"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Reading Passage 3",
+      "passageTitle": "The Measure of All Things",
+      "passage": "<p>Anyone who wants to argue that schools should not be measured has a weak hand, and I do not intend to play it. Public education consumes an enormous share of public money and shapes the prospects of every child who passes through it; the idea that its results should be taken on trust is indefensible. The argument I want to make is narrower, and I think more serious. It is that the way we now measure schooling has stopped being a description of what schools do and has become the thing that schools do - and that a measure which behaves in this way tells us progressively less about the very quality it was designed to capture.</p><p>The case for measurement is easily stated and largely correct. External written examinations, when they were first introduced, broke the grip of patronage on entry to universities and the professions: a candidate's paper could be marked without anyone knowing whose son he was. More recently, published results have made certain kinds of failure impossible to deny. Before national data were collected, a school could serve a poor neighbourhood badly for a generation while describing itself as doing its best in difficult circumstances, and nobody outside the building could prove otherwise. The numbers ended that particular comfort, and any reform that quietly restored it would be a reform in the wrong direction. Injustice that cannot be counted is injustice that is easily denied.</p><p>The difficulty appears at the next step, when a number collected in order to observe a system is used instead to steer it. Economists have a name for what follows. Goodhart's law, formulated in the 1970s in relation to monetary policy, holds that when a measure becomes a target it ceases to be a good measure - not because those affected are dishonest, but because any indicator is only a partial proxy for the thing it stands for, and pressure applied to the proxy travels first into the gap between the two. A school judged on the proportion of its pupils reaching a particular grade will improve that proportion. Whether it has improved education is a separate question, and one the indicator is no longer able to answer.</p><p>Consider first what happens to the timetable. Where results in two or three subjects determine a school's public standing, its funding and, in some systems, the employment of its head teacher, hours drift towards those subjects and away from everything else. Surveys of primary teachers in England and in the United States have described the same pattern: less time for history, geography, art and music, and, in the weeks before a test, a curriculum consisting largely of past papers, question formats and the particular habits of the marking scheme. This is not cheating, and the teachers involved are not cynics. They are responding, sensibly, to the only signal the system sends them clearly.</p><p>Consider next what happens to pupils. If a school is judged on the number of children who cross a threshold, the children who matter to that number are the ones already close to it. Extra tuition, the strongest teachers and the head teacher's attention flow towards the borderline; pupils comfortably above it, and those far enough below it that no plausible effort will carry them across in time, are of no consequence to the published figure. Researchers have called this educational triage, and it is not the fault of the schools that practise it. The system asks them to move a certain number of children across a line, and they do exactly that, which is precisely the problem.</p><p>Does any of this actually distort the results themselves? The evidence says that it does. One American researcher has spent much of his career comparing scores on high-stakes tests with those from independent, low-stakes surveys sat by the same pupils in the same subjects. The pattern is consistent: where results on the high-stakes test have risen steeply, the low-stakes measure shows a small improvement or none at all. The gain, in other words, lies largely in the test rather than in the pupils. It is inflation, and, as with the monetary kind, the figures go on looking excellent for exactly as long as nobody asks what they now buy.</p><p>There is a deeper problem behind that one. Tests measure what is cheap and quick to measure, and what is cheap to measure is not what education is chiefly for. A marker can establish rapidly whether a pupil recalls the date of a treaty or applies a familiar procedure to a familiar equation. It is far harder to establish whether she can hold an argument together over four pages, work usefully with people she did not choose, or keep going at a problem that refuses to yield in twenty minutes. Qualities such as perseverance are therefore barely touched by the instruments we rely on, and - this is the part that should worry us - in a system driven by measurement, a quality that goes unmeasured is a quality that quietly stops being taught. Not everything that counts can be counted, runs the remark usually attributed to Einstein; it was in fact written by a sociologist, William Bruce Cameron, some years after Einstein's death, which is itself a modest illustration of how loosely we handle evidence when a phrase is convenient.</p><p>The remedy is not to stop measuring. It is to change how much rests on the measurement. A country can find out how well its children read by testing a carefully drawn sample of them, as several already do, rather than every child in every school every year; the resulting figures are more than accurate enough to guide policy, and no individual school's fate hangs on them. Judgements about a particular school can then be made in the way we make judgements about a hospital or a court - by people who understand the work, who visit, who look at what pupils have actually produced across a year, and whose assessments are moderated against those of colleagues elsewhere in order to keep them honest. Such arrangements are slower and messier than a league table, and they demand something a league table does not: a willingness to trust professionals whom one has also taken the trouble to inspect.</p><p>None of this is an argument for ignorance. It is an argument about what we do with knowledge once we have it. A thermometer held over a candle will show a rising temperature, and if we have agreed in advance to reward whoever produces the highest reading, we shall end up with a great many candles and a room that is no warmer than before.</p>",
+      "groups": [
+        {
+          "type": "ynng",
+          "instructions": "Do the following statements agree with the claims of the writer in Reading Passage 3?\n\nWrite\n\nYES if the statement agrees with the claims of the writer\nNO if the statement contradicts the claims of the writer\nNOT GIVEN if it is impossible to say what the writer thinks about this",
+          "questions": [
+            {
+              "number": 27,
+              "text": "The results achieved by schools should be accepted without outside scrutiny.",
+              "answers": [
+                "NO"
+              ],
+              "explanation": "The writer states: 'Public education consumes an enormous share of public money and shapes the prospects of every child who passes through it; the idea that its results should be taken on trust is indefensible.'"
+            },
+            {
+              "number": 28,
+              "text": "Published results have brought genuine failings in some schools to light.",
+              "answers": [
+                "YES"
+              ],
+              "explanation": "The writer states: 'Before national data were collected, a school could serve a poor neighbourhood badly for a generation while describing itself as doing its best in difficult circumstances, and nobody outside the building could prove otherwise. The numbers ended that particular comfort.'"
+            },
+            {
+              "number": 29,
+              "text": "Goodhart's law has a stronger effect in education than in the field for which it was first formulated.",
+              "answers": [
+                "NOT GIVEN"
+              ],
+              "explanation": "The writer notes only that the law was 'formulated in the 1970s in relation to monetary policy' and then applies it to schools. No comparison is made between the strength of the effect in the two fields."
+            },
+            {
+              "number": 30,
+              "text": "Teachers who spend lesson time on past examination papers are behaving dishonestly.",
+              "answers": [
+                "NO"
+              ],
+              "explanation": "The writer states: 'This is not cheating, and the teachers involved are not cynics. They are responding, sensibly, to the only signal the system sends them clearly.'"
+            },
+            {
+              "number": 31,
+              "text": "Schools that concentrate their resources on borderline pupils are responding logically to the way they are judged.",
+              "answers": [
+                "YES"
+              ],
+              "explanation": "The writer states: 'it is not the fault of the schools that practise it. The system asks them to move a certain number of children across a line, and they do exactly that, which is precisely the problem.'"
+            },
+            {
+              "number": 32,
+              "text": "The arrangements the writer proposes would cost less to run than the present system.",
+              "answers": [
+                "NOT GIVEN"
+              ],
+              "explanation": "The writer says the proposed arrangements are 'slower and messier than a league table' and demand a willingness to trust professionals, but says nothing at all about what they would cost."
+            }
+          ]
+        },
+        {
+          "type": "gap_fill_bank",
+          "optionsTitle": "List of Words",
+          "instructions": "Complete the summary using the list of words, A-J, below.\n\nWrite the correct letter, A-J, in boxes 33-36 on your answer sheet.",
+          "bodyHtml": "<h4>Score inflation and the limits of testing</h4><p>Comparisons between high-stakes tests and [[33]] surveys sat by the same pupils suggest that steep rises in results are not matched by comparable gains in learning; the writer compares the effect to inflation in an economy. Behind this lies a further problem: assessment concentrates on whatever is [[34]] to mark, which in practice means factual recall and routine procedures. Qualities such as [[35]] are scarcely assessed at all, and in a system driven by measurement whatever goes unmeasured is eventually no longer taught. The writer's solution is not to abandon testing but to reduce the [[36]] that hang on any single set of results.</p>",
+          "options": [
+            {
+              "key": "A",
+              "text": "cheap"
+            },
+            {
+              "key": "B",
+              "text": "compulsory"
+            },
+            {
+              "key": "C",
+              "text": "independent"
+            },
+            {
+              "key": "D",
+              "text": "curriculum"
+            },
+            {
+              "key": "E",
+              "text": "perseverance"
+            },
+            {
+              "key": "F",
+              "text": "consequences"
+            },
+            {
+              "key": "G",
+              "text": "anonymous"
+            },
+            {
+              "key": "H",
+              "text": "funding"
+            },
+            {
+              "key": "I",
+              "text": "frequency"
+            },
+            {
+              "key": "J",
+              "text": "difficulty"
+            }
+          ],
+          "questions": [
+            {
+              "number": 33,
+              "answers": [
+                "C"
+              ],
+              "explanation": "The passage states: 'One American researcher has spent much of his career comparing scores on high-stakes tests with those from independent, low-stakes surveys sat by the same pupils in the same subjects.'"
+            },
+            {
+              "number": 34,
+              "answers": [
+                "A"
+              ],
+              "explanation": "The passage states: 'Tests measure what is cheap and quick to measure, and what is cheap to measure is not what education is chiefly for.'"
+            },
+            {
+              "number": 35,
+              "answers": [
+                "E"
+              ],
+              "explanation": "The passage states: 'Qualities such as perseverance are therefore barely touched by the instruments we rely on.'"
+            },
+            {
+              "number": 36,
+              "answers": [
+                "F"
+              ],
+              "explanation": "The passage states: 'The remedy is not to stop measuring. It is to change how much rests on the measurement,' and goes on to propose sample testing so that 'no individual school's fate hangs on' the figures."
+            }
+          ]
+        },
+        {
+          "type": "mcq_multi",
+          "selectCount": 2,
+          "instructions": "Choose TWO letters, A-F.\n\nWrite the correct letters in boxes 37 and 38 on your answer sheet.",
+          "options": [
+            {
+              "key": "A",
+              "text": "a reduction in the time given to subjects that are not tested"
+            },
+            {
+              "key": "B",
+              "text": "an increase in the number of teachers leaving the profession"
+            },
+            {
+              "key": "C",
+              "text": "the concentration of resources on pupils near a grade boundary"
+            },
+            {
+              "key": "D",
+              "text": "a growing reluctance among universities to trust school results"
+            },
+            {
+              "key": "E",
+              "text": "a fall in the number of pupils entering public examinations"
+            },
+            {
+              "key": "F",
+              "text": "increased disagreement between parents and head teachers"
+            }
+          ],
+          "questions": [
+            {
+              "number": 37,
+              "text": "Which TWO effects of high-stakes testing does the writer describe?",
+              "answers": [
+                "A",
+                "C"
+              ],
+              "explanation": "For A, the passage states: 'hours drift towards those subjects and away from everything else ... less time for history, geography, art and music'. For C, it states: 'Extra tuition, the strongest teachers and the head teacher's attention flow towards the borderline'. Options B, D, E and F are not mentioned anywhere in the passage."
+            },
+            {
+              "number": 38,
+              "answers": [
+                "A",
+                "C"
+              ],
+              "explanation": "For A, the passage states: 'hours drift towards those subjects and away from everything else ... less time for history, geography, art and music'. For C, it states: 'Extra tuition, the strongest teachers and the head teacher's attention flow towards the borderline'. Options B, D, E and F are not mentioned anywhere in the passage."
+            }
+          ]
+        },
+        {
+          "type": "mcq_single",
+          "instructions": "Choose the correct letter, A, B, C or D.\n\nWrite the correct letter in box 39 on your answer sheet.",
+          "options": [
+            {
+              "key": "A",
+              "text": "It is normally credited to the wrong person."
+            },
+            {
+              "key": "B",
+              "text": "It was originally intended as a criticism of schools."
+            },
+            {
+              "key": "C",
+              "text": "Later research has shown it to be mistaken."
+            },
+            {
+              "key": "D",
+              "text": "The writer regards it as an excuse for poor record-keeping."
+            }
+          ],
+          "questions": [
+            {
+              "number": 39,
+              "text": "What point does the writer make about the remark that not everything that counts can be counted?",
+              "answers": [
+                "A"
+              ],
+              "explanation": "The passage states: 'Not everything that counts can be counted, runs the remark usually attributed to Einstein; it was in fact written by a sociologist, William Bruce Cameron, some years after Einstein's death.'"
+            }
+          ]
+        },
+        {
+          "type": "mcq_single",
+          "instructions": "Choose the correct letter, A, B, C or D.\n\nWrite the correct letter in box 40 on your answer sheet.",
+          "options": [
+            {
+              "key": "A",
+              "text": "Examinations ought to be replaced entirely by the judgement of teachers."
+            },
+            {
+              "key": "B",
+              "text": "Measuring schools is worthwhile, but attaching heavy consequences to the measurements corrupts them."
+            },
+            {
+              "key": "C",
+              "text": "Standardised tests are unreliable chiefly because they are badly written."
+            },
+            {
+              "key": "D",
+              "text": "Schools in poorer areas should be assessed by different criteria from other schools."
+            }
+          ],
+          "questions": [
+            {
+              "number": 40,
+              "text": "Which of the following best expresses the writer's central argument?",
+              "answers": [
+                "B"
+              ],
+              "explanation": "The writer sets out this thesis at the start - 'the way we now measure schooling has stopped being a description of what schools do and has become the thing that schools do' - and confirms it at the end: 'The remedy is not to stop measuring. It is to change how much rests on the measurement.'"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

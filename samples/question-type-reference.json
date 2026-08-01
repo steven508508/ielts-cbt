@@ -1,0 +1,292 @@
+{
+  "_readme": [
+    "這是「所有官方題型」的寫法範本，每一種題型各一個例子。",
+    "把需要的 group 物件複製到你自己的試卷裡即可。",
+    "共用規則：",
+    "  · answers 是陣列，可以寫多個可接受寫法；也可以在同一個字串裡用 // 分隔。",
+    "  · 括號內文字視為可有可無：\"(the) north gate\" → 兩種寫法都算對。",
+    "  · wordLimit 是字數上限，超過一律不給分（官方規則）。",
+    "  · bodyHtml 裡用 [[題號]] 代表空格，題號必須和 questions 裡的 number 完全對應。",
+    "  · mcq_single 的選項放在「每一題」的 options；matching / gap_fill_bank 的選項放在「題組」的 options。"
+  ],
+  "title": "題型範本 Question Type Reference",
+  "testType": "academic",
+  "modules": [
+    {
+      "module": "listening",
+      "durationSec": 1800,
+      "sections": [
+        {
+          "title": "題型範本 · 聽力",
+          "audio": "/uploads/audio/example.mp3",
+          "transcript": "（把整段聽力逐字稿放在這裡，檢討報告會用到）",
+          "groups": [
+            {
+              "type": "gap_fill",
+              "instructions": "Complete the form below. Write <strong>NO MORE THAN TWO WORDS AND/OR A NUMBER</strong> for each answer.",
+              "wordLimit": 2,
+              "allowNumbers": true,
+              "bodyHtml": "<h4>Membership Application</h4><table><tr><th>Name</th><td>Helen [[1]]</td></tr><tr><th>Phone</th><td>[[2]]</td></tr><tr><th>Preferred class</th><td>[[3]]</td></tr></table>",
+              "questions": [
+                { "number": 1, "answers": ["Bradfield"], "explanation": "對話中拼出 B-R-A-D-F-I-E-L-D。" },
+                { "number": 2, "answers": ["07700 900412"], "explanation": "女生重複了一次號碼。" },
+                { "number": 3, "answers": ["(the) morning yoga", "morning yoga"], "explanation": "先提到 evening 又改口說 morning。" }
+              ]
+            },
+            {
+              "type": "mcq_single",
+              "instructions": "Choose the correct letter, <strong>A</strong>, <strong>B</strong> or <strong>C</strong>.",
+              "questions": [
+                {
+                  "number": 4,
+                  "text": "How do most visitors reach the centre?",
+                  "options": [
+                    { "key": "A", "text": "by bus" },
+                    { "key": "B", "text": "on foot" },
+                    { "key": "C", "text": "by bicycle" }
+                  ],
+                  "answers": ["B"],
+                  "explanation": "『Almost everyone just walks down from the station.』"
+                },
+                {
+                  "number": 5,
+                  "text": "What has recently changed at the centre?",
+                  "options": [
+                    { "key": "A", "text": "the opening hours" },
+                    { "key": "B", "text": "the membership fee" },
+                    { "key": "C", "text": "the car park" }
+                  ],
+                  "answers": ["A"],
+                  "explanation": "『We now stay open until ten on weekdays.』"
+                }
+              ]
+            },
+            {
+              "type": "mcq_multi",
+              "instructions": "Choose <strong>TWO</strong> letters, <strong>A–E</strong>.",
+              "selectCount": 2,
+              "options": [
+                { "key": "A", "text": "a swimming pool" },
+                { "key": "B", "text": "an indoor climbing wall" },
+                { "key": "C", "text": "a running track" },
+                { "key": "D", "text": "a café" },
+                { "key": "E", "text": "a children's play area" }
+              ],
+              "questions": [
+                { "number": 6, "text": "Which TWO facilities are being added next year?", "answers": ["B", "D"], "explanation": "『the climbing wall … and finally a proper café』" },
+                { "number": 7, "answers": ["B", "D"] }
+              ]
+            },
+            {
+              "type": "label_image",
+              "instructions": "Label the plan below. Choose the correct letter, <strong>A–F</strong>, next to Questions 8–10.",
+              "image": "/uploads/image/example-map.png",
+              "options": [
+                { "key": "A", "text": "north of the entrance" },
+                { "key": "B", "text": "beside the lake" },
+                { "key": "C", "text": "behind the visitor centre" },
+                { "key": "D", "text": "at the end of the boardwalk" },
+                { "key": "E", "text": "opposite the car park" },
+                { "key": "F", "text": "on the hilltop" }
+              ],
+              "questions": [
+                { "number": 8, "text": "Bird hide", "answers": ["B"] },
+                { "number": 9, "text": "Wildflower meadow", "answers": ["F"] },
+                { "number": 10, "text": "Picnic area", "answers": ["E"] }
+              ]
+            },
+            {
+              "type": "matching",
+              "instructions": "What does the speaker say about each area? Choose <strong>THREE</strong> answers from the box.",
+              "optionsTitle": "Comments",
+              "options": [
+                { "key": "A", "text": "It is closed for repairs." },
+                { "key": "B", "text": "It is popular with families." },
+                { "key": "C", "text": "It requires a separate ticket." },
+                { "key": "D", "text": "It has recently been extended." }
+              ],
+              "questions": [
+                { "number": 11, "text": "the woodland trail", "answers": ["D"] },
+                { "number": 12, "text": "the boathouse", "answers": ["A"] },
+                { "number": 13, "text": "the discovery centre", "answers": ["B"] }
+              ]
+            },
+            {
+              "type": "short_answer",
+              "instructions": "Answer the questions below. Write <strong>NO MORE THAN THREE WORDS</strong> for each answer.",
+              "wordLimit": 3,
+              "questions": [
+                { "number": 14, "text": "What must visitors bring in winter?", "answers": ["waterproof boots", "(a pair of) waterproof boots"] }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "module": "reading",
+      "durationSec": 3600,
+      "sections": [
+        {
+          "title": "題型範本 · 閱讀",
+          "passageTitle": "Example Passage",
+          "passage": "<p><strong>A</strong> 第一段內容…</p><p><strong>B</strong> 第二段內容…</p><p><strong>C</strong> 第三段內容…</p>",
+          "groups": [
+            {
+              "type": "tfng",
+              "instructions": "Do the following statements agree with the information given in the passage? Write <strong>TRUE</strong> if the statement agrees, <strong>FALSE</strong> if it contradicts, <strong>NOT GIVEN</strong> if there is no information on this.",
+              "questions": [
+                { "number": 15, "text": "The technique was first used in Europe.", "answers": ["TRUE"], "explanation": "第 A 段第 2 句。" },
+                { "number": 16, "text": "The cost fell every year after 1890.", "answers": ["FALSE"], "explanation": "第 B 段說 1893 年反而上漲。" },
+                { "number": 17, "text": "The inventor later regretted the decision.", "answers": ["NOT GIVEN"], "explanation": "文章沒有提到他的感受。" }
+              ]
+            },
+            {
+              "type": "ynng",
+              "instructions": "Do the following statements agree with the claims of the writer? Write <strong>YES</strong>, <strong>NO</strong> or <strong>NOT GIVEN</strong>.",
+              "questions": [
+                { "number": 18, "text": "The writer believes the policy has been effective.", "answers": ["NO"] }
+              ]
+            },
+            {
+              "type": "matching",
+              "instructions": "The passage has three paragraphs, <strong>A–C</strong>. Choose the correct heading for each paragraph from the list below.",
+              "optionsTitle": "List of Headings",
+              "options": [
+                { "key": "i", "text": "An unexpected consequence" },
+                { "key": "ii", "text": "The origins of the method" },
+                { "key": "iii", "text": "Why costs began to rise" },
+                { "key": "iv", "text": "A comparison with other countries" }
+              ],
+              "questions": [
+                { "number": 19, "text": "Paragraph A", "answers": ["ii"] },
+                { "number": 20, "text": "Paragraph B", "answers": ["iii"] },
+                { "number": 21, "text": "Paragraph C", "answers": ["i"] }
+              ]
+            },
+            {
+              "type": "gap_fill_bank",
+              "instructions": "Complete the summary using the list of words, <strong>A–F</strong>, below.",
+              "optionsTitle": "Word list",
+              "options": [
+                { "key": "A", "text": "expensive" },
+                { "key": "B", "text": "seasonal" },
+                { "key": "C", "text": "abandoned" },
+                { "key": "D", "text": "regulated" },
+                { "key": "E", "text": "profitable" },
+                { "key": "F", "text": "imported" }
+              ],
+              "bodyHtml": "<p>The trade was highly [[22]] at first, but because supply was entirely [[23]] it proved difficult to sustain, and by 1920 most sites had been [[24]].</p>",
+              "questions": [
+                { "number": 22, "answers": ["E"] },
+                { "number": 23, "answers": ["B"] },
+                { "number": 24, "answers": ["C"] }
+              ]
+            },
+            {
+              "type": "gap_fill",
+              "instructions": "Complete the table below. Write <strong>ONE WORD ONLY</strong> from the passage for each answer.",
+              "wordLimit": 1,
+              "bodyHtml": "<table><tr><th>Year</th><th>Main use</th></tr><tr><td>1850</td><td>[[25]]</td></tr><tr><td>1900</td><td>[[26]]</td></tr></table>",
+              "questions": [
+                { "number": 25, "answers": ["food"] },
+                { "number": 26, "answers": ["medicine"] }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "module": "writing",
+      "durationSec": 3600,
+      "sections": [
+        {
+          "title": "題型範本 · 寫作",
+          "groups": [
+            {
+              "type": "writing_task",
+              "questions": [
+                {
+                  "number": 1,
+                  "taskNo": 1,
+                  "minWords": 150,
+                  "durationSec": 1200,
+                  "image": "/uploads/image/task1-chart.png",
+                  "visualDescription": "若還沒做出圖表，把圖表的數據描述寫在這裡，AI 批改與老師都看得到。",
+                  "prompt": "<p>The chart below shows …</p><p>Summarise the information by selecting and reporting the main features, and make comparisons where relevant.</p>",
+                  "sampleAnswer": "（選填）Band 9 範文。"
+                },
+                {
+                  "number": 2,
+                  "taskNo": 2,
+                  "minWords": 250,
+                  "durationSec": 2400,
+                  "prompt": "<p>Some people think …. Others believe ….</p><p>Discuss both these views and give your own opinion.</p>",
+                  "sampleAnswer": "（選填）Band 9 範文。"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "module": "speaking",
+      "durationSec": 840,
+      "sections": [
+        {
+          "title": "題型範本 · 口說",
+          "groups": [
+            {
+              "type": "speaking_part",
+              "questions": [
+                {
+                  "part": 1,
+                  "topic": "Hometown",
+                  "items": [
+                    "Where is your hometown?",
+                    "What do you like most about it?",
+                    "Has it changed much in recent years?",
+                    "Would you like to live there in the future?"
+                  ],
+                  "dynamic": false
+                },
+                {
+                  "part": 2,
+                  "cueCard": {
+                    "topic": "Describe a skill you learned that was difficult at first.",
+                    "bullets": [
+                      "what the skill was",
+                      "when and where you learned it",
+                      "why it was difficult",
+                      "and explain how you feel about it now"
+                    ],
+                    "prepSec": 60,
+                    "talkSec": 120
+                  },
+                  "rounding": [
+                    "Do you still use this skill?",
+                    "Would you like to teach it to someone else?"
+                  ]
+                },
+                {
+                  "part": 3,
+                  "topic": "Learning and society",
+                  "items": [
+                    "Why do you think some people give up when learning something new?",
+                    "Should schools spend more time teaching practical skills?",
+                    "How has technology changed the way people learn?",
+                    "Do you think older people find it harder to learn new things?",
+                    "What skills will be most valuable in twenty years' time?"
+                  ],
+                  "dynamic": true
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,78 @@
+{
+  "module": "speaking",
+  "durationSec": 840,
+  "sections": [
+    {
+      "title": "Speaking",
+      "groups": [
+        {
+          "type": "speaking_part",
+          "questions": [
+            {
+              "part": 1,
+              "topic": "Work or studies",
+              "items": [
+                "Do you work or are you a student?",
+                "Why did you choose that subject or that kind of work?",
+                "What do you enjoy most about your studies or your job?",
+                "Would you like to change to a different subject or job in the future?"
+              ],
+              "dynamic": false
+            },
+            {
+              "part": 1,
+              "topic": "Hometown",
+              "items": [
+                "Where is your hometown?",
+                "What do you like most about the place where you grew up?",
+                "Has your hometown changed much in recent years?",
+                "Would you recommend your hometown to someone who was visiting your country?"
+              ]
+            },
+            {
+              "part": 1,
+              "topic": "Music",
+              "items": [
+                "What kind of music do you like listening to?",
+                "When during the day do you usually listen to music?",
+                "Did you learn to play a musical instrument when you were a child?",
+                "Do you think people's taste in music changes as they get older?"
+              ]
+            },
+            {
+              "part": 2,
+              "cueCard": {
+                "topic": "Describe a useful skill you learned from an older person.",
+                "bullets": [
+                  "what the skill was",
+                  "when and where you learned it",
+                  "who taught it to you and how they taught you",
+                  "and explain why this skill has been useful to you."
+                ],
+                "prepSec": 60,
+                "talkSec": 120
+              },
+              "rounding": [
+                "Do you still use this skill today?",
+                "Would you like to teach this skill to someone else one day?"
+              ]
+            },
+            {
+              "part": 3,
+              "topic": "Skills, learning and the generations",
+              "items": [
+                "What kinds of skills do you think young people most need to learn today?",
+                "Why do you think some traditional skills are gradually disappearing in modern societies?",
+                "How is the way people learn practical skills today different from the way their grandparents learned them?",
+                "Do you think older workers or younger workers have more to offer an employer?",
+                "How do you think technology will change the way we learn new skills over the next twenty years?",
+                "Do you think schools in the future will still teach practical skills such as cooking or sewing?"
+              ],
+              "dynamic": true
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

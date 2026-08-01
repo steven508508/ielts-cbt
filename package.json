@@ -1,0 +1,28 @@
+{
+  "name": "ielts-cbt",
+  "version": "2.0.0",
+  "description": "IELTS Computer-Delivered Test simulation — official-style UI, realtime AI speaking, full teacher data management",
+  "main": "server/index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "init-db": "node server/scripts/initDb.js",
+    "seed": "node server/scripts/seed.js",
+    "test": "node --test test/"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^1.4.5-lts.1",
+    "mysql2": "^3.11.3",
+    "ws": "^8.21.1",
+    "xlsx": "^0.18.5"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT"
+}

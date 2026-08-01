@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  unit:
+    name: 單元測試
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm test
+
+  e2e:
+    name: 端對端測試（含 MySQL）
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: rootpass
+          MYSQL_DATABASE: ielts_cbt
+          MYSQL_USER: ielts
+          MYSQL_PASSWORD: ielts_pass
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -u root -prootpass --silent"
+          --health-interval=10s --health-timeout=5s --health-retries=12
+    env:
+      DB_HOST: 127.0.0.1
+      DB_PORT: 3306
+      DB_USER: ielts
+      DB_PASSWORD: ielts_pass
+      DB_NAME: ielts_cbt
+      JWT_SECRET: ci-only-secret-not-for-production
+      ADMIN_PASSWORD: admin1234
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: 建表並匯入範例資料
+        run: |
+          node server/scripts/initDb.js
+          node server/scripts/seed.js
+      - name: 啟動伺服器
+        run: |
+          node server/index.js &
+          for i in $(seq 1 30); do
+            curl -fsS http://localhost:3000/api/health && break
+            sleep 2
+          done
+      - name: 端對端測試
+        run: node test/e2e.js
+
+  docker:
+    name: Docker 建置
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: ielts-cbt:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

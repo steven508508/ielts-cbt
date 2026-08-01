@@ -1,0 +1,25 @@
+# 相依套件
+node_modules/
+
+# 機密設定（.env.example / .env.docker.example 才是範本）
+.env
+.env.local
+.env.production
+
+# 使用者上傳的檔案（聽力音檔、圖片、口說錄音）
+uploads/audio/*
+uploads/image/*
+uploads/speaking/*
+!uploads/**/.gitkeep
+
+# 執行期產物
+*.log
+npm-debug.log*
+coverage/
+*.zip
+.DS_Store
+
+# 編輯器
+.vscode/
+.idea/
+*.swp

@@ -1,0 +1,456 @@
+{
+  "module": "listening",
+  "durationSec": 1800,
+  "transferSec": 120,
+  "sections": [
+    {
+      "title": "Section 1",
+      "instructions": "Questions 1–10. Listen to a telephone conversation between a woman and a member of staff at a sports centre, and answer Questions 1–10.",
+      "audio": "/uploads/audio/section1.mp3",
+      "transcript": "TOM: Good morning, Wellsford Community Sports Centre, Tom speaking. How can I help you?\n\nRACHEL: Oh, hello. I've just moved into the area and I'd like to find out about becoming a member.\n\nTOM: Of course. What I can do is take your details over the phone and start a membership form for you, and then you just come in, check it and sign it. Is that all right?\n\nRACHEL: That would be great, thank you.\n\nTOM: Lovely. So, can I take your name?\n\nRACHEL: Yes, it's Rachel Bettany.\n\nTOM: Rachel ... and how do you spell the surname?\n\nRACHEL: It's B-E-T-T-A-N-Y. Everybody writes it with one T, but there are two in the middle.\n\nTOM: B-E-T-T-A-N-Y. Got it. And your address?\n\nRACHEL: It's 42 Pelham Street — oh, no, sorry, ignore that, 42 is my parents' house. Mine is 24 Pelham Street, Wellsford.\n\nTOM: 24 Pelham Street. And Pelham is P-E-L-H-A-M?\n\nRACHEL: That's right.\n\nTOM: Right. Now, we run two kinds of membership. Full membership is £46 a month and you can come in whenever we're open. Then there's off-peak, which is cheaper — that's any time up to four o'clock in the afternoon from Monday to Friday, plus all day on Sundays.\n\nRACHEL: And how much is that one?\n\nTOM: £35.50 — sorry, that was last year's price. It's £31.50 a month now.\n\nRACHEL: £31.50. Well, I work from home, so weekday afternoons are actually perfect for me. Are Saturdays included?\n\nTOM: I'm afraid not. Saturdays count as peak all day.\n\nRACHEL: That's fine. I'll go for the off-peak membership, then.\n\nTOM: Off-peak it is. Now, what are you mainly hoping to use the centre for? It helps us send you the right timetable.\n\nRACHEL: Well, I used to swim a lot at school and I'd like to get back into that at some point. But the main thing, really, is badminton. I played all the way through university and I've missed it terribly.\n\nTOM: Badminton — I'll put that down as your main activity. I should mention, actually, that the main pool is closed at the moment. The whole thing is being re-tiled and it won't reopen until the 29th of this month. There was talk of making it longer while the work was going on, but the budget wouldn't stretch to it in the end. When it does reopen it'll be open to members and non-members, just as it was before.\n\nRACHEL: No hurry — I wasn't going to swim straight away. And is there a badminton club?\n\nTOM: There is — it meets on Saturday mornings, from nine until eleven.\n\nRACHEL: Ah. The trouble is that's exactly when I take my daughter to her music lesson, and my husband's away most weekends, so there's nobody else to do it. Somebody told me the club's quite competitive, but that wouldn't bother me at all — it's purely the timing.\n\nTOM: That's a shame. There's a much more casual session on Wednesday afternoons, so that might suit you better.\n\nRACHEL: Wednesday afternoon — yes, I'll try that one.\n\nTOM: Now, every new member gets one free introductory session. Most people book theirs with a fitness instructor, who'll take you round the gym and put a programme together for you. You can have it with a swimming coach instead, but with the pool closed and badminton being your thing, I'd suggest the instructor.\n\nRACHEL: Yes, the fitness instructor makes far more sense.\n\nTOM: I'll book you in, then. We run them on the first Monday of the month, at half past six in the evening.\n\nRACHEL: The first Monday. Fine.\n\nTOM: And when you come in, could you bring two things? A passport photo, for your membership card — we used to take the picture here but the camera's been broken for months — and something with your address on it, so a bank statement or a utility bill.\n\nRACHEL: A passport photo and proof of address. Right, I've written that down. Oh — is there anywhere to leave my things?\n\nTOM: There are free lockers in the changing rooms, but you have to empty them every time you leave. If you want a locker you can keep permanently, with your racket and your kit in it, that's an extra £15 a year. It was £50 until this April, so it's quite good value now.\n\nRACHEL: I'll think about that one.\n\nTOM: No problem at all. Last thing — and we ask everybody this, it helps with our funding application — how did you hear about us?\n\nRACHEL: Well, I'd looked at your website before I rang, so I knew roughly what was here. And there was a leaflet through the door a fortnight ago, though I think I threw it out without reading it properly. But the reason I actually picked up the phone was my next-door neighbour. She's been coming here for years and she wouldn't stop going on about it.\n\nTOM: Wonderful. I'll put you down as a personal recommendation, then. So that's everything — I'll have the form ready at reception for you.\n\nRACHEL: Thank you very much. Goodbye.",
+      "groups": [
+        {
+          "type": "gap_fill",
+          "instructions": "Complete the form below. Write NO MORE THAN TWO WORDS AND/OR A NUMBER for each answer.",
+          "wordLimit": 2,
+          "allowNumbers": true,
+          "bodyHtml": "<h4>WELLSFORD COMMUNITY SPORTS CENTRE — Membership form</h4><table><tr><th>Name</th><td>Rachel [[1]]</td></tr><tr><th>Address</th><td>[[2]] Pelham Street, Wellsford</td></tr><tr><th>Type of membership</th><td>[[3]] (£31.50 per month)</td></tr><tr><th>Main activity</th><td>[[4]]</td></tr><tr><th>Free introductory session</th><td>with a [[5]], first Monday of the month, 6.30 p.m.</td></tr><tr><th>Must bring to reception</th><td>a [[6]] and proof of address</td></tr><tr><th>Permanent locker</th><td>extra £[[7]] a year</td></tr></table>",
+          "questions": [
+            {
+              "number": 1,
+              "answers": ["Bettany"],
+              "explanation": "RACHEL: It's B-E-T-T-A-N-Y. Everybody writes it with one T, but there are two in the middle."
+            },
+            {
+              "number": 2,
+              "answers": ["24"],
+              "explanation": "RACHEL: It's 42 Pelham Street — oh, no, sorry, ignore that, 42 is my parents' house. Mine is 24 Pelham Street, Wellsford."
+            },
+            {
+              "number": 3,
+              "answers": ["off-peak"],
+              "explanation": "RACHEL: That's fine. I'll go for the off-peak membership, then. (Full membership is £46; off-peak is £31.50.)"
+            },
+            {
+              "number": 4,
+              "answers": ["badminton"],
+              "explanation": "RACHEL: But the main thing, really, is badminton. I played all the way through university and I've missed it terribly."
+            },
+            {
+              "number": 5,
+              "answers": ["fitness instructor"],
+              "explanation": "TOM: Most people book theirs with a fitness instructor, who'll take you round the gym and put a programme together for you."
+            },
+            {
+              "number": 6,
+              "answers": ["passport photo"],
+              "explanation": "TOM: A passport photo, for your membership card — we used to take the picture here but the camera's been broken for months."
+            },
+            {
+              "number": 7,
+              "answers": ["15"],
+              "explanation": "TOM: If you want a locker you can keep permanently ... that's an extra £15 a year. It was £50 until this April."
+            }
+          ]
+        },
+        {
+          "type": "mcq_single",
+          "instructions": "Choose the correct letter, A, B or C.",
+          "options": [
+            { "key": "A", "text": "It is closed while repair work is carried out." },
+            { "key": "B", "text": "It is being made longer." },
+            { "key": "C", "text": "It will be open to members only in future." }
+          ],
+          "questions": [
+            {
+              "number": 8,
+              "text": "What does Tom say about the swimming pool?",
+              "answers": ["A"],
+              "explanation": "TOM: the main pool is closed at the moment. The whole thing is being re-tiled and it won't reopen until the 29th of this month. Making it longer was only discussed and rejected, and it will reopen to members and non-members alike."
+            }
+          ]
+        },
+        {
+          "type": "mcq_single",
+          "instructions": "Choose the correct letter, A, B or C.",
+          "options": [
+            { "key": "A", "text": "The players are too competitive for her." },
+            { "key": "B", "text": "She has to work on Saturday mornings." },
+            { "key": "C", "text": "She has a family commitment at that time." }
+          ],
+          "questions": [
+            {
+              "number": 9,
+              "text": "Why does Rachel decide not to join the Saturday badminton club?",
+              "answers": ["C"],
+              "explanation": "RACHEL: The trouble is that's exactly when I take my daughter to her music lesson, and my husband's away most weekends, so there's nobody else to do it ... Somebody told me the club's quite competitive, but that wouldn't bother me at all — it's purely the timing."
+            }
+          ]
+        },
+        {
+          "type": "mcq_single",
+          "instructions": "Choose the correct letter, A, B or C.",
+          "options": [
+            { "key": "A", "text": "from the centre's website" },
+            { "key": "B", "text": "from a leaflet delivered to her home" },
+            { "key": "C", "text": "from a neighbour" }
+          ],
+          "questions": [
+            {
+              "number": 10,
+              "text": "How did Rachel first hear about the sports centre?",
+              "answers": ["C"],
+              "explanation": "RACHEL: But the reason I actually picked up the phone was my next-door neighbour. She's been coming here for years and she wouldn't stop going on about it."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Section 2",
+      "instructions": "Questions 11–20. Listen to a volunteer warden welcoming a group of visitors to a nature reserve, and answer Questions 11–20.",
+      "audio": "/uploads/audio/section2.mp3",
+      "transcript": "FIONA: Good morning everyone, and welcome to Bramblewood Nature Reserve. My name's Fiona and I'm one of the volunteer wardens here. Before we set off round the lake, let me give you a few minutes of background, and then I'll explain where everything is, because the reserve is a good deal bigger than it looks and people do get lost.\n\nBramblewood is only about forty years old as a nature reserve, which surprises most visitors. The whole of this valley belonged to the Bramble family — that's where the name comes from, nothing to do with brambles — and it was farmland, mostly sheep, until the 1950s. Then the family sold up, and from 1956 right through until 1978 the site was a gravel quarry. The lake you're about to walk round isn't natural at all: it's the flooded pit the quarry left behind. The company went out of business, the pit filled with water, the birds moved in almost immediately, and by 1983 it had been declared a reserve.\n\nPeople often ask me what has changed most here in recent years. Visitor numbers are up — about ten per cent over five years, which is steady rather than dramatic. We've planted new woodland as well, but if I'm honest that's only two hectares up on the hill and it won't look like anything for another twenty years. No, the real change is the birds. Five years ago our annual survey recorded 92 species. This year we're already up to 118, and it's only September. Three of those had never been recorded anywhere in this county before.\n\nA few rules before we go. Dogs are very welcome here — we're one of the few reserves that allows them — as long as they're on a lead the whole time you're on site. Bicycles are fine too, but please stay on the surfaced track, because the grass paths get churned up terribly. And the one thing we really do ask is that you don't feed the ducks and the geese. I know children love doing it, but bread does them genuine harm, it pollutes the water, and it brings in rats. There's a proper feeding station beside the visitor centre if you'd like to watch the small birds instead.\n\nNow, a word about how all this was paid for, because we're a charity and it does matter. The visitor centre café was built with a lottery grant — a very large one; we were extremely lucky. The boardwalk over the marsh was put in by a team of volunteers from an engineering firm in town, who gave us the labour and the timber for nothing. And the extension to the car park came out of the district council's transport budget, so that cost us nothing either. But two things here were paid for entirely by donations from people living locally. The first is the new bird hide, which cost just over £40,000 and took us three years of coffee mornings and raffle tickets. The second is the pond-dipping platform, which the village primary school raised the money for almost single-handedly.\n\nRight — let me point out where things are on the plan you've all been given.\n\nLet's start with the wildflower meadow, because you have already walked straight past it. As you came up from the car park it was the open ground on your left, between the car park and the visitor centre. People always expect a meadow to be somewhere remote, but ours is right here at the entrance.\n\nNow the new bird hide. Take the west path — that's the one leaving the visitor centre on your left — and follow it along the water. You'll pass a bench where the path turns north at the corner of the lake; don't stop there, keep going, and the hide is about halfway up the western shore, set back among the trees.\n\nThe pond-dipping platform is in completely the opposite direction. Come out of the centre, turn right onto the east path, and it's barely thirty metres along, right at the southern corner of the lake. You'll see the wooden railings from the door.\n\nIf you carry on north up that east path you'll come to the marsh at the top end of the lake. There's a small viewing screen about halfway along the eastern side, which people sometimes mistake for it, but the boardwalk itself crosses the marsh right at the north-eastern corner.\n\nAnd finally the otter holt, which is the one that nobody ever finds. Don't look for it beside the lake at all. Go right up to the northern end, where the two paths meet — there's a signpost there — and then take the narrow track heading west along the stream. The holt is in the far north-western corner of the reserve, on the far bank. Early morning is really your only chance of seeing anything.\n\nRight, if everybody's ready, we'll set off. Watch your footing on the first hundred metres, it's still wet from Tuesday.",
+      "groups": [
+        {
+          "type": "mcq_single",
+          "instructions": "Choose the correct letter, A, B or C.",
+          "options": [
+            { "key": "A", "text": "a sheep farm" },
+            { "key": "B", "text": "a gravel quarry" },
+            { "key": "C", "text": "a private family garden" }
+          ],
+          "questions": [
+            {
+              "number": 11,
+              "text": "What was the site used for immediately before it became a nature reserve?",
+              "answers": ["B"],
+              "explanation": "FIONA: from 1956 right through until 1978 the site was a gravel quarry ... by 1983 it had been declared a reserve. The sheep farming ended in the 1950s, before the quarry."
+            }
+          ]
+        },
+        {
+          "type": "mcq_single",
+          "instructions": "Choose the correct letter, A, B or C.",
+          "options": [
+            { "key": "A", "text": "the number of visitors" },
+            { "key": "B", "text": "the range of bird species" },
+            { "key": "C", "text": "the area of woodland" }
+          ],
+          "questions": [
+            {
+              "number": 12,
+              "text": "According to Fiona, what has changed most at the reserve in recent years?",
+              "answers": ["B"],
+              "explanation": "FIONA: No, the real change is the birds. Five years ago our annual survey recorded 92 species. This year we're already up to 118."
+            }
+          ]
+        },
+        {
+          "type": "mcq_single",
+          "instructions": "Choose the correct letter, A, B or C.",
+          "options": [
+            { "key": "A", "text": "bring dogs onto the reserve" },
+            { "key": "B", "text": "cycle anywhere on the reserve" },
+            { "key": "C", "text": "give food to the water birds" }
+          ],
+          "questions": [
+            {
+              "number": 13,
+              "text": "Visitors are asked NOT to",
+              "answers": ["C"],
+              "explanation": "FIONA: the one thing we really do ask is that you don't feed the ducks and the geese ... bread does them genuine harm, it pollutes the water, and it brings in rats. Dogs are allowed on a lead and cycling is allowed on the surfaced track."
+            }
+          ]
+        },
+        {
+          "type": "mcq_multi",
+          "instructions": "Choose TWO letters, A–E. Which TWO facilities at the reserve were paid for entirely by donations from local people?",
+          "selectCount": 2,
+          "options": [
+            { "key": "A", "text": "the bird hide" },
+            { "key": "B", "text": "the boardwalk over the marsh" },
+            { "key": "C", "text": "the visitor centre café" },
+            { "key": "D", "text": "the pond-dipping platform" },
+            { "key": "E", "text": "the car park extension" }
+          ],
+          "questions": [
+            {
+              "number": 14,
+              "text": "Which TWO facilities at the reserve were paid for entirely by donations from local people?",
+              "answers": ["A", "D"],
+              "explanation": "FIONA: two things here were paid for entirely by donations from people living locally. The first is the new bird hide, which cost just over £40,000 ... The second is the pond-dipping platform, which the village primary school raised the money for almost single-handedly."
+            },
+            {
+              "number": 15,
+              "answers": ["A", "D"],
+              "explanation": "The café came from a lottery grant, the boardwalk from an engineering firm's volunteers, and the car park extension from the district council's transport budget."
+            }
+          ]
+        },
+        {
+          "type": "label_image",
+          "instructions": "Label the plan of Bramblewood Nature Reserve below. Choose the correct letter, A–H, for each feature and write it next to Questions 16–20. The plan shows the reserve seen from above, with north at the top. The car park and main entrance are at the bottom (south) of the plan and the Visitor Centre stands just north of them. From the Visitor Centre a West Path and an East Path run round a large lake in the middle of the plan and meet again at the northern end. A stream enters from the north-west corner. Eight positions are marked on the plan: <ul><li><strong>A</strong> — the open ground west of the Visitor Centre, next to the car park</li><li><strong>B</strong> — on the West Path, at the south-western corner of the lake (a bench is marked here)</li><li><strong>C</strong> — on the West Path, halfway along the western shore of the lake, among trees</li><li><strong>D</strong> — at the northern end of the lake, where the two paths meet (a signpost is marked here)</li><li><strong>E</strong> — on the East Path, at the north-eastern corner of the lake, across the marsh</li><li><strong>F</strong> — on the East Path, halfway along the eastern shore of the lake</li><li><strong>G</strong> — on the East Path, at the southern corner of the lake, about 30 metres from the Visitor Centre</li><li><strong>H</strong> — in the far north-western corner of the reserve, beside the stream</li></ul>[圖片請自行上傳替換]",
+          "image": "/uploads/image/section2-map.png",
+          "wordLimit": 1,
+          "allowNumbers": false,
+          "options": [
+            { "key": "A", "text": "open ground west of the Visitor Centre, beside the car park" },
+            { "key": "B", "text": "West Path, south-western corner of the lake" },
+            { "key": "C", "text": "West Path, halfway along the western shore" },
+            { "key": "D", "text": "northern end of the lake, where the paths meet" },
+            { "key": "E", "text": "East Path, north-eastern corner of the lake" },
+            { "key": "F", "text": "East Path, halfway along the eastern shore" },
+            { "key": "G", "text": "East Path, southern corner of the lake" },
+            { "key": "H", "text": "far north-western corner, beside the stream" }
+          ],
+          "questions": [
+            {
+              "number": 16,
+              "text": "the new bird hide",
+              "answers": ["C"],
+              "explanation": "FIONA: Take the west path ... You'll pass a bench where the path turns north at the corner of the lake; don't stop there, keep going, and the hide is about halfway up the western shore, set back among the trees."
+            },
+            {
+              "number": 17,
+              "text": "the pond-dipping platform",
+              "answers": ["G"],
+              "explanation": "FIONA: Come out of the centre, turn right onto the east path, and it's barely thirty metres along, right at the southern corner of the lake."
+            },
+            {
+              "number": 18,
+              "text": "the wildflower meadow",
+              "answers": ["A"],
+              "explanation": "FIONA: As you came up from the car park it was the open ground on your left, between the car park and the visitor centre."
+            },
+            {
+              "number": 19,
+              "text": "the boardwalk over the marsh",
+              "answers": ["E"],
+              "explanation": "FIONA: There's a small viewing screen about halfway along the eastern side, which people sometimes mistake for it, but the boardwalk itself crosses the marsh right at the north-eastern corner."
+            },
+            {
+              "number": 20,
+              "text": "the otter holt",
+              "answers": ["H"],
+              "explanation": "FIONA: Go right up to the northern end, where the two paths meet ... and then take the narrow track heading west along the stream. The holt is in the far north-western corner of the reserve, on the far bank."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Section 3",
+      "instructions": "Questions 21–30. Listen to two students, Nadia and Callum, discussing their research project with their tutor, Dr Finch, and answer Questions 21–30.",
+      "audio": "/uploads/audio/section3.mp3",
+      "transcript": "DR FINCH: Come in, both of you. Right — Nadia, Callum, I've read the draft of your green roof project and there's a great deal here that's good. Shall we start with where the project has got to, and then go through the report section by section?\n\nNADIA: Yes, please.\n\nDR FINCH: So, the first thing I noticed is that this isn't the question you proposed back in October. You were going to compare green roofs in two different cities.\n\nCALLUM: We were, and we did try. The problem was Kelbridge. The council there has all the temperature data — they've had monitoring equipment on eleven buildings since 2019 — but they simply wouldn't release any of it to us. We asked three times.\n\nNADIA: In the end they told us it was commercially sensitive.\n\nCALLUM: So we dropped the second city altogether and compared green roofs with ordinary flat roofs here in Ardwick instead.\n\nDR FINCH: That's a sensible response. I did say at the time that two cities might be over-ambitious —\n\nNADIA: You did, and we've thought about that since, but honestly the workload wasn't the issue. If Kelbridge had sent the figures over we'd have managed it between us.\n\nDR FINCH: Fair enough. And you weren't worried about overlapping with Priya's group?\n\nCALLUM: No, they're doing green walls, which turns out to be a completely different literature.\n\nDR FINCH: Good. Now, the questionnaire. How did that go?\n\nNADIA: Better than we expected in terms of numbers. We sent it to 200 building managers and got 84 back, which the statistics book says is more than respectable.\n\nDR FINCH: It certainly is.\n\nNADIA: The difficulty was the wording. Question 6 asked about annual maintenance costs, and it turned out that roughly half the people answering it thought we meant what it cost them personally, out of their own department's budget, rather than what it cost the building as a whole. So those figures aren't comparable with each other.\n\nCALLUM: We only realised when we started coding the answers. Designing the thing took an afternoon; sorting that mess out has taken a fortnight.\n\nDR FINCH: That's a very common problem, and the honest thing is to say so in your limitations section rather than quietly dropping the question.\n\nCALLUM: That's what we thought.\n\nDR FINCH: Now, the temperature measurements. Twelve buildings — is that enough, do you think?\n\nCALLUM: We did wonder. We could probably add three or four more before Christmas.\n\nDR FINCH: No, twelve is plenty for a project of this length, and adding buildings would only give you more of the same. And the loggers you borrowed from the department are perfectly accurate — they're calibrated every summer, so don't worry about that. My concern is when you're taking the readings. Everything in your table is from midday.\n\nNADIA: That's when we could get access to the roofs.\n\nDR FINCH: I understand, but midday is precisely the moment when a green roof looks its best. The interesting comparison is at dawn, and again around midnight, when the ordinary roof has lost all of its heat and the planted one hasn't. Without those you're only telling half the story.\n\nCALLUM: The loggers can be set to record automatically overnight, can't they?\n\nDR FINCH: They can, and they should be. So, what's next for the two of you?\n\nNADIA: We'd said we'd go back to the Fenwick building next week and look at the drainage layer.\n\nCALLUM: Although — hang on. We can do the Fenwick any time before the end of term; the plants aren't going anywhere. What we can't put off is Mr Okafor at the council. He's the only person who can explain the planning rules to us and he retires at the end of the month.\n\nNADIA: Oh, that's a good point. Yes, let's do the interview next week and push the site visit back.\n\nDR FINCH: Very sensible. Get that in the diary today, before he goes.\n\nDR FINCH: And don't forget your presentation is on the 14th.\n\nCALLUM: Twenty minutes, isn't it?\n\nDR FINCH: Fifteen, plus five for questions. Handouts are optional — I know the handbook recommends one, but nobody has ever been marked down for not producing one. The rule you can't get round is that both members of the pair have to speak, and for roughly the same length of time. And it's me assessing you, not an external examiner, whatever you may have heard in the corridor.\n\nNADIA: Right. Noted.\n\nDR FINCH: Now, the draft itself. Your introduction: it's four and a half pages long, and about three of those repeat things you say again in the literature review. Cut it right down — two pages at the most.\n\nCALLUM: Two pages. Right.\n\nDR FINCH: The literature review is much better organised than your last one, I was pleased. The one weakness is that you make several claims — the one about roof lifespan, for instance — with nothing at all to support them. Go back and find the sources for those.\n\nNADIA: We had them, we just didn't put them in.\n\nDR FINCH: Then it's a quick job. Methodology — I wouldn't touch it. It's clear, it's honest about what went wrong, and I could repeat your study from it, which is the test. Leave it exactly as it is.\n\nCALLUM: Good.\n\nDR FINCH: Now, those temperature tables. There are nineteen pages of raw readings sitting in the middle of the report and they stop the reader dead. The data has to stay, obviously — but put it at the back, and keep just the summary chart in the main text.\n\nNADIA: An appendix. Yes.\n\nDR FINCH: And the conclusion, I'm afraid, needs starting again from nothing. At the moment it's a summary of what you did, which the reader has just finished reading. A conclusion should answer the research question and say what follows from the answer. Start with a blank page on that one.\n\nCALLUM: Understood. That's all very clear, thank you.\n\nDR FINCH: Send me the revised version by the 7th and I'll look at it before the presentation.",
+      "groups": [
+        {
+          "type": "mcq_single",
+          "instructions": "Choose the correct letter, A, B or C.",
+          "options": [
+            { "key": "A", "text": "They could not obtain data from a second city." },
+            { "key": "B", "text": "Their tutor said the original topic was too broad." },
+            { "key": "C", "text": "Another group was researching the same subject." }
+          ],
+          "questions": [
+            {
+              "number": 21,
+              "text": "Why did Nadia and Callum change their original research question?",
+              "answers": ["A"],
+              "explanation": "CALLUM: The problem was Kelbridge. The council there has all the temperature data ... but they simply wouldn't release any of it to us. NADIA: honestly the workload wasn't the issue, and Priya's group are doing green walls."
+            }
+          ]
+        },
+        {
+          "type": "mcq_single",
+          "instructions": "Choose the correct letter, A, B or C.",
+          "options": [
+            { "key": "A", "text": "Too few people returned it." },
+            { "key": "B", "text": "One question was understood in two different ways." },
+            { "key": "C", "text": "It took much longer to design than planned." }
+          ],
+          "questions": [
+            {
+              "number": 22,
+              "text": "What problem did the students have with their questionnaire?",
+              "answers": ["B"],
+              "explanation": "NADIA: Question 6 asked about annual maintenance costs, and it turned out that roughly half the people answering it thought we meant what it cost them personally ... rather than what it cost the building as a whole."
+            }
+          ]
+        },
+        {
+          "type": "mcq_single",
+          "instructions": "Choose the correct letter, A, B or C.",
+          "options": [
+            { "key": "A", "text": "They should be taken at more times of day." },
+            { "key": "B", "text": "The equipment used is not accurate enough." },
+            { "key": "C", "text": "More buildings should be included." }
+          ],
+          "questions": [
+            {
+              "number": 23,
+              "text": "What does Dr Finch say about the temperature measurements?",
+              "answers": ["A"],
+              "explanation": "DR FINCH: My concern is when you're taking the readings. Everything in your table is from midday ... The interesting comparison is at dawn, and again around midnight. He states that twelve buildings is plenty and that the loggers are perfectly accurate."
+            }
+          ]
+        },
+        {
+          "type": "mcq_single",
+          "instructions": "Choose the correct letter, A, B or C.",
+          "options": [
+            { "key": "A", "text": "revisit the Fenwick building" },
+            { "key": "B", "text": "interview an officer at the council" },
+            { "key": "C", "text": "start coding the questionnaire data" }
+          ],
+          "questions": [
+            {
+              "number": 24,
+              "text": "What do the students decide to do next week?",
+              "answers": ["B"],
+              "explanation": "CALLUM: What we can't put off is Mr Okafor at the council ... he retires at the end of the month. NADIA: Yes, let's do the interview next week and push the site visit back."
+            }
+          ]
+        },
+        {
+          "type": "mcq_single",
+          "instructions": "Choose the correct letter, A, B or C.",
+          "options": [
+            { "key": "A", "text": "A handout must be provided." },
+            { "key": "B", "text": "Both students have to speak." },
+            { "key": "C", "text": "It will be marked by an external examiner." }
+          ],
+          "questions": [
+            {
+              "number": 25,
+              "text": "What does Dr Finch emphasise about the presentation?",
+              "answers": ["B"],
+              "explanation": "DR FINCH: The rule you can't get round is that both members of the pair have to speak, and for roughly the same length of time. Handouts are optional and Dr Finch will assess it himself."
+            }
+          ]
+        },
+        {
+          "type": "matching",
+          "instructions": "What does Dr Finch say about each of the following parts of the students' draft report? Choose FIVE answers from the box and write the correct letter, A–E, next to Questions 26–30.",
+          "options": [
+            { "key": "A", "text": "It is well done and should be left unchanged." },
+            { "key": "B", "text": "It is too long and must be cut." },
+            { "key": "C", "text": "It needs supporting references added." },
+            { "key": "D", "text": "It should be moved to an appendix." },
+            { "key": "E", "text": "It needs to be written again from scratch." }
+          ],
+          "questions": [
+            {
+              "number": 26,
+              "text": "the introduction",
+              "answers": ["B"],
+              "explanation": "DR FINCH: Your introduction: it's four and a half pages long, and about three of those repeat things you say again in the literature review. Cut it right down — two pages at the most."
+            },
+            {
+              "number": 27,
+              "text": "the literature review",
+              "answers": ["C"],
+              "explanation": "DR FINCH: The one weakness is that you make several claims — the one about roof lifespan, for instance — with nothing at all to support them. Go back and find the sources for those."
+            },
+            {
+              "number": 28,
+              "text": "the methodology section",
+              "answers": ["A"],
+              "explanation": "DR FINCH: Methodology — I wouldn't touch it. It's clear, it's honest about what went wrong, and I could repeat your study from it ... Leave it exactly as it is."
+            },
+            {
+              "number": 29,
+              "text": "the tables of temperature readings",
+              "answers": ["D"],
+              "explanation": "DR FINCH: There are nineteen pages of raw readings sitting in the middle of the report and they stop the reader dead. The data has to stay, obviously — but put it at the back."
+            },
+            {
+              "number": 30,
+              "text": "the conclusion",
+              "answers": ["E"],
+              "explanation": "DR FINCH: And the conclusion, I'm afraid, needs starting again from nothing ... Start with a blank page on that one."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Section 4",
+      "instructions": "Questions 31–40. Listen to part of a university lecture about cork and the cork oak landscape, and answer Questions 31–40.",
+      "audio": "/uploads/audio/section4.mp3",
+      "transcript": "LECTURER: Good afternoon. Today I want to look at a material that most of you handled the last time you opened a bottle, and that almost nobody ever thinks about: cork. It's a useful example of something which is both an extremely ancient product and, rather unexpectedly, a very modern one.\n\nSo, first of all, what is cork? Cork is the outer bark of a single species of tree, Quercus suber, the cork oak, which grows in the western Mediterranean — Portugal, Spain, and along the North African coast. Now, every tree has bark, but cork oak bark is unusual in two respects: it is exceptionally thick, and the tree can grow it back after it has been removed. That second property is the entire basis of the industry, and it is why cork is one of the very few forest products that does not involve felling anything.\n\nIf you put a piece of cork under a microscope, what you see is a honeycomb — millions of tiny sealed boxes, each one shaped rather like a fourteen-sided dice. The walls are made of a waxy substance called suberin, which is what makes cork waterproof, and each box is filled with a gas which is almost identical to air. And there are a great many of them: one cubic centimetre of cork contains about 40 million of these cells. That single fact explains most of cork's behaviour. It is light, because it is mostly gas. It is springy, because the gas is compressed and then pushes back. And it is a very poor conductor of both heat and sound, because the gas cannot circulate from one cell to the next.\n\nNow, harvesting, which is where cork becomes genuinely unlike almost anything else we take out of a forest, because the tree is not cut down. It is not even damaged, provided the work is done properly.\n\nA cork oak is left alone for a very long time. You cannot take the first harvest until the tree is 25 years old and the trunk has reached roughly seventy centimetres in circumference. After that, Portuguese law sets a minimum interval of 9 years between one stripping and the next, and in practice many estates leave it ten or even eleven.\n\nThe stripping itself is done entirely by hand, in high summer, by men who have often trained for a decade. The tool is a specially shaped axe, and no machine has ever been invented that can do the job, because the worker has to judge by sound and by feel exactly how deep to cut. Go a millimetre too deep and you damage the living layer underneath, and that tree will never produce again.\n\nThe first two harvests, incidentally, produce very poor material indeed — irregular, hard, full of cracks. It can't be made into bottle stoppers at all; it is ground up and used for things like floor tiles. It isn't until the third stripping, when the tree is well over forty years old, that you get what the trade calls reproduction cork, which is the smooth, even material a stopper is punched from. And the tree will then go on producing for two centuries. Over its whole lifetime a healthy cork oak will give about 16 harvests.\n\nNow I want to move from the tree to the landscape, because this is the part that interests conservationists most. Cork oaks in Portugal grow in a managed system called the montado — in Spain the equivalent is called the dehesa. It looks like parkland: widely spaced oaks with grass or cereal crops growing underneath them. It is entirely man-made and has been maintained for something like a thousand years. Farmers graze pigs there, which fatten on the acorns in the autumn, and cattle and sheep on the open ground between the trees.\n\nEcologically the montado is remarkable. It supports up to 135 plant species per hectare, and it is the last refuge of the Iberian lynx, of which there were fewer than 100 animals left alive at the low point in 2002. Lose the montado and you lose the lynx, along with a great many birds of prey.\n\nAnd the montado survives only because cork is worth money. This is really the point I want you to take away this afternoon. When the screw cap and the plastic stopper arrived in the late 1990s, natural cork lost about a third of the world wine market inside fifteen years, and in parts of southern Portugal owners simply stopped maintaining their trees. An untended montado turns into scrub within a single generation.\n\nThe industry's response has been quite interesting. Some of it is technical: the taint problem which gave cork its bad name in the first place has now largely been solved by steam treatment. But the more significant development is that cork has found markets outside the drinks trade altogether. It's used in the nose cones of spacecraft, in cricket balls, in expensive flooring and even in handbags. And the fastest-growing use of cork outside the drinks industry is building insulation — expanded cork board, which is made with no glue at all. You simply heat the granules under pressure and the suberin binds them together.\n\nNext week we'll look at bamboo, which raises a rather different set of questions about what we mean by a sustainable material. Thank you.",
+      "groups": [
+        {
+          "type": "gap_fill",
+          "instructions": "Complete the notes below. Write NO MORE THAN TWO WORDS AND/OR A NUMBER for each answer.",
+          "wordLimit": 2,
+          "allowNumbers": true,
+          "bodyHtml": "<h4>Cork: what it is</h4><ul><li>Cork is the outer [[31]] of the cork oak (Quercus suber).</li><li>The cell walls contain a waxy substance called suberin.</li><li>Each sealed cell is filled with a gas that is almost identical to [[32]].</li><li>One cubic centimetre of cork contains approximately [[33]] cells.</li></ul><h4>Harvesting</h4><ul><li>The first harvest cannot be taken until the tree is [[34]] years old.</li><li>The bark is removed by hand using a specially shaped [[35]].</li><li>Portuguese law sets a minimum interval of [[36]] years between strippings.</li><li>Cork from the first two harvests is too poor for stoppers and is used for [[37]].</li></ul><h4>The montado landscape</h4><ul><li>A man-made parkland system; the Spanish equivalent is the dehesa.</li><li>Pigs are grazed there and fatten on the acorns.</li><li>It is the last refuge of the endangered [[38]].</li></ul>",
+          "questions": [
+            {
+              "number": 31,
+              "answers": ["bark"],
+              "explanation": "LECTURER: Cork is the outer bark of a single species of tree, Quercus suber, the cork oak."
+            },
+            {
+              "number": 32,
+              "answers": ["air"],
+              "explanation": "LECTURER: each box is filled with a gas which is almost identical to air."
+            },
+            {
+              "number": 33,
+              "answers": ["40 million"],
+              "explanation": "LECTURER: one cubic centimetre of cork contains about 40 million of these cells."
+            },
+            {
+              "number": 34,
+              "answers": ["25"],
+              "explanation": "LECTURER: You cannot take the first harvest until the tree is 25 years old and the trunk has reached roughly seventy centimetres in circumference."
+            },
+            {
+              "number": 35,
+              "answers": ["axe"],
+              "explanation": "LECTURER: The tool is a specially shaped axe, and no machine has ever been invented that can do the job."
+            },
+            {
+              "number": 36,
+              "answers": ["9"],
+              "explanation": "LECTURER: Portuguese law sets a minimum interval of 9 years between one stripping and the next, and in practice many estates leave it ten or even eleven."
+            },
+            {
+              "number": 37,
+              "answers": ["floor tiles"],
+              "explanation": "LECTURER: It can't be made into bottle stoppers at all; it is ground up and used for things like floor tiles."
+            },
+            {
+              "number": 38,
+              "answers": ["Iberian lynx"],
+              "explanation": "LECTURER: it is the last refuge of the Iberian lynx, of which there were fewer than 100 animals left alive at the low point in 2002."
+            }
+          ]
+        },
+        {
+          "type": "short_answer",
+          "instructions": "Answer the questions below. Write NO MORE THAN THREE WORDS AND/OR A NUMBER for each answer.",
+          "wordLimit": 3,
+          "allowNumbers": true,
+          "questions": [
+            {
+              "number": 39,
+              "text": "What is the fastest-growing use of cork outside the drinks industry?",
+              "answers": ["building insulation", "insulation"],
+              "explanation": "LECTURER: the fastest-growing use of cork outside the drinks industry is building insulation — expanded cork board, which is made with no glue at all."
+            },
+            {
+              "number": 40,
+              "text": "How many harvests will a healthy cork oak give over its whole lifetime?",
+              "answers": ["16", "about 16"],
+              "explanation": "LECTURER: Over its whole lifetime a healthy cork oak will give about 16 harvests."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
