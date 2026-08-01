@@ -1225,8 +1225,17 @@ async function call(method, path, body, token) {
   ok(jobMs < 5000, '回應時間遠低於任何反向代理的逾時');
   const jobId = jStart.data.jobId;
 
+  // 沒設 AI 金鑰時第一個工作會在幾毫秒內就失敗，所以不能假設它還在跑 ——
+  // 直接照回應驗真正的規則：同一個人「同時」只能有一個進行中的工作。
   const jDup = await call('POST', '/ai/generate-paper', { testType: 'academic' }, tea);
-  ok(jDup.status === 409 && jDup.data.jobId === jobId, '同一個人不能同時開兩份，並帶回進行中的 jobId');
+  if (jDup.status === 409) {
+    ok(jDup.data.jobId === jobId, '前一個還在跑時開第二份會被擋下，並帶回進行中的 jobId');
+  } else {
+    const prev = (await call('GET', `/ai/jobs/${jobId}`, null, tea)).data.job;
+    ok(jDup.status === 202 && ['done', 'error', 'cancelled'].includes(prev.status),
+      `前一個工作已經結束（${prev?.status}）才放行第二份`);
+    if (jDup.data.jobId) await call('POST', `/ai/jobs/${jDup.data.jobId}/cancel`, {}, tea);
+  }
 
   const jList = await call('GET', '/ai/jobs?kind=generate_paper', null, tea);
   ok(jList.data.jobs.some((j) => j.id === jobId), '工作出現在自己的清單裡');
