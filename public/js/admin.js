@@ -1945,6 +1945,7 @@ const Admin = (() => {
             num('keepReadNotificationsDays', '已讀通知保留（天）', '未讀的通知一律保留'),
             num('deleteUnusedMediaDays', '未使用媒體檔保留（天）', '沒有任何試卷引用的檔案')),
           el('div', { class: 'row' },
+            num('keepDeviceChecksDays', '考前環境檢查紀錄保留（天）', ''),
             num('runAtHour', '每天執行時間（點）', '0–23，伺服器時間')),
           el('div', { class: 'toolbar', style: { marginTop: '.8rem' } },
             el('button', {
@@ -2181,6 +2182,56 @@ const Admin = (() => {
     window.onbeforeunload = null;   // 離開題目編輯器時把「未儲存」提醒收掉
   }
 
+  /** 考前環境檢查：誰測過、誰有問題 */
+  async function deviceChecks() {
+    const box = el('div', {}, UI.loading('讀取檢查紀錄…', 2));
+    const url = new URL(location.origin);
+    url.hash = '#/check';
+    const link = url.toString();
+
+    (async () => {
+      let d;
+      try { d = await API.get('/check/list?limit=100'); }
+      catch (e) { return UI.render(box, UI.errorState(e.message)); }
+      const bad = d.items.filter((x) => !x.ok);
+      UI.render(box,
+        el('p', { class: 'small muted' },
+          '把這個網址發給學生，他們',
+          el('b', {}, '不用登入'),
+          '就能自己測：',
+          el('code', { style: { userSelect: 'all', marginLeft: '.3rem' } }, link),
+          el('button', {
+            class: 'btn sm', style: { marginLeft: '.4rem' },
+            onclick: () => navigator.clipboard?.writeText(link)
+              .then(() => toast('已複製網址', 'ok')).catch(() => UI.alert(link)),
+          }, '複製')),
+        d.items.length === 0
+          ? UI.emptyState('還沒有人做過考前環境檢查', null, '學生打開上面的網址跑一次就會出現在這裡。')
+          : el('div', {},
+              el('p', { class: 'small' },
+                `最近 ${d.items.length} 筆　`,
+                bad.length
+                  ? el('span', { class: 'pill warn' }, `${bad.length} 台電腦有問題`)
+                  : el('span', { class: 'pill ok' }, '全部通過')),
+              UI.dataTable(
+                el('thead', {}, el('tr', {},
+                  el('th', {}, '時間'), el('th', {}, '學生'), el('th', {}, '班級'),
+                  el('th', {}, '結果'), el('th', {}, '問題'), el('th', {}, '診斷碼'))),
+                el('tbody', {}, d.items.map((x) => el('tr', {},
+                  el('td', { class: 'small muted' }, fmtDate(x.created_at)),
+                  el('td', {}, x.user_name || el('span', { class: 'muted' }, '未登入'),
+                    x.username ? el('span', { class: 'small muted' }, `　${x.username}`) : null),
+                  el('td', { class: 'small muted' }, x.class_group || '—'),
+                  el('td', {}, x.ok
+                    ? el('span', { class: 'pill ok' }, '通過')
+                    : el('span', { class: 'pill warn' }, `${x.score} 分`)),
+                  el('td', { class: 'small' }, x.summary || ''),
+                  el('td', { class: 'small' }, el('code', { style: { userSelect: 'all' } }, x.code))))))));
+    })();
+
+    return el('div', { class: 'card' }, el('h3', {}, '🩺 考前環境檢查'), box);
+  }
+
   async function monitor(mount) {
     stopPolling();
     const box = el('div');
@@ -2189,7 +2240,8 @@ const Admin = (() => {
         el('h2', { style: { margin: 0 } }, '口說即時監看'),
         el('span', { class: 'pill info' }, '每 4 秒自動更新')),
       el('p', { class: 'small muted' }, '顯示最近 2 小時內進行過口說測驗的學生，以及 AI 考官給出的即時分數與逐字稿。'),
-      box);
+      box,
+      await deviceChecks());
 
     const L = { FC: '流利', LR: '詞彙', GRA: '文法', PRO: '發音' };
     async function load() {

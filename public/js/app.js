@@ -151,7 +151,10 @@
         msg,
         btn,
         el('p', { class: 'small muted', style: { marginTop: '1rem', textAlign: 'center' } },
-          '忘記密碼請找老師或管理員重設。'))));
+          '忘記密碼請找老師或管理員重設。'),
+        el('p', { class: 'small', style: { marginTop: '.4rem', textAlign: 'center' } },
+          el('a', { href: '#/check' }, '🩺 考前環境檢查'),
+          el('span', { class: 'muted' }, '　不用登入，考前先確認麥克風與音量')))));
 
     // 有開 Turnstile 才載入元件；沒開的話登入頁完全不會碰 Cloudflare
     let cfg = null;
@@ -230,8 +233,11 @@
     UI.render(mount, UI.loading('載入你的考試…', 2));
     const { available } = await API.get('/exam/available');
 
-    UI.render(mount, 
-      el('h2', {}, `${API.user?.name}，你好`),
+    UI.render(mount,
+      el('div', { class: 'toolbar' },
+        el('h2', { style: { margin: 0 } }, `${API.user?.name}，你好`),
+        el('span', { style: { flex: '1' } }),
+        el('a', { class: 'btn sm', href: '#/check' }, '🩺 環境檢查')),
       available.length === 0
         ? el('div', { class: 'card' }, UI.emptyState('目前沒有指派給你的考試', { label: '去練習 →', href: '#/practice' }, '老師指派之後就會出現在這裡。想先自己練可以到「練習」。'))
         : available.map((a) => el('div', { class: 'card' },
@@ -260,6 +266,28 @@
   }
 
   async function startExam(a) {
+    // 監考模式下，麥克風權限一定要在「進全螢幕之前」就拿到。
+    // 不然學生為了去瀏覽器設定開權限而退出全螢幕，會被記成違規 ——
+    // 系統自己造成的問題，卻算在學生頭上。
+    if (!Check.recentlyPassed()) {
+      const mount = UI.$('#main');
+      if (mount) {
+        const box = el('div');
+        UI.render(mount,
+          el('div', { class: 'card', style: { marginBottom: '1rem' } },
+            el('h3', { style: { marginTop: 0 } }, '開始之前，先花一分鐘檢查這台電腦'),
+            el('p', { class: 'small muted', style: { margin: 0 } },
+              '這一步七天內只需要做一次。麥克風權限先在這裡開好，考試中就不會因為去改瀏覽器設定而中斷、被記成離開考試畫面。'),
+            el('div', { class: 'toolbar', style: { marginTop: '.6rem' } },
+              el('button', { class: 'btn sm', onclick: () => studentHome(mount) }, '← 先回去'))),
+          box);
+        return Check.render(box, { gate: true, onDone: () => reallyStart(a) });
+      }
+    }
+    return reallyStart(a);
+  }
+
+  async function reallyStart(a) {
     try {
       const r = await API.post('/exam/start', { assignmentId: a.assignmentId, testId: a.testId });
       location.hash = `#/exam/${r.attemptId}`;
@@ -767,6 +795,22 @@
 
     // 離開哪一頁都先停掉背景輪詢（例如即時監看的 4 秒更新）
     try { Admin.stopPolling(); } catch { /* Admin 還沒載入 */ }
+
+    // 考前環境檢查不用登入 —— 學生考前一天在家就能自己測，
+    // 麥克風權限先在這裡拿到，考試中就不必為了改設定而退出全螢幕。
+    if (path === '/check') {
+      stopBell();
+      document.body.classList.remove('exam-body');
+      document.body.style.overflow = '';
+      const mount = el('main', { class: 'app-main check-page', id: 'main' });
+      UI.render(root(),
+        el('header', { class: 'app-header' },
+          el('div', { class: 'brand' }, 'IELTS 模擬考'),
+          el('div', { class: 'spacer' }),
+          el('a', { class: 'btn sm', href: API.token ? '#/' : '#/login' }, API.token ? '回首頁' : '登入')),
+        mount);
+      return await Check.render(mount);
+    }
 
     if (!API.token) return loginPage();
     if (path === '/login') { location.hash = '#/'; return; }

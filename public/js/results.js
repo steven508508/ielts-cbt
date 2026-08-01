@@ -96,12 +96,17 @@ const Results = (() => {
     auto_submit: ['違規次數超標，自動收卷', 'err'],
     resize: ['視窗大小改變', ''],
     devtools: ['疑似開啟開發者工具', 'warn'],
+    device_permission: ['裝置權限問題', ''],
+    device_check: ['考前環境檢查', ''],
   };
 
+  const SEV_LABEL = { info: '紀錄', warn: '需留意', alert: '可疑' };
+
   function conductReview() {
-    const c = D.conduct || { counts: {}, events: [] };
+    const c = D.conduct || { counts: {}, events: [], bySeverity: {} };
     const isStaff = API.user?.role !== 'student';
     const suspicious = c.leaveCount || c.counts.copy_blocked || c.counts.paste_blocked;
+    const excused = c.excusedCount || 0;
 
     return el('div', {},
       el('div', { class: 'card' },
@@ -109,9 +114,16 @@ const Results = (() => {
         suspicious
           ? el('p', {}, '這場考試偵測到以下行為，僅供老師參考，系統不會自動判定作弊。')
           : el('p', {}, '這場考試沒有偵測到任何異常行為。'),
+        // 裝置問題造成的離開單獨列出來。混在「離開次數」裡的話，
+        // 老師看到的是一個看不出所以然的數字，很容易誤判成作弊。
+        excused
+          ? el('p', { class: 'small muted' },
+              `另外有 ${excused} 次離開是系統判定為裝置問題（例如處理麥克風權限、或在不要求全螢幕的科目退出全螢幕），`,
+              '不計入上面的次數。')
+          : null,
         el('div', { class: 'row' }, Object.entries(c.counts).map(([k, n]) => {
           const [label, kind] = EVENT_LABEL[k] || [k, ''];
-          if (k === 'module_start' || k === 'return' || k === 'fullscreen_enter') return null;
+          if (['module_start', 'return', 'fullscreen_enter', 'device_check'].includes(k)) return null;
           return el('div', { style: { minWidth: '130px', flex: '0 0 auto' } },
             el('div', { class: 'small muted' }, label),
             el('div', {
@@ -123,13 +135,16 @@ const Results = (() => {
         ? el('div', { class: 'card' },
             el('h3', {}, `事件時間軸（${c.events.length} 筆）`),
             UI.dataTable(
-              el('thead', {}, el('tr', {}, el('th', {}, '時間'), el('th', {}, '科目'), el('th', {}, '事件'), el('th', {}, '備註'))),
+              el('thead', {}, el('tr', {}, el('th', {}, '時間'), el('th', {}, '科目'),
+                el('th', {}, '等級'), el('th', {}, '事件'), el('th', {}, '備註'))),
               el('tbody', {}, c.events.map((e) => {
+                const sev = e.severity || 'warn';
                 const [label, kind] = EVENT_LABEL[e.type] || [e.type, ''];
-                return el('tr', {},
+                return el('tr', { style: sev === 'info' ? { opacity: '.65' } : {} },
                   el('td', { class: 'small muted' }, fmtDate(e.created_at)),
                   el('td', { class: 'small' }, e.module ? (UI.MODULE_LABEL[e.module] || e.module).split(' ')[0] : '—'),
-                  el('td', {}, el('span', { class: `pill ${kind}` }, label)),
+                  el('td', {}, el('span', { class: `sev ${sev}` }, SEV_LABEL[sev] || sev)),
+                  el('td', {}, el('span', { class: `pill ${sev === 'info' ? '' : kind}` }, label)),
                   el('td', { class: 'small muted' }, e.detail || ''));
               }))))
         : el('p', { class: 'small muted' }, isStaff ? '' : '完整的事件明細只有老師看得到。'));

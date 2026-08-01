@@ -225,6 +225,7 @@ CREATE TABLE IF NOT EXISTS exam_events (
   module     VARCHAR(20)  NULL,
   type       VARCHAR(40)  NOT NULL,
   detail     VARCHAR(255) NULL,
+  severity   VARCHAR(10)  NOT NULL DEFAULT 'warn',
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_ev_attempt (attempt_id),
   INDEX idx_ev_type (type),
@@ -262,4 +263,24 @@ CREATE TABLE IF NOT EXISTS notifications (
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_notif_user (user_id, read_at, id),
   CONSTRAINT fk_notif_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ── v2.10：考前環境診斷 ────────────────────────────────────
+-- 學生不用登入就能跑，所以 user_id 允許 NULL。
+-- code 是給學生報給老師的短碼，比一長串 id 好唸。
+CREATE TABLE IF NOT EXISTS device_checks (
+  id         INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  user_id    INT UNSIGNED NULL,
+  code       CHAR(6)      NOT NULL,
+  ok         TINYINT(1)   NOT NULL DEFAULT 0,
+  score      TINYINT UNSIGNED NOT NULL DEFAULT 0,
+  summary    VARCHAR(300) NULL,
+  results    TEXT         NULL,
+  ua         VARCHAR(255) NULL,
+  ip         VARCHAR(45)  NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_dc_user (user_id, id),
+  INDEX idx_dc_code (code),
+  INDEX idx_dc_time (created_at),
+  CONSTRAINT fk_dc_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

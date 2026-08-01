@@ -96,9 +96,65 @@ const Speaking = (() => {
       box.style.color = 'var(--c-ok, #1e7d3c)';
       s.getTracks().forEach((t) => t.stop());
     } catch (e) {
-      box.textContent = `✗ 無法使用麥克風：${e.message}。請確認網址是 https:// 或 localhost，並允許麥克風權限。`;
+      const h = micHelp(e);
+      box.textContent = `✗ ${h.title} —— ${h.lines[0]}`;
       box.style.color = 'var(--c-danger, #c0392b)';
     }
+  }
+
+  /**
+   * 麥克風出問題時給看得懂的說明，而不是把瀏覽器的英文錯誤丟給學生。
+   * 順便回報一筆 device_permission —— 伺服器看到這筆之後，接下來三分鐘
+   * 學生離開畫面（去瀏覽器設定開權限）會記成「處理裝置權限」而不是違規。
+   */
+  function micHelp(err) {
+    const name = err?.name || '';
+    if (name === 'NotAllowedError' || name === 'SecurityError') {
+      return {
+        title: '瀏覽器擋住了麥克風',
+        lines: [
+          '請點網址列最左邊的圖示（鎖頭或滑桿），把「麥克風」改成「允許」，再按下面的「再試一次」。',
+          '如果找不到那個選項，到瀏覽器設定搜尋「麥克風」，把這個網站加進允許清單。',
+        ],
+        note: '接下來幾分鐘為了處理權限而離開考試畫面，不會被算成違規。',
+      };
+    }
+    if (name === 'NotFoundError' || name === 'OverconstrainedError') {
+      return { title: '找不到麥克風', lines: ['請把耳機或麥克風插好，再按「再試一次」。'], note: '' };
+    }
+    if (name === 'NotReadableError') {
+      return {
+        title: '麥克風被其他程式占用',
+        lines: ['請關掉視訊會議、錄音或其他正在用麥克風的程式，再按「再試一次」。'],
+        note: '',
+      };
+    }
+    if (!window.isSecureContext) {
+      return {
+        title: '這個網址拿不到麥克風',
+        lines: ['瀏覽器只在 https:// 或 localhost 才給麥克風權限。請通知監考老師。'],
+        note: '',
+      };
+    }
+    if (name === 'NotSupportedError') {
+      return {
+        title: '這台電腦不允許錄音',
+        lines: ['系統或瀏覽器政策擋住了錄音（常見於學校統一管理的電腦）。請通知監考老師。'],
+        note: '',
+      };
+    }
+    return {
+      title: '無法取得麥克風',
+      lines: ['建議改用 Chrome 或 Edge 再試一次。',
+        `還是不行的話，把這段訊息給老師：${name || 'Error'} / ${err?.message || ''}`],
+      note: '',
+    };
+  }
+
+  async function getMic() {
+    return navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
+    });
   }
 
   async function begin() {
@@ -106,13 +162,37 @@ const Speaking = (() => {
       await Exam.notice('沒有口說題目', el('p', {}, '這份試卷沒有口說內容。'));
       return S.onDone?.();
     }
-    try {
-      S.stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
-      });
-    } catch (e) {
-      return Exam.notice('無法取得麥克風', el('p', {}, e.message));
+
+    // 全螢幕底下瀏覽器的權限提示很容易被忽略，先退出來再問
+    if (document.fullscreenElement) {
+      try { await document.exitFullscreen(); } catch { /* 不支援就算了 */ }
     }
+
+    for (;;) {
+      try {
+        S.stream = await getMic();
+        break;
+      } catch (e) {
+        const h = micHelp(e);
+        // 讓伺服器知道這是裝置問題，接下來的離開才不會被當成作弊
+        API.post(`/exam/${S.attemptId}/event`, {
+          type: 'device_permission', module: 'speaking', detail: `${h.title}（${e.name || 'Error'}）`,
+        }).catch(() => {});
+
+        const again = await Exam.dlg({
+          title: h.title,
+          body: el('div', {},
+            h.lines.map((t) => el('p', {}, t)),
+            h.note ? el('p', { class: 'small', style: { opacity: '.8' } }, h.note) : null),
+          actions: [
+            { label: '先跳過口說', value: false },
+            { label: '再試一次', primary: true, value: true },
+          ],
+        });
+        if (!again) return S.onDone?.();
+      }
+    }
+
     startBackupRecording();
     if (S.realtime) return startRealtime();
     return startTurnMode();

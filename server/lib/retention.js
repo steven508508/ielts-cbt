@@ -5,6 +5,7 @@ const path = require('path');
 const db = require('../db');
 const config = require('../config');
 const notify = require('./notify');
+const devicecheck = require('./devicecheck');
 
 const KEY = 'retention';
 
@@ -15,6 +16,7 @@ const DEFAULT_POLICY = {
   keepAbandonedDays: 14,     // 未完成又沒動作的考試場次幾天後清掉
   keepAiLogsDays: 30,        // AI 呼叫紀錄保留幾天
   keepReadNotificationsDays: 60, // 已讀的站內通知保留幾天（未讀的永遠留著）
+  keepDeviceChecksDays: 30,  // 考前環境診斷紀錄保留幾天
   deleteUnusedMediaDays: 0,  // 沒有任何試卷引用的媒體檔幾天後刪（0 = 不自動刪）
   runAtHour: 3,              // 每天幾點執行（伺服器時間）
 };
@@ -218,6 +220,17 @@ async function runCleanup({ dryRun = true, policy = null, actor = 'system' } = {
     const n = Number(c?.n || 0);
     if (!dryRun && n) await notify.cleanup(p.keepReadNotificationsDays);
     add('清除已讀通知', n, 0, `已讀且超過 ${p.keepReadNotificationsDays} 天（未讀的一律保留）`);
+  }
+
+  // 4.6) 考前環境診斷紀錄
+  if (p.keepDeviceChecksDays > 0) {
+    const c = await db.one(
+      'SELECT COUNT(*) AS n FROM device_checks WHERE created_at < DATE_SUB(NOW(), INTERVAL ? DAY)',
+      [p.keepDeviceChecksDays]
+    ).catch(() => null);
+    const n = Number(c?.n || 0);
+    if (!dryRun && n) await devicecheck.cleanup(p.keepDeviceChecksDays);
+    add('清除考前診斷紀錄', n, 0, `超過 ${p.keepDeviceChecksDays} 天`);
   }
 
   // 5) 沒有被引用的媒體檔

@@ -132,6 +132,10 @@ const Exam = (() => {
     const p = proc();
     if (!p.enabled) return;
     const r = await reportEvent(type, label);
+    // 伺服器會判斷這一次算不算違規（口說本來就不要求全螢幕、
+    // 或學生剛回報過麥克風權限被拒、正在處理權限）。判定不算的話
+    // 就不要跳紀律警告 —— 系統自己造成的中斷，不該讓學生以為自己被抓。
+    if (r.excused) return;
     const count = r.leaveCount ?? S.leaveCount;
 
     // 超過上限的處置
@@ -190,6 +194,9 @@ const Exam = (() => {
 
     document.addEventListener('fullscreenchange', () => {
       if (!S || !S.module || !proc().enabled || !proc().requireFullscreen) return;
+      // startModule 本來就不會在口說時要求全螢幕，判定這裡也要跟著排除，
+      // 否則前一科帶進來的全螢幕一退出就記一筆，學生根本沒被要求過。
+      if (S.module === 'speaking') return;
       if (!document.fullscreenElement) onViolation('fullscreen_exit', '離開全螢幕');
     });
 
@@ -466,6 +473,9 @@ const Exam = (() => {
     S.warned = {};
 
     if (name === 'speaking') {
+      // 口說要跟瀏覽器要麥克風權限，全螢幕底下權限提示很容易被忽略或看不到。
+      // 這一科本來就沒要求全螢幕，乾脆主動退出來。
+      exitFullscreen();
       Speaking.run({
         attemptId: S.attemptId,
         paper: S.paper,

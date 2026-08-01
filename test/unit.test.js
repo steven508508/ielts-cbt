@@ -559,3 +559,112 @@ test('SMTP：沒有主機或收件者時直接擋下來', async () => {
   await assert.rejects(() => notify.smtpSend({ ...MAIL, host: '' }), /主機/);
   await assert.rejects(() => notify.smtpSend({ ...MAIL, host: 'x', to: [] }), /收件者/);
 });
+
+// ── 紀律事件分級 ──────────────────────────────────────────
+// 這一組守的是一個真實踩到的坑：學生在口說時為了開麥克風權限退出全螢幕，
+// 被記成作弊。口說本來就沒要求全螢幕，那離開全螢幕就不該算違規。
+const conduct = require('../server/lib/conduct');
+
+test('分級：口說離開全螢幕不算違規（那一科本來就沒要求）', () => {
+  const r = conduct.classify('fullscreen_exit', { module: 'speaking' });
+  assert.equal(r.severity, 'info');
+  assert.match(r.reason, /不要求全螢幕/);
+  assert.equal(conduct.countsAsLeave(r.severity), false);
+});
+
+test('分級：其他科離開全螢幕仍然算違規', () => {
+  const r = conduct.classify('fullscreen_exit', { module: 'listening' });
+  assert.equal(r.severity, 'warn');
+  assert.equal(conduct.countsAsLeave(r.severity), true);
+});
+
+test('分級：剛回報裝置問題時，離開畫面視為處理權限', () => {
+  const r = conduct.classify('leave', { module: 'speaking', msSinceDeviceIssue: 30_000 });
+  assert.equal(r.severity, 'info');
+  assert.match(r.reason, /裝置權限/);
+});
+
+test('分級：寬限期過了就恢復正常判定', () => {
+  const r = conduct.classify('leave', { module: 'speaking', msSinceDeviceIssue: conduct.DEVICE_GRACE_MS + 1 });
+  assert.equal(r.severity, 'warn');
+});
+
+test('分級：沒有裝置問題時，切分頁一律算違規', () => {
+  assert.equal(conduct.classify('leave', { module: 'reading' }).severity, 'warn');
+  assert.equal(conduct.classify('leave', { module: 'reading', msSinceDeviceIssue: null }).severity, 'warn');
+});
+
+test('分級：複製題目與開發者工具是可疑等級', () => {
+  assert.equal(conduct.classify('copy_blocked', { module: 'reading' }).severity, 'alert');
+  assert.equal(conduct.classify('devtools', {}).severity, 'alert');
+  assert.equal(conduct.countsAsLeave('alert'), true);
+});
+
+test('分級：系統自己的紀錄不算違規', () => {
+  for (const t of ['return', 'fullscreen_enter', 'resize', 'device_permission']) {
+    assert.equal(conduct.classify(t, { module: 'listening' }).severity, 'info', t);
+  }
+});
+
+test('分級：寬限期不會讓「嘗試複製」變成沒事', () => {
+  // 裝置問題只寬限「離開」，不能連作弊行為一起赦免
+  const r = conduct.classify('copy_blocked', { module: 'reading', msSinceDeviceIssue: 1000 });
+  assert.equal(r.severity, 'alert');
+});
+
+// ── 考前環境診斷 ──────────────────────────────────────────
+const devicecheck = require('../server/lib/devicecheck');
+
+test('診斷：全部通過時 ok = true', () => {
+  const raw = Object.fromEntries(Object.keys(devicecheck.CHECKS).map((k) => [k, { status: 'pass' }]));
+  const out = devicecheck.sanitize(raw);
+  assert.equal(out.ok, true);
+  assert.equal(out.score, 100);
+  assert.deepEqual(out.criticalFails, []);
+});
+
+test('診斷：必要項目沒過會被單獨列出來', () => {
+  const out = devicecheck.sanitize({ mic: { status: 'fail', note: '權限被拒' }, secure: { status: 'pass' } });
+  assert.equal(out.ok, false);
+  assert.deepEqual(out.criticalFails, ['麥克風']);
+  assert.match(out.summary, /麥克風：權限被拒/);
+});
+
+test('診斷：警告也會讓 ok 變 false，但不算必要失敗', () => {
+  const out = devicecheck.sanitize({ screen: { status: 'warn', note: '視窗太窄' } });
+  assert.equal(out.ok, false);
+  assert.deepEqual(out.criticalFails, []);
+});
+
+test('診斷：略過的項目不列入分數', () => {
+  const out = devicecheck.sanitize({ mic: { status: 'pass' }, turnstile: { status: 'skip' } });
+  assert.equal(out.score, 100, '被略過的不該把分數拉低');
+});
+
+test('診斷：亂七八糟的輸入不會炸，也不會被原封不動存下來', () => {
+  const out = devicecheck.sanitize({
+    mic: { status: '<script>alert(1)</script>', note: 'x'.repeat(9999) },
+    不存在的項目: { status: 'pass' },
+    __proto__: { polluted: true },
+  });
+  assert.equal(out.results.mic.status, 'skip', '不認得的狀態要退成 skip');
+  assert.ok(out.results.mic.note.length <= 120, 'note 要截斷');
+  assert.ok(!('不存在的項目' in out.results), '只收白名單裡的項目');
+  assert.equal({}.polluted, undefined, '不能被原型污染');
+});
+
+test('診斷：null / 字串 / 陣列都吃得下去', () => {
+  for (const bad of [null, undefined, 'hello', 42, [1, 2, 3]]) {
+    const out = devicecheck.sanitize(bad);
+    assert.equal(typeof out.score, 'number');
+    assert.equal(Object.keys(out.results).length, Object.keys(devicecheck.CHECKS).length);
+  }
+});
+
+test('診斷碼：長度固定，而且不含容易看錯的字', () => {
+  for (let i = 0; i < 200; i += 1) {
+    const c = devicecheck.makeCode();
+    assert.equal(c.length, 6);
+    assert.ok(!/[01IO]/.test(c), `${c} 含有容易看錯的字元`);
+  }
+});

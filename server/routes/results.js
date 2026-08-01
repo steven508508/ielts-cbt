@@ -103,14 +103,25 @@ router.get('/:id', async (req, res) => {
 
   // 考試紀律事件（只有老師看得到明細，學生只看得到自己有沒有被記點）
   const eventRows = await db.query(
-    'SELECT module, type, detail, created_at FROM exam_events WHERE attempt_id = ? ORDER BY id',
+    'SELECT module, type, detail, severity, created_at FROM exam_events WHERE attempt_id = ? ORDER BY id',
     [attempt.id]
   );
   const eventCounts = {};
-  for (const e of eventRows) eventCounts[e.type] = (eventCounts[e.type] || 0) + 1;
+  const bySeverity = { info: 0, warn: 0, alert: 0 };
+  for (const e of eventRows) {
+    eventCounts[e.type] = (eventCounts[e.type] || 0) + 1;
+    bySeverity[e.severity || 'warn'] = (bySeverity[e.severity || 'warn'] || 0) + 1;
+  }
+  // 只算真的需要留意的。裝置問題造成的離開會標成 info，不要跟切分頁混在一起，
+  // 不然老師看到的是一個看不出所以然的數字。
+  const realLeaves = eventRows.filter(
+    (e) => ['leave', 'fullscreen_exit'].includes(e.type) && (e.severity || 'warn') !== 'info').length;
   const conduct = {
     counts: eventCounts,
-    leaveCount: (eventCounts.leave || 0) + (eventCounts.fullscreen_exit || 0),
+    bySeverity,
+    leaveCount: realLeaves,
+    excusedCount: eventRows.filter(
+      (e) => ['leave', 'fullscreen_exit'].includes(e.type) && e.severity === 'info').length,
     events: req.user.role === 'student' ? [] : eventRows,
   };
 

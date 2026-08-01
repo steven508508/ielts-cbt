@@ -1275,6 +1275,108 @@ async function call(method, path, body, token) {
   const jCancelStu = await call('POST', `/ai/jobs/${jobId}/cancel`, {}, stu);
   ok(jCancelStu.status === 403, '學生不能取消別人的工作');
 
+  // ── 考前環境診斷 ────────────────────────────────────────
+  console.log('\n考前環境診斷');
+  const dcCfg = await call('GET', '/check/config');
+  ok(dcCfg.status === 200 && !!dcCfg.data.checks.mic, '設定不用登入就讀得到');
+  ok(dcCfg.data.checks.mic.critical === true, '麥克風被標成必要項目');
+  ok(typeof dcCfg.data.serverTime === 'number', '有回傳伺服器時間讓學生校時');
+
+  const dcAnon = await call('POST', '/check', {
+    results: { mic: { status: 'pass' }, secure: { status: 'pass' }, server: { status: 'pass' } },
+  });
+  ok(dcAnon.status === 200 && dcAnon.data.ok === true, '未登入也存得進去');
+  ok(/^[2-9A-Z]{6}$/.test(dcAnon.data.code || ''), `會給一組診斷碼（${dcAnon.data.code}）`);
+
+  const dcBad = await call('POST', '/check', {
+    results: { mic: { status: 'fail', note: '權限被拒' }, secure: { status: 'pass' } },
+  });
+  ok(dcBad.data.ok === false && dcBad.data.criticalFails.includes('麥克風'),
+    '必要項目沒過會單獨點名');
+
+  // 這支是全站唯一不用登入就能寫入的端點，亂送東西不能把它打掛
+  const dcJunk = await call('POST', '/check', {
+    results: { mic: { status: '<script>x</script>', note: 'A'.repeat(5000) }, 亂碼: 1 },
+  });
+  ok(dcJunk.status === 200, '亂送資料不會 500');
+  const dcTok = await call('POST', '/check', { results: { mic: { status: 'pass' } } }, 'not.a.real.token');
+  ok(dcTok.status === 200, 'token 壞掉時當成未登入，不會讓學生測不了');
+
+  const dcMine = await call('POST', '/check', { results: { mic: { status: 'pass' } } }, stu);
+  ok(dcMine.status === 200, '登入後回報會綁到帳號');
+  const dcList = await call('GET', '/check/list?limit=20', null, tea);
+  ok(dcList.status === 200 && dcList.data.items.length > 0, '老師看得到誰測過');
+  ok(dcList.data.items.some((x) => x.username === 'student1'), '認得出是哪個學生測的');
+  ok(!JSON.stringify(dcList.data).includes('<script>'), '存進去的狀態是正規化過的');
+  const dcStu = await call('GET', '/check/list', null, stu);
+  ok(dcStu.status === 403, '學生看不到別人的檢查紀錄');
+
+  // ── 紀律事件分級 ────────────────────────────────────────
+  console.log('\n紀律事件分級');
+  const cdTest = await call('POST', '/tests', {
+    paper: normalizePaper({
+      title: `分級測試 ${stamp}`, testType: 'academic',
+      modules: [
+        { module: 'reading', sections: [{ title: 'Passage 1', passage: 'Text.', groups: [bankGroup(3, 1)] }] },
+        { module: 'speaking', sections: [{ title: 'Speaking', groups: [{
+          type: 'speaking_part',
+          questions: [{ number: 1, part: 1, prompt: 'Tell me about your hometown.' }],
+        }] }] },
+      ],
+    }),
+  }, tea);
+  const cdAssign = await call('POST', '/tests/assignments', {
+    testId: cdTest.data.id, userIds: [stuUid], modules: 'reading,speaking', maxAttempts: 9,
+    proctoring: { enabled: true, requireFullscreen: true, warnOnLeave: true, maxLeaves: 0, onExceed: 'warn' },
+  }, tea);
+  const cdAvail = (await call('GET', '/exam/available', null, stu)).data.available
+    .find((x) => x.assignmentId === cdAssign.data.ids[0]);
+  const cdStart = await call('POST', '/exam/start',
+    { assignmentId: cdAvail.assignmentId, testId: cdAvail.testId }, stu);
+  const cdId = cdStart.data.attemptId;
+  ok(cdId > 0, '開始一場有監考的考試');
+  await call('POST', `/exam/${cdId}/module/start`, { module: 'reading' }, stu);
+
+  const cdEv = async (type, module, detail) =>
+    (await call('POST', `/exam/${cdId}/event`, { type, module, detail }, stu)).data;
+
+  const cd1 = await cdEv('fullscreen_exit', 'reading', '離開全螢幕');
+  ok(cd1.severity === 'warn' && cd1.leaveCount === 1, '閱讀離開全螢幕算違規，計入次數');
+
+  const cd2 = await cdEv('fullscreen_exit', 'speaking', '離開全螢幕');
+  ok(cd2.severity === 'info' && cd2.excused === true,
+    '口說離開全螢幕不算違規（這一科本來就沒要求全螢幕）');
+  ok(cd2.leaveCount === 1, '而且不會把離開次數加上去');
+
+  const cd3 = await cdEv('device_permission', 'speaking', '瀏覽器擋住了麥克風');
+  ok(cd3.severity === 'info', '回報裝置問題本身不是違規');
+  const cd4 = await cdEv('leave', 'speaking', '離開考試視窗');
+  ok(cd4.severity === 'info' && /裝置權限/.test(cd4.reason || ''),
+    '緊接著去改瀏覽器設定的離開被判成處理裝置權限');
+  ok(cd4.leaveCount === 1, '學生不會因為系統自己造成的中斷而被扣點');
+
+  const cd5 = await cdEv('copy_blocked', 'reading', '嘗試複製');
+  ok(cd5.severity === 'alert', '嘗試複製題目是可疑等級');
+  ok(cd5.leaveCount === 1, '可疑事件不算進「離開次數」');
+
+  const cdEvents = await call('GET', `/exam/${cdId}/events`, null, tea);
+  ok(cdEvents.data.events.every((e) => !!e.severity), '每一筆事件都有等級');
+  const cdBadType = await call('POST', `/exam/${cdId}/event`, { type: 'nonsense' }, stu);
+  ok(cdBadType.status === 400, '沒見過的事件類型會被擋下');
+
+  await call('POST', `/exam/${cdId}/submit`, {}, stu);
+  const cdRes = await call('GET', `/results/${cdId}`, null, tea);
+  ok(cdRes.data.conduct.leaveCount === 1, `成績頁只算真正的離開（${cdRes.data.conduct.leaveCount} 次）`);
+  ok(cdRes.data.conduct.excusedCount === 2,
+    `裝置問題造成的 ${cdRes.data.conduct.excusedCount} 次另外列，不跟作弊混在一起`);
+  ok(cdRes.data.conduct.bySeverity.alert === 1, '成績頁看得到各等級的數量');
+  const cdResStu = await call('GET', `/results/${cdId}`, null, stu);
+  ok(cdResStu.data.conduct.events.length === 0, '學生看不到事件明細');
+
+  await call('DELETE', `/tests/assignments/${cdAssign.data.ids[0]}`, null, tea);
+  await call('POST', '/manage/results/bulk', { action: 'delete', ids: [cdId], force: true }, adm);
+  await call('DELETE', `/tests/${cdTest.data.id}`, null, adm);
+
   // ── 人機驗證設定 ───────────────────────────────────────
   console.log('\n人機驗證');
   const tsPub = await call('GET', '/auth/config');

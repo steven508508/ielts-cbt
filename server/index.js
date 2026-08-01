@@ -48,6 +48,7 @@ api('/api/ai', './routes/ai');
 api('/api/manage', './routes/manage');
 api('/api/practice', './routes/practice');
 api('/api/notifications', './routes/notifications');
+api('/api/check', './routes/devicecheck');
 
 app.get('/api/health', async (req, res) => {
   // 健康檢查自己不能被資料庫拖住。連線池滿的時候查詢會排隊，
