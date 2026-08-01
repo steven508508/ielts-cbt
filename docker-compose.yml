@@ -36,6 +36,10 @@ services:
       context: .
       dockerfile: Dockerfile
     image: ielts-cbt:latest
+    # 這個映像檔是本機建置的，不存在於任何 registry。
+    # 不寫的話某些版本的 compose 會先去 Docker Hub 拉，然後報
+    # 「pull access denied for ielts-cbt」而中斷。
+    pull_policy: build
     container_name: ielts-app
     restart: unless-stopped
     depends_on:

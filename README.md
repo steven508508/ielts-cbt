@@ -52,8 +52,8 @@ cp .env.docker.example .env
 nano .env          # 至少要改 DB_ROOT_PASSWORD、DB_PASSWORD、JWT_SECRET、ADMIN_PASSWORD
                    # JWT_SECRET 可以用 openssl rand -hex 32 產生
 
-# 4. 啟動（第一次會建置映像檔，約 1–2 分鐘）
-docker compose up -d
+# 4. 啟動（第一次會建置映像檔，約 1–3 分鐘）
+docker compose up -d --build
 
 # 5. 看看跑起來沒
 docker compose logs -f app
@@ -622,6 +622,16 @@ node test/e2e.js        # 端對端測試（83 項）：登入 → 作答 → �
 ---
 
 ## 疑難排解
+
+**`pull access denied for ielts-cbt, repository does not exist`**
+Compose 跑去 Docker Hub 找映像檔了，但這個映像檔是在你自己機器上建的、不存在於任何 registry。
+加上 `--build` 就會強制建置：
+
+```bash
+docker compose up -d --build
+```
+
+新版的 `docker-compose.yml` 已經寫了 `pull_policy: build`，`git pull` 之後就不會再遇到。
 
 **啟動時顯示「無法連線到 MySQL」**
 檢查 `.env` 的 `DB_HOST` / `DB_USER` / `DB_PASSWORD` / `DB_NAME`，以及 MySQL 服務是否已啟動。
