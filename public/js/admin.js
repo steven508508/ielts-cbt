@@ -37,6 +37,8 @@ const Admin = (() => {
                     onclick: () => editMedia(t.id, () => tests(mount)),
                   }, t.missingMedia ? `素材 ⚠${t.missingMedia}` : '素材'),
                   ' ',
+                  el('a', { class: 'btn sm', href: `#/admin/edit/${t.id}`, title: '改題目、選項、答案' }, '題目'),
+                  ' ',
                   el('button', {
                     class: 'btn sm',
                     onclick: async () => {
@@ -1966,6 +1968,7 @@ const Admin = (() => {
   function stopPolling() {
     clearInterval(monitorTimer); monitorTimer = null;
     clearInterval(jobTimer); jobTimer = null;
+    window.onbeforeunload = null;   // 離開題目編輯器時把「未儲存」提醒收掉
   }
 
   async function monitor(mount) {
@@ -2292,5 +2295,352 @@ const Admin = (() => {
     }
   }
 
-  return { tests, importPage, generate, bank, members, assign, results, settings, files, data, monitor, stopPolling };
+  /* ═══════════════════════════════════════════════════════════
+     題目編輯器
+
+     以前一題答案打錯，只能「匯出 JSON → 手改 → 重新匯入」。
+     這裡直接在網頁上改題幹、選項、答案、解析、題號，存檔前會先驗證。
+     ═══════════════════════════════════════════════════════════ */
+  const TYPE_SHORT = {
+    mcq_single: '單選', mcq_multi: '多選', tfng: 'T/F/NG', ynng: 'Y/N/NG',
+    matching: '配對', gap_fill: '填空', gap_fill_bank: '選字填空',
+    short_answer: '簡答', label_image: '圖表標示',
+    writing_task: '寫作題', speaking_part: '口說題組',
+  };
+
+  const ANSWER_HINT = {
+    letter: '填選項代號，例如 B',
+    letters: '多個代號用逗號分隔，例如 B,D',
+    enum: null,           // 依題型帶入下拉
+    text: '多種寫法用 // 分隔；括號代表可有可無，例如 (the) north gate',
+    mixed: '文字或選項代號皆可',
+  };
+
+  async function editPaper(mount, id) {
+    UI.render(mount, el('div', { class: 'empty' }, '載入中…'));
+    let d;
+    try { d = await API.get(`/tests/${id}`); }
+    catch (e) { return UI.render(mount, el('div', { class: 'empty' }, `讀不到這份試卷：${e.message}`)); }
+
+    const { types } = await API.get('/tests/question-types');
+    const paper = d.paper;
+    let dirty = false;
+    const touch = () => { dirty = true; status.textContent = '有未儲存的變更'; status.className = 'small'; };
+
+    const status = el('span', { class: 'small muted' }, '');
+    const body = el('div');
+
+    window.onbeforeunload = () => (dirty ? '還有沒儲存的變更' : undefined);
+
+    // ── 小工具 ──────────────────────────────────────────
+    const field = (label, input, hint) => el('label', { class: 'field' },
+      el('span', {}, label), input,
+      hint ? el('span', { class: 'small muted' }, hint) : null);
+
+    const textInput = (val, onchange, attrs = {}) => el('input', {
+      type: 'text', value: val ?? '', ...attrs,
+      oninput: (e) => { onchange(e.target.value); touch(); },
+    });
+
+    const areaInput = (val, onchange, rows = 3) => el('textarea', {
+      rows, oninput: (e) => { onchange(e.target.value); touch(); },
+    }, val ?? '');
+
+    /** 選項編輯（A/B/C…） */
+    function optionsEditor(holder, list, onChange) {
+      const draw = () => UI.render(holder,
+        el('div', { class: 'small muted', style: { marginBottom: '.3rem' } }, '選項'),
+        (list || []).map((o, i) => el('div', {
+          style: { display: 'flex', gap: '.4rem', marginBottom: '.3rem', alignItems: 'center' },
+        },
+          el('input', {
+            type: 'text', value: o.key || '', style: { width: '3.5rem', flex: '0 0 3.5rem' },
+            oninput: (e) => { o.key = e.target.value; touch(); },
+          }),
+          el('input', {
+            type: 'text', value: o.text || '', style: { flex: '1' },
+            oninput: (e) => { o.text = e.target.value; touch(); },
+          }),
+          el('button', {
+            class: 'btn sm danger', type: 'button',
+            onclick: () => { list.splice(i, 1); onChange(list); touch(); draw(); },
+          }, '✕'))),
+        el('button', {
+          class: 'btn sm', type: 'button',
+          onclick: () => {
+            list.push({ key: String.fromCharCode(65 + list.length), text: '' });
+            onChange(list); touch(); draw();
+          },
+        }, '＋ 新增選項'));
+      draw();
+    }
+
+    /** 一題 */
+    function questionRow(g, q, qi, redraw) {
+      const meta = types[g.type] || {};
+      const kind = meta.answerKind;
+      // 沒設答案時一定要有一個空選項。否則下拉會「看起來」選了第一個值，
+      // 但 q.answers 其實還是空的，存檔才跳「沒有標準答案」，老師完全看不懂。
+      const cur = (q.answers || [])[0];
+      const answerCell = kind === 'enum'
+        ? el('select', {
+            style: cur ? {} : { borderColor: 'var(--err)' },
+            onchange: (e) => {
+              q.answers = e.target.value ? [e.target.value] : [];
+              e.target.style.borderColor = e.target.value ? '' : 'var(--err)';
+              touch();
+            },
+          },
+            el('option', { value: '', selected: !cur }, '（請選擇答案）'),
+            (meta.enumValues || []).map((v) =>
+              el('option', { value: v, selected: cur === v }, v)))
+        : textInput((q.answers || []).join(' // '), (v) => {
+            q.answers = v.split('//').map((x) => x.trim()).filter(Boolean);
+          }, { placeholder: ANSWER_HINT[kind] || '' });
+
+      const perQOptions = el('div');
+      if (g.type === 'mcq_single') {
+        q.options = q.options || [];
+        optionsEditor(perQOptions, q.options, (l) => { q.options = l; });
+      }
+
+      return el('div', {
+        style: {
+          border: '1px solid var(--line-2)', borderRadius: '4px',
+          padding: '.6rem .7rem', marginBottom: '.5rem', background: '#fff',
+        },
+      },
+        el('div', { style: { display: 'flex', gap: '.5rem', alignItems: 'center', marginBottom: '.4rem' } },
+          el('span', { class: 'small muted' }, '題號'),
+          el('input', {
+            type: 'number', value: q.number ?? '', style: { width: '5rem' },
+            oninput: (e) => { q.number = Number(e.target.value) || null; touch(); },
+          }),
+          el('span', { style: { flex: 1 } }),
+          el('button', {
+            class: 'btn sm danger', type: 'button',
+            onclick: async () => {
+              if (!await UI.confirm(`刪除第 ${q.number} 題？`, '刪除')) return;
+              g.questions.splice(qi, 1); touch(); redraw();
+            },
+          }, '刪除這一題')),
+        field('題幹', areaInput(q.text ?? q.prompt ?? '', (v) => { q.text = v; delete q.prompt; }, 2)),
+        g.type === 'mcq_single' ? perQOptions : null,
+        field('標準答案', answerCell, kind === 'enum' ? null : ANSWER_HINT[kind]),
+        field('解析（只有老師和成績單看得到）', areaInput(q.explanation || '', (v) => { q.explanation = v; }, 2)));
+    }
+
+    /** 整份試卷目前最大的題號 —— 新增題目時用，免得一加就撞號 */
+    function maxNumberInPaper() {
+      let max = 0;
+      for (const m of paper.modules) {
+        for (const s2 of m.sections || []) {
+          for (const g2 of s2.groups || []) {
+            for (const q2 of g2.questions || []) {
+              const n = Number(q2.number);
+              if (Number.isFinite(n) && n > max) max = n;
+            }
+          }
+        }
+      }
+      return max;
+    }
+
+    /** 把某一科的客觀題重新依順序編號 —— 插題刪題之後很需要 */
+    function renumberModule(mod) {
+      let n = 0;
+      for (const sec of mod.sections || []) {
+        for (const g of sec.groups || []) {
+          if (!types[g.type]?.objective) continue;
+          for (const q of g.questions || []) { n += 1; q.number = n; }
+        }
+      }
+      return n;
+    }
+
+    /** 一個題組 */
+    function groupCard(sec, g, gi, redraw) {
+      const meta = types[g.type] || {};
+      const qHolder = el('div');
+      const drawQs = () => UI.render(qHolder,
+        (g.questions || []).map((q, qi) => questionRow(g, q, qi, () => { drawQs(); })),
+        el('button', {
+          class: 'btn sm', type: 'button',
+          onclick: () => {
+            g.questions.push({
+              number: maxNumberInPaper() + 1, text: '', answers: [], explanation: '',
+              ...(g.type === 'mcq_single' ? { options: [] } : {}),
+            });
+            touch(); drawQs();
+          },
+        }, '＋ 新增題目'));
+      drawQs();
+
+      const groupOptions = el('div');
+      if (meta.needsOptions || (g.options && g.options.length)) {
+        g.options = g.options || [];
+        optionsEditor(groupOptions, g.options, (l) => { g.options = l; });
+      }
+
+      return el('div', {
+        class: 'card',
+        style: { background: '#fafafa', marginBottom: '.8rem' },
+      },
+        el('div', { class: 'toolbar', style: { marginBottom: '.5rem' } },
+          el('b', {}, meta.label || g.type),
+          el('span', { class: 'small muted' }, `　${(g.questions || []).length} 題`),
+          el('span', { style: { flex: 1 } }),
+          el('button', {
+            class: 'btn sm danger', type: 'button',
+            onclick: async () => {
+              if (!await UI.confirm(`刪除整個「${meta.label || g.type}」題組？裡面 ${(g.questions || []).length} 題會一起消失。`, '刪除')) return;
+              sec.groups.splice(gi, 1); touch(); redraw();
+            },
+          }, '刪除題組')),
+        field('指示語 Instructions', areaInput(g.instructions || '', (v) => { g.instructions = v; }, 2),
+          '照官方寫法，例如 Write NO MORE THAN TWO WORDS AND/OR A NUMBER for each answer.'),
+        el('div', { class: 'row' },
+          meta.answerKind === 'text' || meta.supportsBody
+            ? field('字數上限', el('input', {
+                type: 'number', value: g.wordLimit ?? '', min: 1,
+                oninput: (e) => { g.wordLimit = Number(e.target.value) || null; touch(); },
+              })) : null,
+          g.type === 'mcq_multi'
+            ? field('要選幾個', el('input', {
+                type: 'number', value: g.selectCount ?? 2, min: 2,
+                oninput: (e) => { g.selectCount = Number(e.target.value) || 2; touch(); },
+              })) : null,
+          meta.needsImage || g.image
+            ? field('圖片網址', textInput(g.image || '', (v) => { g.image = v || null; },
+                { placeholder: '/uploads/image/…' })) : null),
+        groupOptions,
+        meta.supportsBody
+          ? field('版面 bodyHtml（用 [[題號]] 當空格）',
+              areaInput(g.bodyHtml || '', (v) => { g.bodyHtml = v || null; }, 5))
+          : null,
+        el('div', { style: { marginTop: '.6rem' } }, qHolder));
+    }
+
+    // ── 整頁 ────────────────────────────────────────────
+    function draw() {
+      UI.render(body, paper.modules.map((mod) => {
+        const secHolder = el('div');
+        const drawSecs = () => UI.render(secHolder, mod.sections.map((sec, si) => {
+          const gHolder = el('div');
+          const drawGroups = () => UI.render(gHolder,
+            (sec.groups || []).map((g, gi) => groupCard(sec, g, gi, drawGroups)),
+            el('div', { style: { display: 'flex', gap: '.4rem', flexWrap: 'wrap' } },
+              Object.entries(types)
+                .filter(([, t]) => t.modules.includes(mod.module))
+                .map(([k, t]) => el('button', {
+                  class: 'btn sm', type: 'button',
+                  onclick: () => {
+                    sec.groups.push({ type: k, instructions: '', questions: [], ...(t.needsOptions ? { options: [] } : {}) });
+                    touch(); drawGroups();
+                  },
+                }, `＋ ${TYPE_SHORT[k] || t.label}`))));
+          drawGroups();
+
+          return el('details', { open: true, style: { marginBottom: '1rem' } },
+            el('summary', {}, el('b', {}, sec.title || `第 ${si + 1} 節`),
+              el('span', { class: 'small muted' },
+                `　${(sec.groups || []).reduce((n, g) => n + (g.questions?.length || 0), 0)} 題`)),
+            el('div', { style: { paddingLeft: '.6rem', paddingTop: '.5rem' } },
+              field('這一節的標題', textInput(sec.title || '', (v) => { sec.title = v; })),
+              gHolder,
+              el('div', { style: { marginTop: '.6rem' } },
+                el('button', {
+                  class: 'btn sm danger', type: 'button',
+                  onclick: async () => {
+                    if (!await UI.confirm(`刪除整節「${sec.title}」？`, '刪除')) return;
+                    mod.sections.splice(si, 1); touch(); drawSecs();
+                  },
+                }, '刪除這一節'))));
+        }),
+        el('button', {
+          class: 'btn sm', type: 'button',
+          onclick: () => {
+            mod.sections.push({
+              title: `${mod.module === 'reading' ? 'Reading Passage' : 'Section'} ${mod.sections.length + 1}`,
+              groups: [],
+            });
+            touch(); drawSecs();
+          },
+        }, '＋ 新增一節'));
+        drawSecs();
+
+        return el('details', { open: true },
+          el('summary', {}, el('b', {}, UI.MODULE_LABEL[mod.module] || mod.module),
+            el('span', { class: 'small muted' }, `　${mod.sections.length} 節`)),
+          el('div', { style: { paddingTop: '.6rem' } },
+            ['listening', 'reading'].includes(mod.module)
+              ? el('div', { style: { marginBottom: '.6rem' } },
+                  el('button', {
+                    class: 'btn sm', type: 'button',
+                    onclick: async () => {
+                      if (!await UI.confirm('把這一科的題目依目前順序重新編號 1、2、3…？插題刪題之後很好用，但既有成績是照題號對應的，已經考過的試卷請不要動。', '重新編號')) return;
+                      const n = renumberModule(mod);
+                      touch(); draw();
+                      toast(`已重新編號 1–${n}`, 'ok');
+                    },
+                  }, '↻ 重新編號'),
+                  el('span', { class: 'small muted' }, '　插題或刪題造成題號跳號時使用'))
+              : null,
+            secHolder));
+      }));
+    }
+
+    async function save(publish) {
+      status.textContent = '驗證中…';
+      let v;
+      try { v = await API.post('/tests/validate', { paper }); }
+      catch (e) { status.textContent = `驗證失敗：${e.message}`; return; }
+      if (!v.ok) {
+        status.textContent = `有 ${v.errors.length} 個問題`;
+        status.className = 'small';
+        status.style.color = 'var(--err)';
+        return UI.alert(el('div', {},
+          el('p', {}, el('b', {}, '這樣存不進去，請先修正：')),
+          el('ul', { class: 'small' }, v.errors.map((x) => el('li', {}, x)))), '格式有誤');
+      }
+      try {
+        const r = await API.put(`/tests/${id}`, { paper, published: publish ?? d.test.published });
+        dirty = false;
+        status.style.color = '';
+        status.textContent = `已儲存　聽力 ${r.stats.listening} 題　閱讀 ${r.stats.reading} 題`;
+        toast('已儲存', 'ok');
+        await warnIfMissingMedia(r.warnings);
+      } catch (e) {
+        status.style.color = 'var(--err)';
+        status.textContent = `儲存失敗：${e.message}`;
+        UI.alert(e.details?.errors?.join('\n') || e.message);
+      }
+    }
+
+    UI.render(mount,
+      el('div', { class: 'toolbar' },
+        el('a', { class: 'btn sm', href: '#/admin/tests' }, '← 試卷管理'),
+        el('h2', { style: { margin: 0 } }, '編輯題目'),
+        el('span', { style: { flex: 1 } }),
+        status,
+        el('button', { class: 'btn', onclick: () => save() }, '驗證並儲存')),
+      el('div', { class: 'card' },
+        el('div', { class: 'row' },
+          field('試卷標題', textInput(paper.title, (v) => { paper.title = v; })),
+          field('類型', el('select', {
+            onchange: (e) => { paper.testType = e.target.value; touch(); },
+          },
+            el('option', { value: 'academic', selected: paper.testType !== 'general' }, 'Academic'),
+            el('option', { value: 'general', selected: paper.testType === 'general' }, 'General Training')))),
+        field('說明', textInput(paper.description || '', (v) => { paper.description = v; })),
+        el('p', { class: 'small muted' },
+          '改完按「驗證並儲存」。驗證會檢查題號重複、答案是否合法、bodyHtml 的空格對不對得上。',
+          el('br'),
+          '文章、音檔、圖片請用試卷管理列的「素材」按鈕。')),
+      body);
+
+    draw();
+  }
+
+  return { tests, importPage, generate, bank, members, assign, results, settings, files, data, monitor, editPaper, stopPolling };
 })();

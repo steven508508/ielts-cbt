@@ -566,7 +566,7 @@ Give the next question.`;
 }
 
 module.exports = {
-  generateQuestions, generateFullPaper, parsePasted,
+  generateQuestions, generateFullPaper, generateSpeakingSet, parsePasted,
   gradeWriting, gradeSpeaking, scoreSpeakingLive, speakingFollowUp,
   WRITING_DESCRIPTORS, SPEAKING_DESCRIPTORS,
 };

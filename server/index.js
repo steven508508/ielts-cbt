@@ -46,6 +46,7 @@ api('/api/speaking', './routes/speaking');
 api('/api/results', './routes/results');
 api('/api/ai', './routes/ai');
 api('/api/manage', './routes/manage');
+api('/api/practice', './routes/practice');
 
 app.get('/api/health', async (req, res) => {
   try {

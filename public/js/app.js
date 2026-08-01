@@ -204,7 +204,7 @@
          ['#/admin/bank', '題庫'], ['#/admin/import', '匯入題目'], ['#/admin/generate', 'AI 出題'],
          ['#/admin/members', '成員'], ['#/admin/assign', '指派考試'], ['#/admin/files', '檔案'],
          ['#/admin/data', '資料管理'], ['#/admin/settings', '系統設定']]
-      : [['#/', '我的考試'], ['#/my-results', '我的成績'], ['#/practice', '寫作練習']];
+      : [['#/', '我的考試'], ['#/my-results', '我的成績'], ['#/practice', '練習']];
 
     const main = el('main', { class: 'app-main', id: 'main' });
     UI.render(root(), 
@@ -286,7 +286,37 @@
   }
 
   // ── 寫作即時練習 ────────────────────────────────────────
-  function practice(mount) {
+  // ── 練習中心（寫作批改 / 口說練習 / 錯題複習）─────────────
+  function practice(mount, params) {
+    const panes = [
+      ['寫作批改', writingPractice],
+      ['口說練習', speakingPractice],
+      ['錯題複習', wrongBook],
+    ];
+    const holder = el('div');
+    const bar = el('div', { class: 'tabs' }, panes.map(([label, fn], i) =>
+      el('button', {
+        class: i === 0 ? 'active' : '',
+        onclick: (e) => {
+          [...bar.children].forEach((c) => c.classList.remove('active'));
+          e.target.classList.add('active');
+          UI.render(holder, el('div', { class: 'empty' }, '載入中…'));
+          fn(holder);
+        },
+      }, label)));
+
+    UI.render(mount,
+      el('h2', {}, '練習'),
+      el('p', { class: 'small muted' }, '不用等老師指派，隨時可以自己練。這裡的練習不會產生成績。'),
+      bar, holder);
+
+    // 允許用 #/practice?tab=1 直接開某一頁
+    const want = Number(params?.tab) || 0;
+    if (want > 0 && want < panes.length) bar.children[want].click();
+    else writingPractice(holder);
+  }
+
+  function writingPractice(mount) {
     const taskNo = el('select', {}, el('option', { value: 2 }, 'Task 2（議論文）'), el('option', { value: 1 }, 'Task 1（圖表／書信）'));
     const type = el('select', {}, el('option', { value: 'academic' }, 'Academic'), el('option', { value: 'general' }, 'General Training'));
     const prompt = el('textarea', { rows: 4, placeholder: '把題目貼在這裡' });
@@ -295,9 +325,8 @@
     essay.addEventListener('input', () => { wc.textContent = String(essay.value.trim().split(/\s+/).filter(Boolean).length); });
     const out = el('div', {});
 
-    UI.render(mount, 
-      el('h2', {}, '寫作即時批改'),
-      el('p', { class: 'small muted' }, '不用整場考試，貼上題目與作文就能拿到四大標準分數、逐句修改建議與範文。'),
+    UI.render(mount,
+      el('p', { class: 'small muted' }, '貼上題目與作文，就能拿到四大標準分數、逐句修改建議與範文。'),
       el('div', { class: 'card' },
         el('div', { class: 'row' },
           el('label', { class: 'field' }, el('span', {}, '題型'), taskNo),
@@ -349,6 +378,291 @@
     }
   }
 
+  // ── 口說單獨練習 ────────────────────────────────────────
+  async function speakingPractice(mount) {
+    const partSel = el('select', {},
+      el('option', { value: 1 }, 'Part 1（日常問答）'),
+      el('option', { value: 2, selected: true }, 'Part 2（Cue card，講 2 分鐘）'),
+      el('option', { value: 3 }, 'Part 3（延伸討論）'));
+    const topicIn = el('input', { type: 'text', placeholder: '想練的主題（選填），例如：科技、教育' });
+    const qBox = el('div', { class: 'card' }, el('p', { class: 'muted' }, '按「出一題」開始。'));
+    const answerBox = el('div');
+    const out = el('div');
+    let current = null;
+
+    const renderQuestion = (q, part, source) => {
+      current = { q, part };
+      const src = { bank: '來自題庫', ai: 'AI 出題', builtin: '內建題目' }[source] || '';
+      UI.render(qBox,
+        el('div', { class: 'toolbar', style: { marginBottom: '.4rem' } },
+          el('b', {}, `Part ${part}`),
+          el('span', { class: 'pill' }, src)),
+        q.cueCard
+          ? el('div', { style: { lineHeight: '1.9' } },
+              el('h3', { style: { marginBottom: '.3rem' } }, q.cueCard.topic),
+              el('ul', {}, (q.cueCard.bullets || []).map((b) => el('li', {}, b))),
+              el('p', { class: 'small muted' },
+                `準備 ${q.cueCard.prepSec || 60} 秒，作答 ${q.cueCard.talkSec || 120} 秒`))
+          : el('div', { style: { lineHeight: '1.9' } },
+              q.topic ? el('div', { class: 'small muted' }, q.topic) : null,
+              el('ol', {}, (q.items || [q.text || q.question]).filter(Boolean).map((t) => el('li', {}, t)))));
+      renderAnswer();
+    };
+
+    // 錄音（有麥克風就錄，沒有就打字）
+    let rec = null; let chunks = []; let startedAt = 0;
+    function renderAnswer() {
+      const text = el('textarea', {
+        rows: 6, placeholder: '把你的回答打成文字，或用下面的錄音鈕（需要 HTTPS 或 localhost）',
+      });
+      const recBtn = el('button', { class: 'btn' }, '🎙 開始錄音');
+      const recState = el('span', { class: 'small muted' });
+      const send = el('button', { class: 'btn primary' }, '送出評分');
+
+      recBtn.onclick = async () => {
+        if (rec && rec.state === 'recording') {
+          rec.stop();
+          return;
+        }
+        if (!navigator.mediaDevices?.getUserMedia) {
+          return UI.alert('這個瀏覽器不支援錄音，請直接把回答打成文字。');
+        }
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          rec = new MediaRecorder(stream);
+          chunks = [];
+          startedAt = Date.now();
+          rec.ondataavailable = (e) => chunks.push(e.data);
+          rec.onstop = () => {
+            stream.getTracks().forEach((t) => t.stop());
+            recBtn.textContent = '🎙 重新錄音';
+            recState.textContent = `已錄 ${Math.round((Date.now() - startedAt) / 1000)} 秒`;
+          };
+          rec.start();
+          recBtn.textContent = '⏹ 停止錄音';
+          recState.textContent = '錄音中…';
+        } catch (e) {
+          UI.alert(`拿不到麥克風權限：${e.message}\n可以直接把回答打成文字。`);
+        }
+      };
+
+      send.onclick = async () => {
+        if (!current) return UI.alert('請先出一題');
+        const typed = text.value.trim();
+        if (!typed && !chunks.length) return UI.alert('請先錄音或打字作答');
+        send.disabled = true; send.textContent = 'AI 評分中…';
+        try {
+          const qText = current.q.cueCard
+            ? current.q.cueCard.topic
+            : (current.q.items || []).join(' / ') || current.q.text || '';
+          const fd = new FormData();
+          fd.append('part', String(current.part));
+          fd.append('question', qText);
+          fd.append('duration', String(chunks.length ? Math.round((Date.now() - startedAt) / 1000) : 0));
+          if (typed) fd.append('transcript', typed);
+          else fd.append('audio', new Blob(chunks, { type: 'audio/webm' }), 'answer.webm');
+          const r = await API.post('/practice/speaking/grade', fd);
+          showSpeakingResult(r);
+        } catch (e) {
+          UI.alert(e.message);
+        }
+        send.disabled = false; send.textContent = '送出評分';
+      };
+
+      UI.render(answerBox, el('div', { class: 'card' },
+        el('label', { class: 'field' }, el('span', {}, '你的回答'), text),
+        el('div', { style: { display: 'flex', gap: '.5rem', alignItems: 'center', flexWrap: 'wrap' } },
+          recBtn, recState, el('span', { style: { flex: 1 } }), send)));
+    }
+
+    function showSpeakingResult(r) {
+      const res = r.result || {};
+      const L = { FC: '流暢度與連貫性', LR: '詞彙豐富度', GRA: '文法多樣性與準確度', PRO: '發音' };
+      UI.render(out, el('div', { class: 'card' },
+        el('h3', {}, '評分結果 ',
+          el('span', { style: { color: 'var(--brand)' } }, `Band ${band(res.band)}`)),
+        Object.entries(L).map(([k, lab]) => {
+          const v = Number(res.criteria?.[k]);
+          if (Number.isNaN(v)) return null;
+          return el('div', { class: 'crit-bar' },
+            el('span', { class: 'lbl' }, lab),
+            el('span', { class: 'meter' }, el('i', { style: { width: `${(v / 9) * 100}%` } })),
+            el('span', { class: 'val' }, v.toFixed(1)));
+        }),
+        res.summary_zh ? el('p', { style: { marginTop: '.8rem' } }, el('b', {}, '總評：'), res.summary_zh) : null,
+        res.nextSteps_zh?.length ? el('div', {}, el('b', {}, '練習建議：'),
+          el('ol', { style: { lineHeight: '1.8' } }, res.nextSteps_zh.map((s) => el('li', {}, s)))) : null,
+        r.sttError ? el('p', { class: 'small', style: { color: 'var(--warn)' } }, `語音辨識提醒：${r.sttError}`) : null,
+        el('details', {}, el('summary', {}, '我說了什麼（逐字稿）'),
+          el('div', { style: { whiteSpace: 'pre-wrap', lineHeight: '1.8' } }, r.transcript || '（沒有逐字稿）'))));
+    }
+
+    UI.render(mount,
+      el('p', { class: 'small muted' },
+        '挑一個 Part 就能練，不用開整場考試。可以錄音（需要 HTTPS 或 localhost）或直接打字。'),
+      el('div', { class: 'card' },
+        el('div', { class: 'row' },
+          el('label', { class: 'field' }, el('span', {}, '要練哪一部分'), partSel),
+          el('label', { class: 'field' }, el('span', {}, '主題'), topicIn)),
+        el('button', {
+          class: 'btn primary',
+          onclick: async (e) => {
+            e.target.disabled = true; e.target.textContent = '出題中…';
+            try {
+              const r = await API.post('/practice/speaking/question', {
+                part: Number(partSel.value), topic: topicIn.value.trim(),
+              });
+              renderQuestion(r.question, r.part, r.source);
+              UI.render(out);
+            } catch (er) { UI.alert(er.message); }
+            e.target.disabled = false; e.target.textContent = '出一題';
+          },
+        }, '出一題')),
+      qBox, answerBox, out);
+  }
+
+  // ── 錯題複習 ────────────────────────────────────────────
+  const WRONG_TYPE_LABEL = {
+    mcq_single: '單選', mcq_multi: '多選', tfng: 'T/F/NG', ynng: 'Y/N/NG',
+    matching: '配對', gap_fill: '填空', gap_fill_bank: '選字填空',
+    short_answer: '簡答', label_image: '圖表標示',
+  };
+
+  async function wrongBook(mount) {
+    const filter = { module: '', type: '' };
+    const box = el('div');
+    const summary = el('div');
+
+    async function load() {
+      const qs = new URLSearchParams();
+      for (const [k, v] of Object.entries(filter)) if (v) qs.set(k, v);
+      let d;
+      try { d = await API.get(`/practice/wrong?${qs}`); }
+      catch (e) { return UI.render(box, el('div', { class: 'empty' }, `讀不到錯題：${e.message}`)); }
+
+      UI.render(summary,
+        d.byType.length
+          ? el('div', { class: 'card' },
+              el('h3', {}, '我最常錯的題型'),
+              d.byType.slice(0, 6).map((t) => el('div', { class: 'crit-bar' },
+                el('span', { class: 'lbl' }, WRONG_TYPE_LABEL[t.type] || t.label),
+                el('span', { class: 'meter' }, el('i', {
+                  style: { width: `${Math.min(100, (t.wrong / d.byType[0].wrong) * 100)}%`, background: 'var(--err)' },
+                })),
+                el('span', { class: 'val' }, `${t.wrong} 題`))),
+              el('div', { style: { marginTop: '.7rem' } },
+                el('button', {
+                  class: 'btn primary',
+                  onclick: () => startDrill(filter),
+                }, '▶ 重做這些題目')))
+          : null);
+
+      UI.render(box, d.items.length === 0
+        ? el('div', { class: 'empty' },
+            d.byType.length ? '沒有符合條件的錯題。' : '還沒有錯題紀錄 —— 考完一場批改完就會出現在這裡。')
+        : d.items.map((it) => el('div', { class: 'card' },
+            el('div', { class: 'small muted', style: { marginBottom: '.3rem' } },
+              `${it.testTitle}　·　${UI.MODULE_LABEL[it.module]?.split(' ')[0]}　第 ${it.number} 題　·　`,
+              WRONG_TYPE_LABEL[it.type] || it.type,
+              it.submittedAt ? `　·　${fmtDate(it.submittedAt)}` : ''),
+            it.instructions ? el('div', { class: 'small muted' }, it.instructions) : null,
+            el('p', { style: { fontWeight: '500' } }, it.text || '（這題的題幹在版面裡，請看原始成績單）'),
+            it.options?.length
+              ? el('div', { class: 'small muted' },
+                  it.options.map((o) => `${o.key}. ${o.text}`).join('　')) : null,
+            el('div', { style: { display: 'flex', gap: '1.2rem', flexWrap: 'wrap', marginTop: '.4rem' } },
+              el('div', {}, el('span', { class: 'small muted' }, '你的答案　'),
+                el('b', { style: { color: 'var(--err)' } }, it.yourAnswer || '（空白）')),
+              el('div', {}, el('span', { class: 'small muted' }, '正確答案　'),
+                el('b', { style: { color: '#2e7d32' } }, it.expected || '—'))),
+            it.explanation
+              ? el('details', { style: { marginTop: '.4rem' } },
+                  el('summary', { class: 'small' }, '看解析'),
+                  el('div', { class: 'small', style: { lineHeight: '1.8' } }, it.explanation))
+              : null)));
+    }
+
+    UI.render(mount,
+      el('p', { class: 'small muted' },
+        '把你考過而且已批改的場次裡答錯的題目整理在這裡。可以逐題看解析，也可以整批重做一次。'),
+      el('div', { class: 'card' },
+        el('div', { class: 'row' },
+          el('label', { class: 'field' }, el('span', {}, '科目'),
+            el('select', {
+              onchange: (e) => { filter.module = e.target.value; load(); },
+            }, [['', '全部'], ['listening', '聽力'], ['reading', '閱讀']].map(([v, l]) =>
+              el('option', { value: v }, l)))),
+          el('label', { class: 'field' }, el('span', {}, '題型'),
+            el('select', {
+              onchange: (e) => { filter.type = e.target.value; load(); },
+            }, [['', '全部']].concat(Object.entries(WRONG_TYPE_LABEL)).map((x) =>
+              el('option', { value: x[0] }, x[1])))))),
+      summary, box);
+
+    load();
+  }
+
+  /** 錯題重做 */
+  async function startDrill(filter) {
+    let d;
+    try { d = await API.post('/practice/drill', { ...filter, count: 10 }); }
+    catch (e) { return UI.alert(e.message); }
+    if (!d.items.length) return UI.alert('沒有可以重做的題目');
+
+    const responses = {};
+    const body = el('div', {}, d.items.map((it, i) => {
+      const input = it.options?.length
+        ? el('select', {
+            onchange: (e) => { responses[it.key] = e.target.value; },
+          }, el('option', { value: '' }, '（選一個）'),
+            it.options.map((o) => el('option', { value: o.key }, `${o.key}. ${o.text}`)))
+        : el('input', {
+            type: 'text', placeholder: it.wordLimit ? `最多 ${it.wordLimit} 個字` : '',
+            oninput: (e) => { responses[it.key] = e.target.value; },
+          });
+      return el('div', { style: { padding: '.6rem 0', borderBottom: '1px solid var(--line-2)' } },
+        el('div', { class: 'small muted' },
+          `${i + 1}.　${it.testTitle}　第 ${it.number} 題　·　${WRONG_TYPE_LABEL[it.type] || it.type}`),
+        it.instructions ? el('div', { class: 'small muted' }, it.instructions) : null,
+        el('p', { style: { margin: '.3rem 0' } }, it.text || '（題幹在版面裡）'),
+        input);
+    }));
+
+    const go = await UI.modal({
+      title: `重做 ${d.items.length} 題`,
+      width: '720px',
+      body,
+      actions: [{ label: '交卷看結果', value: true, class: 'primary' }, { label: '取消', value: false }],
+    });
+    if (!go) return;
+
+    let r;
+    try { r = await API.post('/practice/drill/check', { responses }); }
+    catch (e) { return UI.alert(e.message); }
+
+    const byKey = new Map(r.results.map((x) => [x.key, x]));
+    await UI.modal({
+      title: `答對 ${r.correct} / ${r.total}`,
+      width: '720px',
+      body: el('div', {},
+        el('p', { class: 'small muted' }, '這次練習不會影響你的正式成績。'),
+        d.items.map((it) => {
+          const res = byKey.get(it.key);
+          if (!res) return null;
+          return el('div', { style: { padding: '.5rem 0', borderBottom: '1px solid var(--line-2)' } },
+            el('div', {},
+              el('b', { style: { color: res.correct ? '#2e7d32' : 'var(--err)' } }, res.correct ? '✓ ' : '✗ '),
+              it.text || `第 ${it.number} 題`),
+            el('div', { class: 'small' },
+              '你填：', el('b', {}, res.yourAnswer || '（空白）'),
+              '　正解：', el('b', { style: { color: '#2e7d32' } }, res.expected)),
+            res.explanation
+              ? el('div', { class: 'small muted', style: { marginTop: '.2rem' } }, res.explanation) : null);
+        })),
+      actions: [{ label: '關閉', value: true }],
+    });
+  }
+
   // ── 帳號設定 ────────────────────────────────────────────
   function account(mount) {
     const oldP = el('input', { type: 'password' });
@@ -393,20 +707,24 @@
     const examMatch = path.match(/^\/exam\/(\d+)$/);
     if (examMatch) return Exam.open(Number(examMatch[1]));
 
+    const editMatch = path.match(/^\/admin\/edit\/(\d+)$/);
+
     const resultMatch = path.match(/^\/result\/(\d+)$/);
     const staff = API.user?.role !== 'student';
 
     let active = path;
     if (resultMatch) active = staff ? '#/admin/results' : '#/my-results';
+    else if (editMatch) active = '#/admin/tests';
     else active = `#${path}`;
 
     const mount = shell(active);
     try {
       if (resultMatch) return Results.render(Number(resultMatch[1]), mount);
+      if (editMatch) return Admin.editPaper(mount, Number(editMatch[1]));
       switch (path) {
         case '/': return staff ? Admin.results(mount) : studentHome(mount);
         case '/my-results': return myResults(mount);
-        case '/practice': return practice(mount);
+        case '/practice': return practice(mount, params);
         case '/account': return account(mount);
         case '/admin/tests': return Admin.tests(mount);
         case '/admin/import': return Admin.importPage(mount);

@@ -718,6 +718,119 @@ async function call(method, path, body, token) {
   const bankGone = await call('GET', `/ai/bank?q=${encodeURIComponent(stamp)}`, null, tea);
   ok(bankGone.data.items.length === 0, '刪掉的題組真的不見了');
 
+  // ── 題目編輯器 ──────────────────────────────────────────
+  console.log('\n題目編輯器');
+  const edPaper = {
+    title: `編輯測試 ${stamp}`, testType: 'academic',
+    modules: [{ module: 'reading', sections: [{
+      title: 'Reading Passage 1', passage: '<p>Bees matter.</p>',
+      groups: [{ type: 'tfng', instructions: 'TFNG', questions: [
+        { number: 1, text: '第一題', answers: ['TRUE'], explanation: '第一段' },
+        { number: 2, text: '第二題', answers: ['FALSE'] },
+      ] }],
+    }] }],
+  };
+  const edMade = await call('POST', '/tests', { paper: edPaper }, tea);
+  const edId = edMade.data.id;
+  ok(edId > 0, '建立要編輯的試卷');
+
+  const edLoaded = await call('GET', `/tests/${edId}`, null, tea);
+  ok(edLoaded.data.paper.modules[0].sections[0].groups[0].questions.length === 2,
+    '編輯器讀得到完整題目（含答案與解析）');
+  ok(!!edLoaded.data.paper.modules[0].sections[0].groups[0].questions[0].explanation,
+    '解析也讀得到');
+
+  // 改題幹與答案
+  const edited = JSON.parse(JSON.stringify(edLoaded.data.paper));
+  edited.modules[0].sections[0].groups[0].questions[0].text = '改過的題幹';
+  edited.modules[0].sections[0].groups[0].questions[0].answers = ['NOT GIVEN'];
+  edited.modules[0].sections[0].groups[0].questions.push({
+    number: 3, text: '新增的題目', answers: ['TRUE'],
+  });
+  const edSave = await call('PUT', `/tests/${edId}`, { paper: edited }, tea);
+  ok(edSave.status === 200 && edSave.data.stats.reading === 3, '存得回去，題數變成 3');
+
+  const edBack = (await call('GET', `/tests/${edId}`, null, tea)).data.paper;
+  const edQs = edBack.modules[0].sections[0].groups[0].questions;
+  ok(edQs[0].text === '改過的題幹' && edQs[0].answers[0] === 'NOT GIVEN', '題幹與答案真的改掉了');
+
+  // 驗證要擋得住壞資料
+  const edDup = JSON.parse(JSON.stringify(edBack));
+  edDup.modules[0].sections[0].groups[0].questions[2].number = 1;
+  const vDup = await call('POST', '/tests/validate', { paper: edDup }, tea);
+  ok(vDup.data.ok === false && vDup.data.errors.some((e) => /重複/.test(e)), '題號重複會被驗證擋下');
+
+  const edNoAns = JSON.parse(JSON.stringify(edBack));
+  edNoAns.modules[0].sections[0].groups[0].questions[0].answers = [];
+  const vNoAns = await call('POST', '/tests/validate', { paper: edNoAns }, tea);
+  ok(vNoAns.data.ok === false && vNoAns.data.errors.some((e) => /沒有標準答案/.test(e)),
+    '沒填答案會被驗證擋下');
+
+  const edBadEnum = JSON.parse(JSON.stringify(edBack));
+  edBadEnum.modules[0].sections[0].groups[0].questions[0].answers = ['MAYBE'];
+  const vBadEnum = await call('POST', '/tests/validate', { paper: edBadEnum }, tea);
+  ok(vBadEnum.data.ok === false, 'T/F/NG 填了不合法的答案會被擋下');
+
+  const edStu = await call('GET', `/tests/${edId}`, null, stu);
+  ok(edStu.status === 403, '學生開不了編輯器用的 API（會看到答案）');
+  const edSaveStu = await call('PUT', `/tests/${edId}`, { paper: edited }, stu);
+  ok(edSaveStu.status === 403, '學生不能改題目');
+
+  await call('DELETE', `/tests/${edId}`, null, adm);
+
+  // ── 錯題複習與口說練習 ──────────────────────────────────
+  console.log('\n錯題複習與練習');
+  const wrong = await call('GET', '/practice/wrong', null, stu);
+  ok(wrong.status === 200 && Array.isArray(wrong.data.items), '錯題清單讀得到');
+  ok(wrong.data.total >= 5, `抓到 ${wrong.data.total} 題錯題（測試時故意留白 5 題閱讀）`);
+  const wItem = wrong.data.items[0];
+  ok(wItem && wItem.text && wItem.expected, '錯題帶回題幹與正確答案');
+  ok(wItem && !/^\[/.test(wItem.expected), `正解是給人看的格式：${wItem?.expected}`);
+  ok(wrong.data.byType.length > 0 && wrong.data.byType[0].wrong > 0,
+    `依題型統計錯幾題：${wrong.data.byType.map((t) => `${t.type} ${t.wrong}`).join('、')}`);
+
+  const wFiltered = await call('GET', '/practice/wrong?module=reading', null, stu);
+  ok(wFiltered.data.items.every((i) => i.module === 'reading'), '可以只看某一科的錯題');
+  const wNone = await call('GET', '/practice/wrong?module=writing', null, stu);
+  ok(wNone.data.items.length === 0, '寫作沒有逐題對錯，不會出現在錯題本');
+
+  // 重做：不能夾帶答案
+  const drill = await call('POST', '/practice/drill', { count: 5 }, stu);
+  ok(drill.data.items?.length > 0, `抽到 ${drill.data.items?.length} 題可以重做`);
+  const drillJson = JSON.stringify(drill.data);
+  ok(!drillJson.includes('"answers"') && !drillJson.includes('"expected"')
+     && !drillJson.includes('"explanation"'),
+    '重做的題目不含答案與解析（不然練了也沒意義）');
+
+  const answersMap = {};
+  for (const it of drill.data.items) answersMap[it.key] = 'TRUE';
+  const checked = await call('POST', '/practice/drill/check', { responses: answersMap }, stu);
+  ok(checked.data.total === drill.data.items.length, '重做交卷後每一題都有批改');
+  ok(checked.data.results.every((r) => 'correct' in r && 'expected' in r),
+    '批改結果帶回對錯與正解');
+  ok(typeof checked.data.correct === 'number', `這次答對 ${checked.data.correct}/${checked.data.total}`);
+
+  // 練習不會產生成績
+  const beforeAttempts = (await call('GET', '/exam/my-attempts', null, stu)).data.attempts.length;
+  await call('POST', '/practice/drill/check', { responses: answersMap }, stu);
+  const afterAttempts = (await call('GET', '/exam/my-attempts', null, stu)).data.attempts.length;
+  ok(beforeAttempts === afterAttempts, '練習不會多出一筆考試紀錄');
+
+  // 學生只能看自己的
+  const spy = await call('GET', `/practice/wrong?userId=${me.data.user.id}`, null,
+    (await call('POST', '/auth/login', { username: 'student3', password: 'ielts1234' })).data.token);
+  ok(spy.status === 200 && spy.data.total === 0, '學生指定別人的 userId 也只會拿到自己的錯題');
+
+  // 口說練習出題
+  const spQ = await call('POST', '/practice/speaking/question', { part: 2 }, stu);
+  ok(spQ.status === 200 && spQ.data.question, `口說出得了題（來源：${spQ.data.source}）`);
+  ok(spQ.data.part === 2, '出的是指定的 Part');
+  const spQ1 = await call('POST', '/practice/speaking/question', { part: 1 }, stu);
+  ok(spQ1.data.part === 1, 'Part 1 也出得了題');
+  const spBad = await call('POST', '/practice/speaking/grade', { part: 1, question: 'x' }, stu);
+  ok(spBad.status === 400 && /沒有收到|逐字稿/.test(spBad.data.error || ''),
+    '沒有作答內容時給得出看得懂的訊息');
+
   // ── 螢光筆與註記要留得住 ────────────────────────────────
   console.log('\n螢光筆與註記');
   const marks = {
