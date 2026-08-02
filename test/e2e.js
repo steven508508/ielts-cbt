@@ -505,6 +505,58 @@ async function call(method, path, body, token) {
   await call('POST', '/manage/results/bulk', { action: 'delete', ids: [limAt], force: true }, adm);
   await call('DELETE', `/tests/${limTest.data.id}`, null, adm);
 
+  // ── 時限由伺服器執行 ─────────────────────────────────────
+  console.log('\n考試時限');
+  const timeInfo = await call('GET', `/exam/${att5}/time`, null, stu5);
+  ok(timeInfo.status === 200 && typeof timeInfo.data.serverTime === 'number',
+    '有對時端點，前端才校正得了學生電腦的時鐘');
+  ok(timeInfo.data.modules?.listening?.remainingSec >= 0,
+    `對時帶回剩餘秒數（${timeInfo.data.modules?.listening?.remainingSec}）`);
+  ok(timeInfo.data.modules?.reading?.started === false,
+    '還沒開始的科目要標成 started:false，不能被當成逾時');
+
+  const examTimerLib = require('../server/lib/examTimer');
+  ok(typeof examTimerLib.sweep === 'function', '伺服器有自己的逾時掃描');
+  const sweepDry = await examTimerLib.sweep({ now: Date.now() });
+  ok(typeof sweepDry.expired === 'number' && typeof sweepDry.submitted === 'number',
+    `掃描跑得起來（逾時 ${sweepDry.expired} 科、自動交卷 ${sweepDry.submitted} 場）`);
+
+  // 時間到了，就算前端完全沒跑也要收得掉
+  const expTest = await call('POST', '/tests', { paper: {
+    title: `時限測試 ${Date.now()}`, testType: 'academic',
+    modules: [{ module: 'reading', durationSec: 1, sections: [{ title: 'P', passage: 'Text.', groups: [
+      { type: 'tfng', instructions: 'x', questions: [{ number: 1, text: 'A statement.', answers: ['TRUE'] }] },
+    ] }] }],
+  } }, tea);
+  const expAsg = await call('POST', '/tests/assignments', {
+    testId: expTest.data.id, userIds: [me5.data.user.id], modules: 'reading', maxAttempts: 9,
+  }, tea);
+  const expStart = await call('POST', '/exam/start',
+    { assignmentId: expAsg.data.ids[0], testId: expTest.data.id }, stu5);
+  const expAt = expStart.data.attemptId;
+  const expMs = await call('POST', `/exam/${expAt}/module/start`, { module: 'reading' }, stu5);
+  ok(typeof expMs.data.serverTime === 'number',
+    '開始作答就把伺服器時間給前端，倒數才不會被學生的時鐘影響');
+
+  // 用「未來的時間」跑一次掃描，等同於時限與寬限都已經過去
+  const pastDeadline = Date.now() + (1 + examTimerLib.GRACE_SEC + 5) * 1000;
+  await examTimerLib.sweep({ now: pastDeadline });
+  const expAfter = await call('GET', `/exam/${expAt}/time`, null, stu5);
+  ok(expAfter.data.modules.reading.finished === true && expAfter.data.modules.reading.expired === true,
+    '前端完全沒跑，伺服器照樣把逾時的科目收掉');
+  ok(expAfter.data.status !== 'in_progress',
+    `每一科都結束就整份自動交卷（目前 ${expAfter.data.status}）`);
+  const expAns = await call('POST', `/exam/${expAt}/answers`,
+    { items: [{ module: 'reading', number: 1, response: 'TRUE' }] }, stu5);
+  ok(expAns.status === 409, '收卷之後存不進答案');
+
+  const expEvents = await call('GET', `/exam/${expAt}/events`, null, tea);
+  ok(expEvents.data.counts.auto_submit === 1, '自動收卷有留下紀錄，老師才知道是系統收的');
+
+  await call('DELETE', `/tests/assignments/${expAsg.data.ids[0]}`, null, tea);
+  await call('POST', '/manage/results/bulk', { action: 'delete', ids: [expAt], force: true }, adm);
+  await call('DELETE', `/tests/${expTest.data.id}`, null, adm);
+
   console.log('\n預設值（沒特別設定時不應該改變原本行為）');
   const plain = await call('GET', `/exam/${attemptId}`, null, stu);
   ok(plain.data.rules.proctoring.enabled === false, '沒開監考時預設關閉');

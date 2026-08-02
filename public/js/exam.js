@@ -12,6 +12,7 @@ const Exam = (() => {
 
   let S = null;
   let tick = null;
+  let syncTick = null;
   let pending = new Map();
   let saveTimer = null;
 
@@ -201,6 +202,9 @@ const Exam = (() => {
 
     document.addEventListener('visibilitychange', () => {
       if (!S || !S.module) return;
+      // 回到前景先對時。背景期間計時器被節流成一分鐘一次，
+      // 「時間到該收卷」那一刻很可能整個被跳過。
+      if (document.visibilityState === 'visible') syncTime();
       // 沒開監考就完全不要回報。以前 return 沒有被 proc().enabled 擋住，
       // 於是關掉監考的考試照樣一路寫 exam_events，而那張表沒有任何清理機制。
       if (!proc().enabled) return;
@@ -494,6 +498,9 @@ const Exam = (() => {
     } catch (e) { return notice('無法開始', e.message); }
 
     S.state.modules[name] = { startedAt: info.startedAt, endsAt: info.endsAt, durationSec: info.durationSec };
+    // endsAt 是伺服器的時鐘。學生電腦的時鐘慢十分鐘就多考十分鐘，
+    // 快十分鐘則一進去就被判定時間到 —— 這裡把差距記下來校正。
+    if (info.serverTime) S.skew = info.serverTime - Date.now();
     S.module = name;
     S.section = 0;
     S.current = null;
@@ -526,11 +533,15 @@ const Exam = (() => {
   }
 
   // ── 計時 ────────────────────────────────────────────────
+  /** 伺服器現在幾點（用開始作答時量到的時鐘差校正）*/
+  const serverNow = () => Date.now() + (S.skew || 0);
+
   function startTimer(endsAt) {
     stopTimer();
     S.endsAt = endsAt;
+    S.expiring = false;
     const upd = () => {
-      const leftSec = Math.max(0, (S.endsAt - Date.now()) / 1000);
+      const leftSec = Math.max(0, (S.endsAt - serverNow()) / 1000);
       const c = $('#cbt-clock');
       if (c) {
         const mins = Math.ceil(leftSec / 60);
@@ -544,12 +555,46 @@ const Exam = (() => {
           notice('提醒', el('p', {}, `You have ${m} minute${m > 1 ? 's' : ''} left.　剩下 ${m} 分鐘。`));
         }
       }
-      if (leftSec <= 0) { stopTimer(); finishModule(true); }
+      if (leftSec <= 0 && !S.expiring) { S.expiring = true; stopTimer(); finishModule(true); }
     };
     upd();
     tick = setInterval(upd, 500);
+
+    /* 每 20 秒跟伺服器對一次時。
+       兩件事非做不可：一是學生的電腦時鐘可能一直在漂；二是分頁切到背景時
+       瀏覽器會把計時器節流到一分鐘一次，回來的那一刻可能早就過了收卷時間。
+       而且伺服器自己也會收卷 —— 它收掉了，這裡要立刻跟上，不能讓學生
+       繼續對著一份已經結束的考卷作答。 */
+    clearInterval(syncTick);
+    syncTick = setInterval(syncTime, 20000);
   }
-  function stopTimer() { if (tick) clearInterval(tick); tick = null; }
+
+  async function syncTime() {
+    if (!S?.attemptId || !S.module) return;
+    let t;
+    try { t = await API.get(`/exam/${S.attemptId}/time`); } catch { return; }
+    if (!S || !S.module) return;
+    S.skew = t.serverTime - Date.now();
+    const m = t.modules?.[S.module];
+    if (!m) return;
+    if (m.endsAt) S.endsAt = m.endsAt;
+    // 伺服器那邊已經收掉了（時間到、或整份被自動交卷）
+    if ((m.finished || t.status !== 'in_progress') && !S.expiring) {
+      S.expiring = true;
+      stopTimer();
+      await notice('時間到', el('div', {},
+        el('p', {}, `「${UI.MODULE_LABEL[S.module] || S.module}」的作答時間已經結束，系統已經幫你收卷。`),
+        el('p', { class: 'small', style: { opacity: '.75' } }, '已經作答的內容都有存下來。')));
+      finishModule(true);
+    }
+  }
+
+  function stopTimer() {
+    if (tick) clearInterval(tick);
+    tick = null;
+    clearInterval(syncTick);
+    syncTick = null;
+  }
 
   async function finishModule(auto = false) {
     if (!auto) {

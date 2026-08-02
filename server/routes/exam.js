@@ -235,6 +235,32 @@ router.post('/:id/module/start', loadAttempt, async (req, res) => {
   });
 });
 
+/**
+ * 對時。
+ *
+ * 前端的倒數以前是用 `endsAt - Date.now()` 算的 —— endsAt 是伺服器的時鐘，
+ * Date.now() 是學生自己電腦的時鐘。學生的電腦慢十分鐘就多考十分鐘，
+ * 快十分鐘則一進去就被判定時間到。而且分頁切到背景時瀏覽器會把計時器
+ * 節流成一分鐘一次，回來之後顯示會補正，但「時間到該收卷」那一刻可能整個被跳過。
+ * 所以前端要定期跟伺服器對時，並以伺服器算出來的剩餘秒數為準。
+ */
+router.get('/:id/time', loadAttempt, async (req, res) => {
+  const now = Date.now();
+  const mods = {};
+  for (const m of req.attempt.modules.split(',')) {
+    const st = req.state.modules[m];
+    if (!st) { mods[m] = { started: false }; continue; }
+    mods[m] = {
+      started: true,
+      finished: !!st.finished,
+      expired: !!st.expired,
+      endsAt: st.endsAt || null,
+      remainingSec: st.endsAt ? Math.max(0, Math.round((st.endsAt - now) / 1000)) : null,
+    };
+  }
+  res.json({ serverTime: now, status: req.attempt.status, modules: mods });
+});
+
 // ── 考試紀律事件 ───────────────────────────────────────────────
 const EVENT_TYPES = ['leave', 'return', 'fullscreen_exit', 'fullscreen_enter', 'copy_blocked',
   'paste_blocked', 'resize', 'devtools', 'auto_submit', 'device_permission', 'device_check'];
@@ -336,7 +362,13 @@ function moduleOpen(state, mod, { strict = true } = {}) {
   const st = state.modules[mod];
   if (!st) return strict ? { ok: false, error: `請先開始「${mod}」這一科` } : { ok: true };
   if (st.finished) return { ok: false, error: `${mod} 已經交卷` };
-  if (st.endsAt && Date.now() > st.endsAt + GRACE_SEC * 1000) return { ok: false, error: `${mod} 作答時間已結束` };
+  if (st.endsAt && Date.now() > st.endsAt + GRACE_SEC * 1000) {
+    // 順手收掉，不要等 30 秒的掃描 —— 也讓 expired 這個標記立刻成立
+    st.finished = true;
+    st.finishedAt = st.endsAt;
+    st.expired = true;
+    return { ok: false, error: `${mod} 作答時間已結束`, justExpired: true };
+  }
   return { ok: true };
 }
 

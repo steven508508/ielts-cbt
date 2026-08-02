@@ -108,7 +108,11 @@ async function start() {
 
   // 口說即時語音對話（WebSocket）
   const realtime = require('./lib/realtime');
+const examTimer = require('./lib/examTimer');
   const wss = realtime.attach(server);
+  // 時限由伺服器自己執行。前端倒數只是顯示 —— 分頁被切到背景、
+  // 筆電闔上、分頁關掉，那段 JavaScript 都不會跑，時限就形同虛設。
+  examTimer.start();
 
   // 自動清理逾期資料
   const retention = require('./lib/retention');

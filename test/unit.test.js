@@ -1431,3 +1431,66 @@ test('考官指示：換到會話階段時要明確叫它問出第一題', () =>
   assert.match(src, /setPhase\('part1', \{ extra: this\.openingFor\('part1'\) \}\)/,
     '光換指示不夠，要明確要求它開口');
 });
+
+// ── 考試時限 ──────────────────────────────────────────────
+// 兩個實測出來的問題：
+//   · 倒數是用學生電腦的時鐘算的 —— 慢十分鐘就多考十分鐘
+//   · 時限完全靠前端執行 —— 分頁關掉就永遠不會收卷
+const examTimer = require('../server/lib/examTimer');
+
+test('時限：前端要用伺服器時間校正，不能信任學生的時鐘', () => {
+  const src = stripComments(
+    require('fs').readFileSync(require.resolve('../public/js/exam.js'), 'utf8'));
+  assert.match(src, /S\.skew = info\.serverTime - Date\.now\(\)/, '開始作答時要量時鐘差');
+  assert.match(src, /const serverNow = \(\) => Date\.now\(\) \+ \(S\.skew \|\| 0\)/);
+  assert.match(src, /S\.endsAt - serverNow\(\)/, '倒數要用校正過的時間');
+  assert.ok(!/S\.endsAt - Date\.now\(\)/.test(src), '不能再直接用學生電腦的時鐘');
+});
+
+test('時限：要定期跟伺服器對時，回到前景也要對一次', () => {
+  const src = stripComments(
+    require('fs').readFileSync(require.resolve('../public/js/exam.js'), 'utf8'));
+  assert.match(src, /syncTick = setInterval\(syncTime/, '時鐘會漂，而且背景分頁的計時器會被節流');
+  assert.match(src, /visibilityState === 'visible'\) syncTime\(\)/,
+    '背景期間「時間到該收卷」那一刻可能整個被跳過，回來要補檢查');
+  assert.match(src, /m\.finished \|\| t\.status !== 'in_progress'/,
+    '伺服器收掉了前端要跟上，不能讓學生繼續對著結束的考卷作答');
+});
+
+test('時限：伺服器自己會收卷，不是只靠前端', () => {
+  assert.equal(typeof examTimer.sweep, 'function');
+  assert.equal(typeof examTimer.start, 'function');
+  const src = require('fs').readFileSync(require.resolve('../server/lib/examTimer'), 'utf8');
+  assert.match(src, /status = 'in_progress'/);
+  assert.match(src, /finished: true[\s\S]{0,60}expired: true/, '逾時的科目要標記起來');
+  assert.match(src, /chosen\.every\(\(m\) => state\.modules\[m\]\?\.finished\)/,
+    '每一科都結束才整份收卷');
+});
+
+test('時限：還沒開始的科目不能替學生交掉', () => {
+  const src = require('fs').readFileSync(require.resolve('../server/lib/examTimer'), 'utf8');
+  const block = src.slice(src.indexOf('for (const m of chosen)'), src.indexOf('const allDone'));
+  assert.match(block, /if \(!st \|\| st\.finished\) continue/,
+    '沒有 endsAt 代表學生還沒考到那一科，不是逾時');
+});
+
+test('時限：寬限期與掃描間隔是明確的常數', () => {
+  assert.equal(examTimer.GRACE_SEC, 30, '要跟 exam.js 的寬限一致，不然兩邊判定會打架');
+  assert.ok(examTimer.SWEEP_MS <= 60_000, '掃太慢的話學生會卡在已經結束的考卷上很久');
+  assert.ok(examTimer.HARD_LIMIT_HOURS >= 4, '硬性上限不能短到把正常的長考試砍掉');
+});
+
+test('時限：伺服器自動收卷與學生自己按，走同一條批改路徑', () => {
+  const src = require('fs').readFileSync(require.resolve('../server/lib/examTimer'), 'utf8');
+  assert.match(src, /grade\.gradeAttempt\(attemptId, \{/);
+  assert.match(src, /speakingMode: assignment\?\.speaking_grading/);
+  assert.match(src, /writingMode: assignment\?\.writing_grading/);
+  assert.match(src, /'auto_submit'/, '自動收卷要留下紀錄，老師才知道是系統收的');
+});
+
+test('時限：逾時的請求會順手把那一科收掉，不用等掃描', () => {
+  const src = require('fs').readFileSync(require.resolve('../server/routes/exam.js'), 'utf8');
+  const block = src.slice(src.indexOf('function moduleOpen('), src.indexOf('/** 自動儲存作答'));
+  assert.match(block, /st\.finished = true/);
+  assert.match(block, /st\.expired = true/);
+});
