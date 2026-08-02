@@ -506,7 +506,7 @@ audio-only features are estimated when you only have a transcript)
  3 shows some features of band 2 and some of band 4
 `.trim();
 
-async function gradeSpeaking({ responses, userId, hasAudioFeatures = false }) {
+async function gradeSpeaking({ responses, userId, hasAudioFeatures = false, strictness = '' }) {
   const transcriptBlock = responses
     .map((r) => `--- Part ${r.part}${r.q_index != null ? ` Q${r.q_index + 1}` : ''} (${r.duration_sec || 0}s)
 EXAMINER: ${r.question || '(cue card)'}
@@ -524,6 +524,7 @@ adequately developed but unremarkable performance is Band 6.0.
 ${SPEAKING_DESCRIPTORS}
 
 ${hasAudioFeatures ? '' : 'You are working from transcripts only, so treat the Pronunciation score as an ESTIMATE based on speech rate, fillers, self-correction and transcription confidence, and say so in the pronunciation comment.'}
+${strictness ? `MARKING POLICY SET BY THE SCHOOL: ${strictness}` : ''}
 
 Return JSON:
 {
@@ -551,13 +552,14 @@ ${transcriptBlock}`;
  * 即時評分：考試進行中每隔幾輪更新一次的粗估分數。
  * 刻意用短提示、低 token，讓延遲控制在 2 秒內。
  */
-async function scoreSpeakingLive({ transcript, seconds = 0, final = false, userId }) {
+async function scoreSpeakingLive({ transcript, seconds = 0, final = false, userId, strictness = '' }) {
   const system = `You are an IELTS Speaking examiner giving a RUNNING estimate mid-test.
 Score what you have heard so far against the official criteria (whole numbers 0-9):
 FC fluency & coherence, LR lexical resource, GRA grammatical range & accuracy, PRO pronunciation
 (estimated from speech rate, fillers and self-correction, since you only have a transcript).
 Be strict and stable — do not swing wildly between updates. An adequate but unremarkable
 performance is 6.
+${strictness ? `MARKING POLICY SET BY THE SCHOOL: ${strictness}` : ''}
 
 Return JSON only:
 {"criteria":{"FC":n,"LR":n,"GRA":n,"PRO":n},"band":n.n,"note_zh":"一句話中文評語（20 字內）"}`;

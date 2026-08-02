@@ -1132,11 +1132,15 @@ const Admin = (() => {
 
   // ── 指派考試 ────────────────────────────────────────────
   async function assign(mount, params) {
-    const [{ tests: list }, { users }, { classes }, { assignments }, presets] = await Promise.all([
+    const [{ tests: list }, { users }, { classes }, { assignments }, presets, aiCfg] = await Promise.all([
       API.get('/tests'), API.get('/users?role=student'), API.get('/users/classes'),
       API.get('/tests/assignments/all'), API.get('/tests/exam-rules/presets'),
+      API.get('/ai/settings').catch(() => ({})),
     ]);
     const MODS = ['listening', 'reading', 'writing', 'speaking'];
+    // 覆寫欄位的起始值就是目前的系統預設，老師一眼看得到自己改了什麼
+    const exDefaults = aiCfg.examiner || {};
+    const exOptions = aiCfg.examinerOptions || {};
 
     const f = {};
     const studentBox = el('div', {
@@ -1260,6 +1264,36 @@ const Admin = (() => {
                 el('br'),
                 '這是瀏覽器端的防護，能擋掉大部分隨手作弊，但擋不了第二台裝置或手機。')))),
 
+        // ── 這一場的 AI 考官設定 ─────────────────────────────
+        el('details', { style: { marginBottom: '.8rem' } },
+          el('summary', {}, el('b', {}, '🎙 這一場的 AI 考官')),
+          el('div', { style: { paddingTop: '.7rem' } },
+            el('label', { class: 'field' }, el('span', {},
+              (f.exOn = el('input', {
+                type: 'checkbox', class: 'check',
+                onchange: (e) => { f._exWrap.style.display = e.target.checked ? '' : 'none'; },
+              })),
+              el('b', {}, '這一場用不一樣的考官設定'))),
+            el('p', { class: 'small muted' },
+              '不勾就沿用「系統設定 → AI 口說考官」。勾了之後只有你改動的項目會覆寫，其餘照樣沿用。'),
+            (f._exWrap = el('div', { style: { display: 'none', paddingLeft: '1.2rem' } },
+              el('div', { class: 'row' },
+                el('label', { class: 'field' }, el('span', {}, '停頓多久算講完（毫秒）'),
+                  (f.exSilenceMs = el('input', { type: 'number', min: 400, max: 5000, value: exDefaults.silenceMs })),
+                  el('span', { class: 'small muted' }, '程度較低的班級建議 1500–2000')),
+                el('label', { class: 'field' }, el('span', {}, '追問強度'),
+                  (f.exFollowUps = el('select', {}, (exOptions.followUps || []).map((o) =>
+                    el('option', { value: o.value, selected: o.value === exDefaults.followUps }, o.label))))),
+                el('label', { class: 'field' }, el('span', {}, '評分寬嚴'),
+                  (f.exStrictness = el('select', {}, (exOptions.strictness || []).map((o) =>
+                    el('option', { value: o.value, selected: o.value === exDefaults.strictness }, o.label)))))),
+              el('label', { class: 'field' }, el('span', {},
+                (f.exAllowBargeIn = el('input', { type: 'checkbox', class: 'check', checked: exDefaults.allowBargeIn })),
+                '允許學生打斷考官')),
+              el('label', { class: 'field' }, el('span', {},
+                (f.exShowLiveScore = el('input', { type: 'checkbox', class: 'check', checked: exDefaults.showLiveScore })),
+                '考試中讓學生看到即時分數')))))),
+
         el('button', {
           class: 'btn primary',
           onclick: async () => {
@@ -1293,6 +1327,13 @@ const Admin = (() => {
                   maxLeaves: Number(f.maxLeaves.value) || 0,
                   onExceed: f.onExceed.value,
                 } : { enabled: false },
+                examiner: f.exOn.checked ? {
+                  silenceMs: Number(f.exSilenceMs.value) || exDefaults.silenceMs,
+                  followUps: f.exFollowUps.value,
+                  strictness: f.exStrictness.value,
+                  allowBargeIn: f.exAllowBargeIn.checked,
+                  showLiveScore: f.exShowLiveScore.checked,
+                } : null,
               });
               toast('已指派並自動發布試卷', 'ok');
               assign(mount, params);
@@ -1460,9 +1501,12 @@ const Admin = (() => {
       API.get('/notifications/smtp').catch(() => ({ smtp: null })),
     ]);
     const a = s.ai;
+    const ex = s.examiner || {};
+    const exOpt = s.examinerOptions || { accent: [], pace: [], style: [], followUps: [], strictness: [] };
     const f = {};
     const t = {};
     const m = {};
+    const x = {};   // AI 考官那一區的欄位
 
     const sel = (key, opts, val) => (f[key] = el('select', {}, opts.map(([v, t]) => el('option', { value: v, selected: val === v }, t))));
     const txt = (key, val, ph = '') => (f[key] = el('input', { type: 'text', value: val || '', placeholder: ph }));
@@ -1534,6 +1578,8 @@ const Admin = (() => {
               e.target.disabled = false;
             },
           }, '測試語音'))),
+
+      examinerCard(),
 
       // ── Cloudflare Turnstile ──────────────────────────
       ts.turnstile && el('div', { class: 'card' },
@@ -1656,6 +1702,126 @@ const Admin = (() => {
               }, (s.marking.bandTables[k] || []).map(([n, b]) => `${n}:${b}`).join('\n')))))),
         el('button', { class: 'btn primary', onclick: saveSettings }, '儲存設定')));
 
+    /** 這一區的欄位讀成一個物件 */
+    function readExaminer() {
+      const out = {};
+      for (const k of ['name', 'voice', 'accent', 'pace', 'style', 'followUps', 'strictness',
+        'extraInstructions']) if (x[k]) out[k] = x[k].value;
+      for (const k of ['silenceMs', 'longTurnSilenceMs', 'part1Sec', 'part3Sec', 'prepSec', 'talkSec']) {
+        if (x[k]) out[k] = Number(x[k].value);
+      }
+      for (const k of ['allowBargeIn', 'showLiveScore', 'showTranscript', 'showPhase',
+        'showCueCard', 'showLevelMeter']) if (x[k]) out[k] = x[k].checked;
+      return out;
+    }
+
+    /** AI 口說考官 */
+    function examinerCard() {
+      const canEdit = API.user?.role === 'admin';
+      const pick = (key, opts, val) => (x[key] = el('select', { disabled: !canEdit },
+        opts.map((o) => el('option', { value: o.value, selected: val === o.value }, o.label))));
+      const num = (key, val, hint) => el('label', { class: 'field' },
+        el('span', {}, hint),
+        (x[key] = el('input', { type: 'number', value: val, disabled: !canEdit })));
+      const chk = (key, on, label, hint) => el('label', {
+        class: 'field', style: { flexDirection: 'row', alignItems: 'flex-start', gap: '.5rem' },
+      },
+        (x[key] = el('input', { type: 'checkbox', checked: !!on, class: 'check', disabled: !canEdit })),
+        el('span', {}, label, hint ? el('span', { class: 'small muted' }, `　${hint}`) : null));
+
+      return el('div', { class: 'card' },
+        el('h3', {}, 'AI 口說考官'),
+        el('p', { class: 'small muted' },
+          '這裡設定的是全站預設值。老師指派考試時可以針對特定班級覆寫，沒改的項目就沿用這裡。'),
+
+        el('details', { open: true }, el('summary', {}, el('b', {}, '人設與口音')),
+          el('div', { class: 'row', style: { marginTop: '.6rem' } },
+            el('label', { class: 'field' }, el('span', {}, '考官名字'),
+              (x.name = el('input', { type: 'text', value: ex.name || '', disabled: !canEdit })),
+              el('span', { class: 'small muted' }, '開場白會用這個名字自我介紹')),
+            el('label', { class: 'field' }, el('span', {}, '口音'), pick('accent', exOpt.accent, ex.accent)),
+            el('label', { class: 'field' }, el('span', {}, '語速'), pick('pace', exOpt.pace, ex.pace)),
+            el('label', { class: 'field' }, el('span', {}, '風格'), pick('style', exOpt.style, ex.style))),
+          el('div', { class: 'row' },
+            el('label', { class: 'field' }, el('span', {}, '聲音'),
+              (x.voice = el('input', {
+                type: 'text', value: ex.voice || '',
+                placeholder: `留空 = 沿用上面的「${a.ttsVoice || 'alloy'}」`, disabled: !canEdit,
+              })),
+              el('span', { class: 'small muted' }, 'OpenAI 的 alloy / echo / shimmer 等；要跟 Realtime 端點支援的一致')),
+            el('label', { class: 'field' }, el('span', {}, '　'),
+              el('button', {
+                class: 'btn', style: { marginTop: '.2rem' },
+                onclick: async (e) => {
+                  e.target.disabled = true;
+                  const was = e.target.textContent;
+                  e.target.textContent = '合成中…';
+                  try {
+                    const res = await API.post('/speaking/tts', {
+                      text: `Good morning. My name is ${x.name.value || 'Sarah'}. `
+                        + 'Can you tell me your full name, please?',
+                      voice: x.voice.value || undefined,
+                    }, { raw: true });
+                    const b = await res.blob();
+                    await new Promise((r) => {
+                      const au = new Audio(URL.createObjectURL(b));
+                      au.onended = au.onerror = r;
+                      au.play().catch(r);
+                    });
+                  } catch (er) { UI.alert(`試聽失敗：${er.message}`); }
+                  e.target.disabled = false; e.target.textContent = was;
+                },
+              }, '🔊 試聽開場白'))),
+          el('label', { class: 'field' },
+            el('span', {}, '額外指示（選填，會原樣加進考官的提示詞）'),
+            (x.extraInstructions = el('textarea', {
+              rows: 3, disabled: !canEdit,
+              placeholder: '例如：Avoid topics about politics or religion.',
+            }, ex.extraInstructions || '')),
+            el('span', { class: 'small muted' }, '用英文寫效果最好。不要在這裡寫評分規則，那在下面設定'))),
+
+        el('details', {}, el('summary', {}, el('b', {}, '換手靈敏度'),
+          el('span', { class: 'small muted' }, '　學生停頓多久算講完')),
+          el('p', { class: 'small muted', style: { marginTop: '.6rem' } },
+            '門檻太短，學生話講到一半換個氣就被考官搶走；太長則對話變得拖沓。'
+            + '程度較低的班級建議 1500–2000 毫秒。'),
+          el('div', { class: 'row' },
+            num('silenceMs', ex.silenceMs, '一問一答（毫秒）'),
+            num('longTurnSilenceMs', ex.longTurnSilenceMs, 'Part 2 長回答與準備（毫秒）')),
+          chk('allowBargeIn', ex.allowBargeIn, '允許學生打斷考官',
+            '關掉的話考官會把話講完才聽。沒戴耳機的環境建議關掉'),
+          el('p', { class: 'small muted' },
+            'Part 2 的準備時間與長回答，考官一律不會自動接話 —— 這是官方規則，不開放調整。')),
+
+        el('details', {}, el('summary', {}, el('b', {}, '難度與追問')),
+          el('div', { class: 'row', style: { marginTop: '.6rem' } },
+            el('label', { class: 'field' }, el('span', {}, '追問強度'),
+              pick('followUps', exOpt.followUps, ex.followUps)),
+            el('label', { class: 'field' }, el('span', {}, '評分寬嚴'),
+              pick('strictness', exOpt.strictness, ex.strictness))),
+          el('div', { class: 'row' },
+            num('part1Sec', ex.part1Sec, 'Part 1 長度（秒）'),
+            num('part3Sec', ex.part3Sec, 'Part 3 長度（秒）')),
+          el('div', { class: 'row' },
+            num('prepSec', ex.prepSec, 'Part 2 準備（秒）'),
+            num('talkSec', ex.talkSec, 'Part 2 長回答（秒）')),
+          el('p', { class: 'small muted' },
+            'Part 2 的秒數只在試卷的提示卡沒有自己指定時才生效。官方是準備 60 秒、說 1–2 分鐘。')),
+
+        el('details', {}, el('summary', {}, el('b', {}, '學生考試中看得到什麼')),
+          el('div', { style: { marginTop: '.6rem' } },
+            chk('showLiveScore', ex.showLiveScore, '即時分數',
+              '真實 IELTS 不會邊考邊報分數；看到分數往下掉對正在講話的學生只有干擾。關掉不影響計分，老師照樣看得到'),
+            chk('showTranscript', ex.showTranscript, '逐字稿'),
+            chk('showPhase', ex.showPhase, '階段提示（PART 1 / 2 / 3）'),
+            chk('showCueCard', ex.showCueCard, 'Part 2 提示卡', '官方是給紙本題卡，關掉的話請自行印給學生'),
+            chk('showLevelMeter', ex.showLevelMeter, '音量指示'))),
+
+        canEdit
+          ? el('button', { class: 'btn primary', style: { marginTop: '.8rem' }, onclick: saveSettings }, '儲存設定')
+          : el('p', { class: 'small muted' }, '只有管理員可以修改。'));
+    }
+
     async function saveSettings() {
       const aiPatch = {};
       for (const k of ['provider', 'anthropicApiKey', 'anthropicBaseUrl', 'anthropicModel',
@@ -1678,6 +1844,7 @@ const Admin = (() => {
             expandContractions: f.expandContractions.checked,
             bandTables,
           },
+          examiner: readExaminer(),
         });
         toast('設定已儲存', 'ok');
       } catch (e) { UI.alert(e.message); }

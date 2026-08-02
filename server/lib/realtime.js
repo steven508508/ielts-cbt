@@ -17,6 +17,7 @@ const db = require('../db');
 const ai = require('./ai');
 const aiTasks = require('./aiTasks');
 const bands = require('./bands');
+const examiner = require('./examiner');
 
 const PATH = '/ws/speaking';
 
@@ -44,19 +45,8 @@ function buildScript(paper) {
   return out;
 }
 
-function examinerInstructions(script, phase) {
-  const base = `You are a certified IELTS Speaking examiner conducting a real face-to-face style
-speaking test in British English. Behave exactly like a real examiner:
-
-- Speak at a natural, unhurried pace. Be polite, neutral and friendly but NEVER give feedback,
-  praise, corrections or scores. Never say "good", "well done", "that's interesting".
-- Ask ONE question at a time and then STOP and listen. Do not stack questions.
-- Short natural acknowledgements are fine ("Right.", "Mm-hm.", "OK.") before the next question.
-- If the candidate gives a one-word answer, ask a short natural follow-up ("Why is that?", "Can you tell me more?").
-- If the candidate does not understand, you may repeat the question once, but do not rephrase
-  Part 2 cue-card content.
-- Do NOT talk about being an AI. Do not read out stage directions.
-- Keep your own turns short — the candidate should be speaking most of the time.`;
+function examinerInstructions(script, phase, ex = examiner.DEFAULTS) {
+  const base = examiner.personaBlock(ex);
 
   const p1 = script.part1.map((t, i) =>
     `  Topic ${i + 1} — ${t.topic}:\n${t.items.map((q) => `    · ${q}`).join('\n')}`).join('\n');
@@ -68,7 +58,7 @@ speaking test in British English. Behave exactly like a real examiner:
 
   const phases = {
     intro: `CURRENT STAGE — Introduction.
-Say, in your own natural words: good morning/afternoon, introduce yourself as the examiner,
+Say, in your own natural words: good morning/afternoon, introduce yourself as ${ex.name || 'the examiner'},
 ask the candidate to tell you their full name, then ask where they are from. Then STOP.`,
 
     part1: `CURRENT STAGE — Part 1 (4–5 minutes).
@@ -155,14 +145,9 @@ const GA_EVENT_ALIASES = {
  *
  * createResponse=false 只是不自動接話，語音辨識照常跑，逐字稿不會少。
  */
-const PHASE_TURN_TAKING = {
-  // 考官不能開口的兩段
-  part2_prep: { createResponse: false, silenceMs: 2000 },
-  part2_talk: { createResponse: false, silenceMs: 2000 },
-  // 一問一答。700 毫秒對考生太短了 —— 話講到一半換個氣就被搶走，
-  // 這也是「講起來很不順」的一大原因。
-  _default: { createResponse: true, silenceMs: 1100 },
-};
+/* 考官不能開口的兩段。門檻放寬到哪裡由管理員決定 ——
+   程度較低的班級停頓多，門檻太短會一直被搶話。 */
+const SILENT_PHASES = new Set(['part2_prep', 'part2_talk']);
 
 /** 這些是中繼層自己該處理掉的協定雜訊，不該變成學生畫面上的紅字 */
 const INTERNAL_ERRORS =
@@ -171,15 +156,22 @@ const INTERNAL_ERRORS =
 /** 哪些階段可以讓學生插話把考官打斷（Part 2 讀題與長回答不行）*/
 const BARGE_IN_PHASES = new Set(['intro', 'part1', 'part2_round', 'part3']);
 
-function turnTakingFor(phase) {
-  return PHASE_TURN_TAKING[phase] || PHASE_TURN_TAKING._default;
+function turnTakingFor(phase, ex = examiner.DEFAULTS) {
+  return SILENT_PHASES.has(phase)
+    ? { createResponse: false, silenceMs: ex.longTurnSilenceMs }
+    : { createResponse: true, silenceMs: ex.silenceMs };
 }
 
-function buildSessionPayload({ script, phase, cfg = {}, flavor = 'ga' }) {
-  const instructions = examinerInstructions(script, phase);
-  const voice = cfg.voice || 'alloy';
+/** 這個階段學生插得了話嗎（管理員可以整個關掉）*/
+function canBargeIn(phase, ex = examiner.DEFAULTS) {
+  return !!ex.allowBargeIn && BARGE_IN_PHASES.has(phase);
+}
+
+function buildSessionPayload({ script, phase, cfg = {}, flavor = 'ga', ex = examiner.DEFAULTS }) {
+  const instructions = examinerInstructions(script, phase, ex);
+  const voice = ex.voice || cfg.voice || 'alloy';
   const sttModel = cfg.sttModel || 'whisper-1';
-  const tt = turnTakingFor(phase);
+  const tt = turnTakingFor(phase, ex);
   const vad = {
     type: 'server_vad',
     threshold: 0.5,
@@ -229,12 +221,13 @@ function buildSessionPayload({ script, phase, cfg = {}, flavor = 'ga' }) {
 const sessions = new Map();   // attemptId → session
 
 class Session {
-  constructor({ ws, user, attempt, paper, cfg }) {
+  constructor({ ws, user, attempt, paper, cfg, ex }) {
     this.ws = ws;
     this.user = user;
     this.attempt = attempt;
     this.paper = paper;
     this.cfg = cfg;
+    this.ex = ex || examiner.DEFAULTS;
     this.script = buildScript(paper);
     this.phase = 'intro';
     this.flavor = 'ga';   // connectUpstream() 會改成實際談成的版本
@@ -441,7 +434,9 @@ class Session {
   }
 
   sessionPayload(flavor = this.flavor) {
-    return buildSessionPayload({ script: this.script, phase: this.phase, cfg: this.cfg, flavor });
+    return buildSessionPayload({
+      script: this.script, phase: this.phase, cfg: this.cfg, flavor, ex: this.ex,
+    });
   }
 
   configureSession() {
@@ -523,7 +518,7 @@ class Session {
            學生畫面就跳一則莫名其妙的紅字；二是沒戴耳機時考官自己的
            聲音會被麥克風收回去，考官因此把自己講到一半的話砍掉。
            改由伺服器判斷 —— 只有它知道考官到底在不在講話。 */
-        const bargeIn = this.responseActive && BARGE_IN_PHASES.has(this.phase);
+        const bargeIn = this.responseActive && canBargeIn(this.phase, this.ex);
         if (bargeIn && this.upstream?.readyState === WebSocket.OPEN) {
           this.upstream.send(JSON.stringify({ type: 'response.cancel' }));
           this.responseActive = false;
@@ -693,7 +688,7 @@ class Session {
     }
     if (this.phase === 'part1') {
       const target = Math.max(8, this.script.part1.reduce((n, t) => n + (t.items?.length || 0), 0));
-      if (candidateTurns >= target + 2 || elapsed > 330) return this.startPart2();
+      if (candidateTurns >= target + 2 || elapsed > this.ex.part1Sec + 30) return this.startPart2();
     }
     if (this.phase === 'part2_round') {
       const done = this.turns.filter((t) => t.role === 'candidate').length;
@@ -703,7 +698,8 @@ class Session {
     }
     if (this.phase === 'part3') {
       const total = this.script.part3.reduce((n, t) => n + (t.items?.length || 0), 0);
-      if (candidateTurns >= this.part3StartTurns + Math.min(total, 7) || elapsed > 840) {
+      const part3Deadline = this.ex.part1Sec + this.ex.part3Sec + 240;
+      if (candidateTurns >= this.part3StartTurns + Math.min(total, 7) || elapsed > part3Deadline) {
         return this.finish();
       }
     }
@@ -721,7 +717,7 @@ class Session {
 
   beginPrep() {
     if (this.phase !== 'part2_instruct' || this.closed) return;
-    const prepSec = this.script.part2?.prepSec || 60;
+    const prepSec = this.script.part2?.prepSec || this.ex.prepSec;
     this.send({ type: 'prep', seconds: prepSec, cueCard: this.script.part2 });
     // setPhase(speak:false)，不是直接改 this.phase ——
     // 直接改的話新的換手設定（這一分鐘考官不准出聲）根本沒送到端點，
@@ -731,7 +727,7 @@ class Session {
     this.phaseTimer = setTimeout(() => {
       if (this.closed) return;
       this.setPhase('part2_talk');
-      const talkSec = this.script.part2?.talkSec || 120;
+      const talkSec = this.script.part2?.talkSec || this.ex.talkSec;
       this.send({ type: 'talk', seconds: talkSec });
       clearTimeout(this.phaseTimer);
       this.phaseTimer = setTimeout(() => {
@@ -762,6 +758,7 @@ class Session {
 
     const out = await aiTasks.scoreSpeakingLive({
       transcript, seconds, final, userId: this.user.id,
+      strictness: examiner.strictnessPrompt(this.ex),
     });
     const band = out.band != null ? bands.roundHalfBand(Number(out.band)) : bands.criteriaToBand(out.criteria);
 
@@ -775,7 +772,12 @@ class Session {
        JSON.stringify(out.criteria || {}), band, out.note_zh || '', transcript,
        final ? 'final' : 'live']
     );
-    this.send({ type: 'live_score', criteria: out.criteria, band, note: out.note_zh });
+    // 管理員可以關掉「考試中給學生看分數」。真實 IELTS 不會邊考邊報分數，
+    // 而且看到分數往下掉對正在講話的學生只有干擾。
+    // 關掉只是不送到學生畫面 —— 分數照常算、照常存，老師那邊看得到。
+    if (this.ex.showLiveScore) {
+      this.send({ type: 'live_score', criteria: out.criteria, band, note: out.note_zh });
+    }
     return { criteria: out.criteria, band, feedback: out };
   }
 
@@ -793,7 +795,9 @@ class Session {
           'SELECT part, q_index, question, transcript, duration_sec FROM speaking_responses WHERE attempt_id = ? ORDER BY part, q_index',
           [this.attempt.id]
         );
-        const graded = await aiTasks.gradeSpeaking({ responses, userId: this.user.id });
+        const graded = await aiTasks.gradeSpeaking({
+          responses, userId: this.user.id, strictness: examiner.strictnessPrompt(this.ex),
+        });
         const band = graded.band != null ? bands.roundHalfBand(Number(graded.band)) : bands.criteriaToBand(graded.criteria);
         await db.exec(
           `INSERT INTO module_results (attempt_id, module, band, criteria, feedback, graded_by, graded_at)
@@ -870,7 +874,13 @@ function attach(server) {
       const paper = JSON.parse(test.content);
 
       const cfg = await realtimeConfig();
-      session = new Session({ ws, user, attempt, paper, cfg });
+      // 考官設定：內建預設 ← 系統設定 ← 這一場指派
+      const misc = await db.getSettings();
+      const asg = attempt.assignment_id
+        ? await db.one('SELECT examiner FROM assignments WHERE id = ?', [attempt.assignment_id])
+        : null;
+      const ex = examiner.resolve(misc.speakingExaminer, asg?.examiner);
+      session = new Session({ ws, user, attempt, paper, cfg, ex });
       // 先把先前的進度讀回來，connectUpstream() 才會用正確的階段送 session.update
       await session.restore();
 
@@ -891,7 +901,10 @@ function attach(server) {
         [attemptId]
       );
 
-      session.send({ type: 'ready', api: session.flavor, resumed: !!session.resumed });
+      session.send({
+        type: 'ready', api: session.flavor, resumed: !!session.resumed,
+        examiner: { name: ex.name, ...examiner.displayFlags(ex) },
+      });
       if (session.resumed) {
         // 接續先前的考試：把對話補給模型、告訴前端進度，不要從頭再問一次名字
         session.seedHistory();
@@ -1018,5 +1031,5 @@ async function isAvailable() {
 module.exports = {
   attach, closeAll, isAvailable, realtimeConfig, buildScript, examinerInstructions,
   buildSessionPayload, GA_EVENT_ALIASES, sessions,
-  PHASE_TURN_TAKING, BARGE_IN_PHASES, INTERNAL_ERRORS, turnTakingFor,
+  SILENT_PHASES, BARGE_IN_PHASES, INTERNAL_ERRORS, turnTakingFor, canBargeIn,
 };

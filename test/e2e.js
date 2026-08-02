@@ -1313,6 +1313,58 @@ async function call(method, path, body, token) {
     await cleanUpAllTypes();
   }
 
+  // ── AI 口說考官的可調設定 ────────────────────────────────
+  console.log('\nAI 考官設定');
+  const exBefore = (await call('GET', '/ai/settings', null, adm)).data.examiner;
+  try {
+    const opts = (await call('GET', '/ai/settings', null, tea)).data.examinerOptions;
+    ok(opts?.accent?.length > 0 && opts?.strictness?.length > 0, '設定頁拿得到選項清單');
+
+    const saved = await call('PUT', '/ai/settings', { examiner: {
+      name: 'Margaret', accent: 'australian', silenceMs: 1800, showLiveScore: false,
+    } }, adm);
+    ok(saved.data.examiner.name === 'Margaret' && saved.data.examiner.silenceMs === 1800,
+      '管理員存得起來');
+    ok(saved.data.examiner.style === 'neutral', '沒填的欄位用內建預設');
+
+    const clamped = await call('PUT', '/ai/settings', { examiner: {
+      ...saved.data.examiner, silenceMs: 999999, prepSec: -10,
+    } }, adm);
+    ok(clamped.data.examiner.silenceMs === 5000 && clamped.data.examiner.prepSec === 10,
+      `亂填的數字會夾在合理範圍（${clamped.data.examiner.silenceMs} / ${clamped.data.examiner.prepSec}）`);
+
+    const teaTry = await call('PUT', '/ai/settings', { examiner: { name: '偷改' } }, tea);
+    ok(teaTry.status === 403, '老師不能改系統層的考官設定');
+
+    await call('PUT', '/ai/settings', { examiner: {
+      name: 'Sarah', silenceMs: 1100, followUps: 'standard',
+    } }, adm);
+
+    // 指派層覆寫
+    const exAsg = await call('POST', '/tests/assignments', {
+      testId: a.testId, userIds: [me.data.user.id], modules: 'speaking', maxAttempts: 9,
+      examiner: { silenceMs: 2200, followUps: 'many' },
+    }, tea);
+    ok(exAsg.status === 200, '指派時可以帶自己的考官設定');
+    const row = await call('GET', '/tests/assignments/all', null, tea);
+    const mine = (row.data.assignments || []).find((x) => x.id === exAsg.data.ids[0]);
+    const stored = mine?.examiner ? JSON.parse(mine.examiner) : null;
+    ok(stored && Object.keys(stored).sort().join(',') === 'followUps,silenceMs',
+      `指派層只存跟系統預設不同的欄位（${stored ? Object.keys(stored).join(',') : '沒存'}）`);
+
+    const plainAsg = await call('POST', '/tests/assignments', {
+      testId: a.testId, userIds: [me.data.user.id], modules: 'speaking', maxAttempts: 9,
+    }, tea);
+    const plainRow = (await call('GET', '/tests/assignments/all', null, tea)).data.assignments
+      .find((x) => x.id === plainAsg.data.ids[0]);
+    ok(!plainRow?.examiner, '沒特別設定時不留任何覆寫，永遠跟著系統預設走');
+
+    await call('DELETE', `/tests/assignments/${exAsg.data.ids[0]}`, null, tea);
+    await call('DELETE', `/tests/assignments/${plainAsg.data.ids[0]}`, null, tea);
+  } finally {
+    await call('PUT', '/ai/settings', { examiner: exBefore }, adm);
+  }
+
   // ── 螢光筆與註記要留得住 ────────────────────────────────
   console.log('\n螢光筆與註記');
   const marks = {

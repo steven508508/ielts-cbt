@@ -1227,3 +1227,103 @@ test('前端：麥克風的擷取節點一定要接到 destination，否則整�
     '要靜音就把增益設成 0，不能不接到 destination');
   assert.match(block, /mute\.gain\.value = 0/, '增益不設 0 的話會從喇叭放出來，變成回授');
 });
+
+// ── AI 考官的可調設定 ─────────────────────────────────────
+const ex = require('../server/lib/examiner');
+
+test('考官設定：沒設定過就是內建預設', () => {
+  const r = ex.resolve(null, null);
+  assert.equal(r.name, ex.DEFAULTS.name);
+  assert.equal(r.silenceMs, ex.DEFAULTS.silenceMs);
+});
+
+test('考官設定：即時分數預設不給學生看（真實考試不會邊考邊報分）', () => {
+  assert.equal(ex.DEFAULTS.showLiveScore, false);
+});
+
+test('考官設定：亂填的數字要夾在合理範圍，不能把考試搞掉', () => {
+  const r = ex.normalize({ silenceMs: 0, longTurnSilenceMs: 999999, prepSec: -5, talkSec: 'abc' });
+  assert.equal(r.silenceMs, ex.NUM_RANGES.silenceMs[0]);
+  assert.equal(r.longTurnSilenceMs, ex.NUM_RANGES.longTurnSilenceMs[1]);
+  assert.equal(r.prepSec, ex.NUM_RANGES.prepSec[0]);
+  assert.equal(r.talkSec, ex.DEFAULTS.talkSec, '看不懂的值要當作沒填，不是變成 NaN');
+});
+
+test('考官設定：看不懂的選項直接忽略，舊版存的設定不會整組壞掉', () => {
+  const r = ex.normalize({ accent: 'klingon', pace: 'warp', followUps: 'standard' });
+  assert.equal(r.accent, ex.DEFAULTS.accent);
+  assert.equal(r.pace, ex.DEFAULTS.pace);
+  assert.equal(r.followUps, 'standard', '看得懂的那些還是要生效');
+});
+
+test('考官設定：三層合併 —— 內建 ← 系統 ← 這一場指派', () => {
+  const system = { name: 'Margaret', silenceMs: 1800, followUps: 'many' };
+  const own = { silenceMs: 2500 };
+  const r = ex.resolve(system, own);
+  assert.equal(r.silenceMs, 2500, '指派層蓋過系統層');
+  assert.equal(r.name, 'Margaret', '沒覆寫的沿用系統層');
+  assert.equal(r.followUps, 'many');
+  assert.equal(r.accent, ex.DEFAULTS.accent, '兩層都沒設的用內建預設');
+});
+
+test('考官設定：指派層只存差異，之後改系統預設才跟得動', () => {
+  const system = ex.normalize({ name: 'Sarah', silenceMs: 1100 });
+  const full = ex.normalize({ silenceMs: 2200 }, system);
+  const diff = ex.diffFrom(system, full);
+  assert.deepEqual(Object.keys(diff), ['silenceMs']);
+  // 管理員後來把名字改掉，這場指派要跟著換名字
+  const later = ex.resolve({ name: 'Elizabeth', silenceMs: 1100 }, diff);
+  assert.equal(later.name, 'Elizabeth');
+  assert.equal(later.silenceMs, 2200);
+});
+
+test('考官設定：人設真的寫進提示詞', () => {
+  const p = ex.personaBlock(ex.normalize({
+    name: 'Margaret', accent: 'australian', pace: 'slow', style: 'formal',
+    followUps: 'many', extraInstructions: 'Never discuss politics.',
+  }));
+  assert.match(p, /Margaret/);
+  assert.match(p, /Australian English/);
+  assert.match(p, /Speak slowly/);
+  assert.match(p, /formal and businesslike/);
+  assert.match(p, /Probe actively/);
+  assert.match(p, /Never discuss politics/);
+});
+
+test('考官設定：沒填額外指示就不要留一段空標題給模型看', () => {
+  assert.ok(!/ADDITIONAL INSTRUCTIONS/.test(ex.personaBlock(ex.DEFAULTS)));
+});
+
+test('考官設定：換手門檻真的傳到 session.update', () => {
+  const cfgd = ex.normalize({ silenceMs: 1800, longTurnSilenceMs: 3000 });
+  const chat = rt.buildSessionPayload({ script: SCRIPT, phase: 'part1', ex: cfgd, flavor: 'ga' });
+  const talk = rt.buildSessionPayload({ script: SCRIPT, phase: 'part2_talk', ex: cfgd, flavor: 'ga' });
+  assert.equal(chat.session.audio.input.turn_detection.silence_duration_ms, 1800);
+  assert.equal(talk.session.audio.input.turn_detection.silence_duration_ms, 3000);
+  assert.equal(talk.session.audio.input.turn_detection.create_response, false,
+    '長回答不自動接話是官方規則，不能被設定蓋掉');
+});
+
+test('考官設定：關掉「允許打斷」之後每個階段都不能打斷', () => {
+  const off = ex.normalize({ allowBargeIn: false });
+  for (const p of ['intro', 'part1', 'part2_round', 'part3']) {
+    assert.equal(rt.canBargeIn(p, off), false, p);
+  }
+  const on = ex.normalize({ allowBargeIn: true });
+  assert.equal(rt.canBargeIn('part1', on), true);
+  assert.equal(rt.canBargeIn('part2_talk', on), false, '長回答永遠不能打斷');
+});
+
+test('考官設定：考官的聲音可以跟系統語音不同，留空則沿用', () => {
+  const own = rt.buildSessionPayload({ script: SCRIPT, phase: 'part1', flavor: 'ga',
+    cfg: { voice: 'alloy' }, ex: ex.normalize({ voice: 'shimmer' }) });
+  assert.equal(own.session.audio.output.voice, 'shimmer');
+  const inherit = rt.buildSessionPayload({ script: SCRIPT, phase: 'part1', flavor: 'ga',
+    cfg: { voice: 'alloy' }, ex: ex.normalize({ voice: '' }) });
+  assert.equal(inherit.session.audio.output.voice, 'alloy');
+});
+
+test('考官設定：額外指示有長度上限，不能塞爆提示詞', () => {
+  const r = ex.normalize({ extraInstructions: 'x'.repeat(9000) });
+  assert.ok(r.extraInstructions.length <= 2000);
+});

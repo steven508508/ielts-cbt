@@ -128,6 +128,8 @@ async function migrate() {
     ['exam_events', 'severity', "VARCHAR(10) NOT NULL DEFAULT 'warn'"],
     // v2.16：口說斷線重連時要接回原本的階段，不能從頭再問一次
     ['speaking_live', 'phase', 'VARCHAR(20) NULL'],
+    // v2.17：這一場考試要不要用不一樣的考官設定（不填就沿用系統預設）
+    ['assignments', 'examiner', 'TEXT NULL'],
   ];
   for (const [t, c, d] of steps) {
     try { if (await ensureColumn(t, c, d)) added.push(`${t}.${c}`); }

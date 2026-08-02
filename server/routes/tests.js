@@ -5,6 +5,8 @@ const { requireAuth, requireStaff } = require('../middleware/auth');
 const { validatePaper, normalizePaper, countQuestions, QUESTION_TYPES } = require('../lib/paper');
 const notify = require('../lib/notify');
 
+const examinerLib = require('../lib/examiner');
+
 const router = express.Router();
 router.use(requireAuth);
 
@@ -150,6 +152,7 @@ router.post('/assignments', requireStaff, async (req, res) => {
     proctoring = null,            // 反作弊設定
     breakPolicy = 'flexible',     // official | timed | flexible
     breakSeconds = 0,
+    examiner = null,              // 這一場的 AI 考官設定，留空 = 沿用系統預設
   } = req.body || {};
   if (!testId) return res.status(400).json({ error: '請選擇試卷' });
 
@@ -167,11 +170,22 @@ router.post('/assignments', requireStaff, async (req, res) => {
   const pct = Math.max(0, Math.min(200, Number(extraTimePct) || 0));
   const brk = Math.max(0, Number(breakSeconds) || 0);
 
+  /* 只存「跟系統預設不一樣」的欄位。整組存下來的話，之後管理員改了
+     系統預設，這些舊指派會永遠卡在建立當下的那一組值。 */
+  let examinerJson = null;
+  if (examiner && typeof examiner === 'object') {
+    const misc = await db.getSettings();
+    const system = examinerLib.normalize(misc.speakingExaminer || {});
+    const diff = examinerLib.diffFrom(system, examinerLib.normalize(examiner, system));
+    if (Object.keys(diff).length) examinerJson = JSON.stringify(diff);
+  }
+
   const COLS = `(test_id, %TARGET%, modules, speaking_grading, writing_grading, open_from, open_until,
-                 max_attempts, duration_overrides, extra_time_pct, proctoring, break_policy, break_seconds, created_by)`;
-  const PLACEHOLDERS = 'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)';
+                 max_attempts, duration_overrides, extra_time_pct, proctoring, break_policy, break_seconds,
+                 examiner, created_by)`;
+  const PLACEHOLDERS = 'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)';
   const tail = [modules, speakingGrading, writingGrading, openFrom, openUntil, maxAttempts,
-    overridesJson, pct, proctoringJson, policy, brk, req.user.id];
+    overridesJson, pct, proctoringJson, policy, brk, examinerJson, req.user.id];
 
   const made = [];
   if (classGroup) {

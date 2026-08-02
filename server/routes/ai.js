@@ -9,6 +9,7 @@ const assemble = require('../lib/assemble');
 const difficultyLib = require('../lib/difficulty');
 const { rateLimit } = require('../middleware/rateLimit');
 const bands = require('../lib/bands');
+const examiner = require('../lib/examiner');
 const { validatePaper, normalizePaper } = require('../lib/paper');
 
 const router = express.Router();
@@ -38,6 +39,8 @@ router.get('/settings', requireStaff, async (req, res) => {
       expandContractions: misc.expandContractions !== false,
       bandTables: misc.bandTables || bands.DEFAULT_TABLES,
     },
+    examiner: examiner.normalize(misc.speakingExaminer || {}),
+    examinerOptions: examiner.options(),
   });
 });
 
@@ -56,7 +59,17 @@ router.put('/settings', requireRole('admin'), async (req, res) => {
   }
   if (marking.bandTables) await db.setSetting('bandTables', marking.bandTables);
 
-  res.json({ ok: true, ai: ai.maskConfig(cfg) });
+  // AI 考官設定。整組正規化再存 —— 數字夾在合理範圍、看不懂的值直接忽略，
+  // 不要讓一個打錯的數字把整場口說搞掉（例如停頓門檻填 0）。
+  if (req.body?.examiner) {
+    await db.setSetting('speakingExaminer', examiner.normalize(req.body.examiner));
+  }
+
+  const misc2 = await db.getSettings();
+  res.json({
+    ok: true, ai: ai.maskConfig(cfg),
+    examiner: examiner.normalize(misc2.speakingExaminer || {}),
+  });
 });
 
 router.post('/test', requireStaff, aiLimit, async (req, res) => {

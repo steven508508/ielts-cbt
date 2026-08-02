@@ -390,7 +390,11 @@ registerProcessor('cap', Cap);`;
 
   function onServer(msg) {
     switch (msg.type) {
-      case 'ready': setStage('考官準備好了'); break;
+      case 'ready':
+        // 管理員／老師設定的顯示開關。收到才套用，收不到就維持全部顯示。
+        if (msg.examiner) { S.ex = msg.examiner; applyDisplayFlags(); }
+        setStage('考官準備好了');
+        break;
       case 'audio': playChunk(b64ToInt16(msg.delta)); setOrb('examiner'); break;
       case 'examiner_partial': setQline(msg.text); break;
       case 'examiner':
@@ -458,7 +462,7 @@ registerProcessor('cap', Cap);`;
     };
     setStage(names[msg.phase] || msg.phase);
     const cue = $('#sp-cue');
-    if (cue) cue.style.display = msg.cueCard ? '' : 'none';
+    if (cue) cue.style.display = (msg.cueCard && S.ex?.showCueCard !== false) ? '' : 'none';
     if (msg.cueCard) fillCue(msg.cueCard);
   }
 
@@ -557,6 +561,17 @@ registerProcessor('cap', Cap);`;
     }
   }
 
+  /** 依設定把不該給學生看的東西藏起來 */
+  function applyDisplayFlags() {
+    const e = S.ex || {};
+    const hide = (sel, on) => { const n = $(sel); if (n && on === false) n.style.display = 'none'; };
+    hide('#sp-chat', e.showTranscript);
+    hide('#sp-live', e.showLiveScore);
+    hide('#sp-stage', e.showPhase);
+    const lvl = $('#sp-level');
+    if (lvl && e.showLevelMeter === false) lvl.parentElement.style.display = 'none';
+  }
+
   const setStage = (t) => { const n = $('#sp-stage'); if (n) n.textContent = t; };
   const setQline = (t) => { const n = $('#sp-q'); if (n) n.textContent = t; };
   const setOrb = (cls) => { const n = $('#sp-orb'); if (n) n.className = `cbt-orb ${cls}`; };
@@ -572,6 +587,9 @@ registerProcessor('cap', Cap);`;
   function fillCue(cc) {
     const n = $('#sp-cue');
     if (!n) return;
+    // 官方 Part 2 是給紙本題卡的。學校要照官方做法就把畫面上的關掉，
+    // 自己印給學生 —— 這時候完全不顯示，而不是顯示一張空白卡。
+    if (S.ex && S.ex.showCueCard === false) { n.style.display = 'none'; return; }
     n.style.display = '';
     n.replaceChildren(
       el('b', {}, cc.topic || ''),
@@ -580,7 +598,8 @@ registerProcessor('cap', Cap);`;
   }
 
   function addChat(role, text) {
-    S.chat.push({ role, text });
+    S.chat.push({ role, text });   // 存下來，成績頁還是看得到
+    if (S.ex && S.ex.showTranscript === false) return;
     const box = $('#sp-chat');
     if (!box) return;
     box.append(el('div', { class: role }, role === 'ex' ? `考官：${text}` : `你：${text}`));
@@ -589,6 +608,7 @@ registerProcessor('cap', Cap);`;
 
   function showLive(msg) {
     S.live = msg;
+    if (S.ex && S.ex.showLiveScore === false) return;
     const box = $('#sp-live');
     if (!box) return;
     const L = { FC: '流利', LR: '詞彙', GRA: '文法', PRO: '發音' };
