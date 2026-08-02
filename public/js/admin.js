@@ -3373,7 +3373,17 @@ const Admin = (() => {
       for (const sec of mod.sections || []) {
         for (const g of sec.groups || []) {
           if (!types[g.type]?.objective) continue;
-          for (const q of g.questions || []) { n += 1; q.number = n; }
+          /* bodyHtml 裡的 [[舊號]] 要跟著一起換。
+             以前只改 q.number，版面裡的號碼原封不動 —— 學生端是照
+             [[n]] 畫空格的，於是空格停在舊號、新號的題目一個都畫不出來，
+             底部題號列卻照樣列出來。（存檔時驗證會擋，但老師只會看到
+             「bodyHtml 缺少空格」這種看不懂的訊息。） */
+          const map = new Map();
+          for (const q of g.questions || []) { n += 1; map.set(Number(q.number), n); q.number = n; }
+          if (g.bodyHtml) {
+            g.bodyHtml = String(g.bodyHtml).replace(/\[\[\s*(\d+)\s*\]\]/g,
+              (whole, old) => (map.has(Number(old)) ? `[[${map.get(Number(old))}]]` : whole));
+          }
         }
       }
       return n;

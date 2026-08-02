@@ -968,6 +968,43 @@ const Exam = (() => {
     restoreMarks();
     refreshNoteCount();
     paintSaveState();
+    auditQuestions(name);
+  }
+
+  /**
+   * 畫完之後對一次帳：底部題號列有的題目，作答區是不是真的都畫出來了。
+   *
+   * 這一類「題目被吞掉」的問題全部長得一樣 —— 題庫看得到、底部題號列
+   * 看得到、該有的地方就是沒有，而且沒有任何錯誤訊息。學生只會覺得
+   * 「這份考卷怪怪的」，然後那幾題直接 0 分。實測一次吞掉 5 題。
+   *
+   * 與其一個一個成因去堵，不如在畫完之後直接數一遍。少了就大聲講，
+   * 並且回報給伺服器，讓老師事後查得到是哪一份試卷、哪幾題。
+   */
+  function auditQuestions(name) {
+    if (!S || !S.module) return;
+    const want = flat(name).filter((q) => q.si === S.section)
+      .map((q) => Number(q.number)).filter(Number.isFinite);
+    const missing = want.filter((n) => !document.getElementById(`q-${n}`));
+    const box = $('#q-audit');
+    if (box) box.remove();
+    if (!missing.length) return;
+
+    const pane = $('.cbt-pane.right') || $('.cbt-pane.single');
+    if (pane) {
+      pane.prepend(el('div', {
+        id: 'q-audit', class: 'cbt-rubric',
+        style: { borderColor: 'var(--c-danger)', color: 'var(--c-danger)', fontWeight: '700' },
+      },
+        el('span', { class: 'rng' }, '⚠ 這一頁有題目沒有正常顯示'),
+        `第 ${missing.join('、')} 題應該出現在這一頁，但沒有畫出來。`
+        + '請立刻舉手告訴監考老師 —— 這是試卷的問題，不是你的操作問題。'));
+    }
+    if (!S._auditSent) S._auditSent = new Set();
+    const key = `${name}:${S.section}:${missing.join(',')}`;
+    if (S._auditSent.has(key)) return;
+    S._auditSent.add(key);
+    reportEvent('render_gap', `${name} 第 ${S.section + 1} 段：第 ${missing.join('、')} 題沒有畫出來`);
   }
 
   function bandBar(name, sec) {
@@ -1642,9 +1679,30 @@ const Exam = (() => {
       wrap.append(optionBank(g));
     }
 
-    if (g.bodyHtml) {
+    /* bodyHtml 只有在**真的有 [[n]] 空格**的時候才算「題目的版面」。
+       以前是 `if (g.bodyHtml)` 一律採用 —— 而驗證那邊只對
+       gap_fill / gap_fill_bank 檢查空格對不對得上。於是一個 short_answer
+       或 mcq_single 題組只要身上帶著一段殘留的 bodyHtml（換題型、匯入、
+       AI 出題、題庫沿用都會發生），整組題目就完全不會畫出來 ——
+       底部題號列照樣列出 3–7，作答區卻空空如也。實測 7 題吞掉 5 題。 */
+    const gaps = gapsInHtml(g.bodyHtml);
+    if (gaps.length) {
       wrap.append(renderBody(module, g));
+      /* 空格沒有涵蓋到的題目仍然要畫出來。少畫一題 = 學生整題 0 分，
+         而且畫面上完全看不出來。寧可重複也不能吞掉。 */
+      const left = g.questions.filter((q) => !gaps.includes(Number(q.number)));
+      if (left.length) wrap.append(renderPlain(module, { ...g, questions: left }));
     } else {
+      if (g.bodyHtml) wrap.append(el('div', { class: 'cbt-body', html: sanitize(g.bodyHtml) }));
+      wrap.append(renderPlain(module, g));
+    }
+    return wrap;
+  }
+
+  /** 依題型把每一題畫出來（不走 bodyHtml 那條路） */
+  function renderPlain(module, g) {
+    const wrap = el('div', {});
+    {
       switch (g.type) {
         // 選項不見了就退回文字輸入框，至少讓學生寫得下去，不要整題卡死
         case 'mcq_multi':
@@ -1669,6 +1727,16 @@ const Exam = (() => {
       }
     }
     return wrap;
+  }
+
+  /** bodyHtml 裡的 [[n]] 空格（跟後端 paper.js 的 gapsIn 同一套規則） */
+  function gapsInHtml(html) {
+    const out = [];
+    if (!html) return out;
+    const re = /\[\[\s*(\d+)\s*\]\]/g;
+    let m;
+    while ((m = re.exec(String(html)))) out.push(Number(m[1]));
+    return out;
   }
 
   /** 題目本身壞掉（缺選項…）時的保底：還是給得出作答框，並且講清楚 */

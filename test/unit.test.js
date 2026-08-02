@@ -2103,3 +2103,69 @@ test('圖表：寫作的分隔線要真的拖得動', () => {
   assert.match(src, /wideDefault\) S\._splitFlex = '0 0 60%'/,
     'Task 1 的圖表在 50% 欄位裡只剩約 37%，而學生不會知道那根線可以拖');
 });
+
+// ══════════════════════════════════════════════════════════════
+// v2.23.2：聽力吞題目
+// （實測在 test/browser/swallowed.mjs —— 那一支把壞掉的試卷直接寫進
+//   資料庫繞過驗證，模擬升級之前就已經存在的試卷。）
+// ══════════════════════════════════════════════════════════════
+
+test('題目：bodyHtml 沒有 [[n]] 空格時，不可以把整組題目吃掉', () => {
+  const src = stripComments(
+    require('fs').readFileSync(require.resolve('../public/js/exam.js'), 'utf8'));
+  const block = src.slice(src.indexOf('function renderGroup('), src.indexOf('function renderPlain('));
+  assert.ok(!/if \(g\.bodyHtml\) \{\s*wrap\.append\(renderBody/.test(block),
+    '以前是無條件採用 bodyHtml —— 一段殘留的版面就能讓整組題目消失');
+  assert.match(block, /const gaps = gapsInHtml\(g\.bodyHtml\)/);
+  assert.match(block, /if \(gaps\.length\)/, '要真的有空格才算是題目的版面');
+  assert.match(block, /g\.questions\.filter\(\(q\) => !gaps\.includes\(Number\(q\.number\)\)\)/,
+    '空格沒涵蓋到的題目仍然要畫出來 —— 少畫一題就是整題 0 分');
+  assert.match(src, /function gapsInHtml\(html\)/);
+});
+
+test('題目：畫完之後要對帳，少畫了要大聲講並回報', () => {
+  const src = stripComments(
+    require('fs').readFileSync(require.resolve('../public/js/exam.js'), 'utf8'));
+  assert.match(src, /auditQuestions\(name\)/, 'renderExam 結束時要對一次帳');
+  const a = src.slice(src.indexOf('function auditQuestions('), src.indexOf('function bandBar('));
+  assert.match(a, /!document\.getElementById\(`q-\$\{n\}`\)/,
+    '拿底部題號列（flat）比對作答區實際畫出來的節點');
+  assert.match(a, /id: 'q-audit'/, '要在畫面上看得到，不能只寫 console');
+  assert.match(a, /reportEvent\('render_gap'/, '老師事後要查得到是哪一份試卷、哪幾題');
+  assert.match(a, /Number\.isFinite/, '沒有題號的題目不要變成「第 NaN 題」');
+
+  const routes = require('fs').readFileSync(require.resolve('../server/routes/exam.js'), 'utf8');
+  assert.match(routes, /'render_gap'/, '事件白名單要收，否則回報會被 400 擋掉');
+  const conduct = require('fs').readFileSync(require.resolve('../server/lib/conduct.js'), 'utf8');
+  assert.match(conduct, /ALWAYS_INFO = \[[^\]]*'render_gap'/s,
+    '系統自己出的問題不能算到學生的違規次數上');
+});
+
+test('題目：不吃 bodyHtml 的題型帶著版面，驗證要擋下來', () => {
+  const { validatePaper } = require('../server/lib/paper');
+  const mk = (g) => ({ title: 't', testType: 'academic', modules: [{ module: 'listening', durationSec: 1800,
+    sections: [{ title: 'S1', audio: '/a.mp3', groups: [g] }] }] });
+  const stale = validatePaper(mk({ type: 'short_answer', instructions: 'i', bodyHtml: '<p>殘留</p>',
+    questions: [{ number: 1, text: 'Q1', answers: ['x'] }] }));
+  assert.equal(stale.ok, false);
+  assert.match(stale.errors.join(' '), /不使用 bodyHtml/);
+
+  const gapMissing = validatePaper(mk({ type: 'gap_fill', instructions: 'i', bodyHtml: '<p>[[1]]</p>',
+    questions: [{ number: 1, text: '', answers: ['x'] }, { number: 2, text: '', answers: ['y'] }] }));
+  assert.equal(gapMissing.ok, false);
+  assert.match(gapMissing.errors.join(' '), /缺少空格 \[\[2\]\]/);
+
+  // 正常的不能被誤擋
+  assert.equal(validatePaper(mk({ type: 'gap_fill', instructions: 'i', bodyHtml: '<p>[[1]] [[2]]</p>',
+    questions: [{ number: 1, text: '', answers: ['x'] }, { number: 2, text: '', answers: ['y'] }] })).ok, true);
+  assert.equal(validatePaper(mk({ type: 'short_answer', instructions: 'i',
+    questions: [{ number: 1, text: 'Q1', answers: ['x'] }] })).ok, true);
+});
+
+test('題目：重新編號要一併改掉 bodyHtml 裡的 [[舊號]]', () => {
+  const src = require('fs').readFileSync(require.resolve('../public/js/admin.js'), 'utf8');
+  const block = src.slice(src.indexOf('function renumberModule('), src.indexOf('function renumberModule(') + 1400);
+  assert.match(block, /map\.set\(Number\(q\.number\), n\)/);
+  assert.match(block, /g\.bodyHtml = String\(g\.bodyHtml\)\.replace\(/,
+    '只改 q.number 的話，空格會停在舊號、新號的題目一題都畫不出來');
+});

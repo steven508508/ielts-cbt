@@ -286,13 +286,27 @@ function validatePaper(input) {
           }
         }
 
-        if (meta.supportsBody && g.bodyHtml) {
-          const gaps = gapsIn(g.bodyHtml);
-          const nums = g.questions.map((q) => q.number);
-          const missing = nums.filter((n) => !gaps.includes(n));
-          const extra = gaps.filter((n) => !nums.includes(n));
-          if (missing.length) errors.push(`${where} ${sec.title}：bodyHtml 缺少空格 [[${missing.join(']] [[')}]]`);
-          if (extra.length) errors.push(`${where} ${sec.title}：bodyHtml 有多餘的空格 [[${extra.join(']] [[')}]]`);
+        /* bodyHtml 的檢查以前只對 supportsBody 的題型做（gap_fill／gap_fill_bank）。
+           但學生端是 `if (g.bodyHtml)` 一律採用 —— 於是一個 short_answer 或
+           mcq_single 題組只要身上帶著一段殘留的 bodyHtml（換題型、匯入、AI 出題、
+           題庫沿用都會發生），整組題目就完全不會畫出來，而驗證全綠。
+           實測一份 7 題的聽力卷被吞掉 5 題，底部題號列卻照樣列出 1–7。
+           所以：不支援 bodyHtml 的題型帶著它，直接擋下來；支援的則照舊比對空格。 */
+        if (g.bodyHtml && String(g.bodyHtml).trim()) {
+          if (!meta.supportsBody) {
+            errors.push(`${where} ${sec.title}：題型 ${g.type} 不使用 bodyHtml，`
+              + '但這個題組帶著一段版面 —— 學生端會只畫版面、把整組題目吞掉。請清空 bodyHtml。');
+          } else {
+            const gaps = gapsIn(g.bodyHtml);
+            const nums = g.questions.map((q) => q.number);
+            const missing = nums.filter((n) => !gaps.includes(n));
+            const extra = gaps.filter((n) => !nums.includes(n));
+            if (missing.length) {
+              errors.push(`${where} ${sec.title}：bodyHtml 缺少空格 [[${missing.join(']] [[')}]]`
+                + '（這幾題學生會看不到。重新編號之後很容易發生，記得把版面裡的號碼一起改。）');
+            }
+            if (extra.length) errors.push(`${where} ${sec.title}：bodyHtml 有多餘的空格 [[${extra.join(']] [[')}]]`);
+          }
         }
 
         if (meta.objective) {

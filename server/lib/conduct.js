@@ -19,7 +19,9 @@ const NO_FULLSCREEN_MODULES = ['speaking'];
 /** 處理裝置權限的寬限時間：這段時間內離開畫面視為裝置問題 */
 const DEVICE_GRACE_MS = 3 * 60 * 1000;
 
-const ALWAYS_INFO = ['return', 'fullscreen_enter', 'resize', 'device_permission', 'device_check'];
+// audio_error / render_gap 是系統自己出的問題，絕對不能算到學生頭上
+const ALWAYS_INFO = ['return', 'fullscreen_enter', 'resize', 'device_permission', 'device_check',
+  'audio_error', 'render_gap'];
 const ALWAYS_ALERT = ['copy_blocked', 'devtools', 'auto_submit'];
 
 /**

@@ -263,8 +263,12 @@ router.get('/:id/time', loadAttempt, async (req, res) => {
 });
 
 // ── 考試紀律事件 ───────────────────────────────────────────────
+/* audio_error 與 render_gap 是「試卷／環境出問題」的紀錄，不是違規行為：
+   前者是聽力音檔載不到，後者是有題目沒有畫出來（底部題號列有、作答區沒有）。
+   兩個都要留下來，老師事後才查得到是哪一份試卷、哪幾題把學生害慘了。 */
 const EVENT_TYPES = ['leave', 'return', 'fullscreen_exit', 'fullscreen_enter', 'copy_blocked',
-  'paste_blocked', 'resize', 'devtools', 'auto_submit', 'device_permission', 'device_check'];
+  'paste_blocked', 'resize', 'devtools', 'auto_submit', 'device_permission', 'device_check',
+  'audio_error', 'render_gap'];
 
 /** 前端回報一個事件；回傳目前累計次數，讓前端知道要不要處置 */
 router.post('/:id/event', loadAttempt, async (req, res) => {
