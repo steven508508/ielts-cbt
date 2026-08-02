@@ -7,8 +7,7 @@
  *   npm i -D playwright && npx playwright install chromium
  *   node test/browser/answerScroll.mjs
  */
-import pw from 'playwright';
-const { chromium } = pw;
+import { chromium } from './_pw.mjs';
 const B='http://localhost:3000';
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 async function call(m,p,b,t){const h={};if(t)h.authorization='Bearer '+t;if(b)h['content-type']='application/json';

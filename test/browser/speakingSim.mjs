@@ -9,9 +9,8 @@
  *   npm i -D playwright && npx playwright install chromium
  *   node test/browser/speakingScenarios.mjs
  */
-import pw from 'playwright';
+import { chromium } from './_pw.mjs';
 import { log, connections, mode, stop } from './fakeRealtime.mjs';
-const { chromium } = pw;
 const B = 'http://localhost:3000';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 

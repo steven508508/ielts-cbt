@@ -22,11 +22,15 @@ const Exam = (() => {
     try { return JSON.parse(localStorage.getItem(PREF_KEY) || '{}'); } catch { return {}; }
   })());
   const savePrefs = () => localStorage.setItem(PREF_KEY, JSON.stringify(prefs));
+  /* 注意是 querySelectorAll：對話框（.cbt-dim）也會帶著 `cbt` 這個 class，
+     不然它掛在 body 上就吃不到配色變數。而學生正是在「顯示設定」這個對話框
+     裡面換配色的 —— 只改第一個 .cbt 的話，他按下黑底黃字，背後的考卷變了，
+     手上這個對話框卻還是白的，看起來就像設定沒生效。 */
   function applyPrefs() {
-    const c = $('.cbt');
-    if (!c) return;
-    c.dataset.size = prefs.size;
-    c.dataset.scheme = prefs.scheme;
+    document.querySelectorAll('.cbt').forEach((c) => {
+      c.dataset.size = prefs.size;
+      c.dataset.scheme = prefs.scheme;
+    });
   }
 
   // ── 官方風格對話框 ──────────────────────────────────────
@@ -47,7 +51,17 @@ const Exam = (() => {
   function dlg({ title, body, actions = [], dismissable = false }) {
     return new Promise((resolve) => {
       let done = false;
-      const dim = el('div', { class: 'cbt-dim' });
+      /* 一定要帶著 `cbt` 這個 class。所有配色變數（--c-bg / --c-line /
+         --c-accent / --cbt-font）都定義在 .cbt 上 —— 掛到 body 之後
+         如果不帶，對話框會完全失去背景、外框與字級，學生看到的是一塊
+         沒有樣式的白字浮在畫面上，OK 也不像按鈕。
+         順便把學生選的字級與配色一起複製過來，高對比模式才不會破功。 */
+      const dim = el('div', { class: 'cbt cbt-dim' });
+      const host = document.querySelector('.cbt:not(.cbt-dim)');
+      if (host) {
+        if (host.dataset.size) dim.dataset.size = host.dataset.size;
+        if (host.dataset.scheme) dim.dataset.scheme = host.dataset.scheme;
+      }
       const finish = (v) => {
         if (done) return;
         done = true;

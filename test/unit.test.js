@@ -1572,6 +1572,39 @@ test('對話框：被外力移除時 Promise 也要收掉，不能讓 await 卡�
   assert.match(block, /if \(done\) return/, '關兩次不能 resolve 兩次');
 });
 
+// ── 搬到 body 之後掉了配色（上一版修按鈕失靈時造成的回歸）──────
+// 所有顏色與字級都是掛在 .cbt 上的 CSS 變數。對話框搬到 body 之後
+// 如果不自己帶著 `cbt`，--c-bg / --c-line / --c-accent / --cbt-font
+// 全部變成未定義：沒有底色、沒有外框、沒有陰影，OK 也不像按鈕，
+// 學生看到的是一塊白字直接浮在考卷上。
+test('對話框：搬到 body 之後要自己帶著 cbt，否則配色變數全部失效', () => {
+  const src = stripComments(
+    require('fs').readFileSync(require.resolve('../public/js/exam.js'), 'utf8'));
+  const block = src.slice(src.indexOf('function dlg('), src.indexOf('const notice ='));
+  assert.match(block, /class: 'cbt cbt-dim'/,
+    '要同時帶 cbt（吃變數）與 cbt-dim（遮罩樣式）');
+  assert.match(block, /dim\.dataset\.size = host\.dataset\.size/,
+    '學生選的字級要跟著過去');
+  assert.match(block, /dim\.dataset\.scheme = host\.dataset\.scheme/,
+    '高對比配色要跟著過去，不然對話框還是白底');
+  assert.match(block, /querySelector\('\.cbt:not\(\.cbt-dim\)'\)/,
+    '要取真正的考試容器；不排除 .cbt-dim 的話會抓到另一個對話框自己');
+
+  const css = require('fs').readFileSync(
+    require.resolve('../public/css/cbt.css').replace(/\.js$/, ''), 'utf8');
+  assert.ok(css.indexOf('.cbt-dim{') > css.indexOf('.cbt{'),
+    '.cbt-dim 必須排在 .cbt 後面：兩者權重相同，靠順序才蓋得掉 background 與 display');
+});
+
+test('顯示設定：換配色要套用到所有 .cbt，含正開著的對話框', () => {
+  const src = stripComments(
+    require('fs').readFileSync(require.resolve('../public/js/exam.js'), 'utf8'));
+  const block = src.slice(src.indexOf('function applyPrefs('), src.indexOf('function dlg('));
+  assert.match(block, /querySelectorAll\('\.cbt'\)/,
+    '學生就是在對話框裡換配色的，只改第一個 .cbt 的話手上這個框不會變，看起來像沒生效');
+  assert.ok(!/const c = \$\('\.cbt'\);/.test(block));
+});
+
 // ── 口說：重整之後對話要接得回來 ──────────────────────────
 test('口說：對話從 speaking_responses 重建，不是靠即時分數那份快照', () => {
   const src = require('fs').readFileSync(require.resolve('../server/lib/realtime'), 'utf8');
