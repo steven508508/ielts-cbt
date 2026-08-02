@@ -1188,10 +1188,17 @@ async function call(method, path, body, token) {
   const afterAttempts = (await call('GET', '/exam/my-attempts', null, stu)).data.attempts.length;
   ok(beforeAttempts === afterAttempts, '練習不會多出一筆考試紀錄');
 
-  // 學生只能看自己的
-  const spy = await call('GET', `/practice/wrong?userId=${me.data.user.id}`, null,
-    (await call('POST', '/auth/login', { username: 'student3', password: 'ielts1234' })).data.token);
-  ok(spy.status === 200 && spy.data.total === 0, '學生指定別人的 userId 也只會拿到自己的錯題');
+  // 學生只能看自己的。
+  // 不能用「別人的錯題數是 0」來驗 —— 那要求 student3 帳號永遠乾淨，
+  // 只要種子資料或別的測試給他留下一筆成績就會誤判。
+  // 要驗的是「拿到的是自己的資料」，所以比對場次編號。
+  const mineWrong = await call('GET', '/practice/wrong?limit=500', null, stu);
+  const myAttemptIds = new Set((mineWrong.data.items || []).map((x) => x.attemptId));
+  const spyToken = (await call('POST', '/auth/login', { username: 'student3', password: 'ielts1234' })).data.token;
+  const spy = await call('GET', `/practice/wrong?userId=${me.data.user.id}&limit=500`, null, spyToken);
+  const spyLeaked = (spy.data.items || []).filter((x) => myAttemptIds.has(x.attemptId));
+  ok(spy.status === 200 && spyLeaked.length === 0,
+    `學生指定別人的 userId 也只會拿到自己的錯題（外流 ${spyLeaked.length} 題）`);
 
   // 口說練習出題
   const spQ = await call('POST', '/practice/speaking/question', { part: 2 }, stu);

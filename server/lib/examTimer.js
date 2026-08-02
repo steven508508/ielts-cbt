@@ -95,7 +95,9 @@ async function submitAttempt(attemptId, { reason = 'time_up' } = {}) {
   await db.exec(
     'INSERT INTO exam_events (attempt_id, module, type, detail, severity) VALUES (?,?,?,?,?)',
     [attemptId, null, 'auto_submit',
-      reason === 'hard_limit' ? '超過最長作答時間，系統自動收卷' : '作答時間到，系統自動收卷', 'info']
+      reason === 'hard_limit' ? '超過最長作答時間，系統自動收卷'
+        : reason === 'all_done' ? '所有科目都已結束，系統自動收卷'
+          : '作答時間到，系統自動收卷', 'info']
   );
 
   grade.gradeAttempt(attemptId, {

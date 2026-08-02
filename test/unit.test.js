@@ -1494,3 +1494,11 @@ test('時限：逾時的請求會順手把那一科收掉，不用等掃描', ()
   assert.match(block, /st\.finished = true/);
   assert.match(block, /st\.expired = true/);
 });
+
+test('時限：最後一科結束就直接收卷，不用等下一輪掃描', () => {
+  const src = require('fs').readFileSync(require.resolve('../server/routes/exam.js'), 'utf8');
+  const block = src.slice(src.indexOf("router.post('/:id/module/finish'"), src.indexOf('function moduleOpen('));
+  assert.match(block, /chosen\.every\(\(m\) => req\.state\.modules\[m\]\?\.finished\)/);
+  assert.match(block, /examTimer\.submitAttempt/);
+  assert.match(block, /req\.attempt\.status === 'in_progress'/, '已經交過的不能再交一次');
+});

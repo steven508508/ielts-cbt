@@ -6,6 +6,7 @@ const { stripAnswers, normalizePaper, countQuestions } = require('../lib/paper')
 const { resolveRules } = require('../lib/examRules');
 const grade = require('../lib/grade');
 const conduct = require('../lib/conduct');
+const examTimer = require('../lib/examTimer');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -348,6 +349,17 @@ router.post('/:id/module/finish', loadAttempt, async (req, res) => {
   const { module: mod } = req.body || {};
   req.state.modules[mod] = { ...(req.state.modules[mod] || {}), finished: true, finishedAt: Date.now() };
   await saveState(req.attempt.id, req.state);
+
+  /* 最後一科結束就直接收卷，不要等下一輪掃描。
+     掃描是給「前端沒跑到」的情況用的保底，正常結束不該讓學生多等 30 秒
+     才開始批改，也不該讓那場考試在老師的清單上多掛半分鐘。 */
+  const chosen = req.attempt.modules.split(',').map((x) => x.trim()).filter(Boolean);
+  const allDone = chosen.every((m) => req.state.modules[m]?.finished);
+  if (allDone && req.attempt.status === 'in_progress') {
+    examTimer.submitAttempt(req.attempt.id, { reason: 'all_done' })
+      .catch((e) => console.warn('[exam] 自動收卷失敗：', e.message));
+    return res.json({ ok: true, submitted: true });
+  }
   res.json({ ok: true });
 });
 
