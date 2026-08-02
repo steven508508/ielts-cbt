@@ -12,7 +12,24 @@ const Speaking = (() => {
   let S = null;
 
   // ══ 共用外殼 ══════════════════════════════════════════════
+  /**
+   * 底部固定按鈕列。
+   *
+   * 口說的按鈕以前是跟著內容一起排在捲動區裡面的。逐字稿每多一行、
+   * 即時分數一出現、計時器一顯示，下面的按鈕就整排往下跳（實測一次
+   * 對話就位移 60px）。學生按下去的那一瞬間按鈕跑掉，mousedown 跟
+   * mouseup 落在不同元素上 —— 瀏覽器根本不會發出 click，畫面上什麼
+   * 都不會發生。學生的感受就是「這些按鈕都壞了」，而且完全沒有線索。
+   * 更糟的是「進入下一部分」跟「結束測驗」緊鄰，跳一下就可能誤按。
+   *
+   * 所以按鈕一律釘在底部，不進捲動區，位置永遠不變。
+   */
+  const foot = (...btns) => el('div', { class: 'cbt-foot sp-foot' }, ...btns);
+
   function shell(...body) {
+    const flat = body.flat(9).filter(Boolean);
+    const feet = flat.filter((n) => n.classList?.contains('sp-foot'));
+    const main = flat.filter((n) => !feet.includes(n));
     const c = el('div', { class: 'cbt' },
       el('div', { class: 'cbt-top' },
         el('div', { class: 'cbt-cand' },
@@ -22,7 +39,8 @@ const Speaking = (() => {
         el('span', { class: 'small', id: 'sp-mode' }, S?.realtime ? '即時語音對話' : '語音問答'),
         el('button', { class: 'cbt-tool', onclick: () => Exam.notice('說明', helpText()) }, '❓ Help'),
         el('button', { class: 'cbt-tool', onclick: quit }, '離開')),
-      el('div', { class: 'cbt-center' }, el('div', { class: 'cbt-speak' }, ...body)));
+      el('div', { class: 'cbt-center' }, el('div', { class: 'cbt-speak' }, ...main)),
+      ...feet);
     root().replaceChildren(c);
     c.dataset.size = Exam.prefs.size;
     c.dataset.scheme = Exam.prefs.scheme;
@@ -86,7 +104,9 @@ const Speaking = (() => {
           el('div', {}, el('span', {}, '評分'), el('span', {},
             S.mode === 'ai' ? 'AI 即時評分，考完立刻出分' : '錄音存檔，由老師評分')))),
       el('div', { id: 'mic-state', class: 'small', style: { opacity: '.75' } }, '尚未測試麥克風'),
-      el('div', { class: 'cbt-actions', style: { justifyContent: 'center' } },
+      /* 麥克風測試結果可能是一行，也可能是三行的錯誤說明。放在捲動區裡的話
+         這兩顆按鈕會被推下去 —— 而學生正要按的就是它們。一樣釘到底部。 */
+      foot(
         el('button', { class: 'cbt-btn', onclick: testMic }, '測試麥克風'),
         el('button', { class: 'cbt-btn primary', onclick: begin }, '開始口說測驗')));
   }
@@ -548,7 +568,7 @@ registerProcessor('cap', Cap);`;
         '直接開口說話即可，不用按任何按鈕。停頓一下考官就會接話。'),
       el('div', { class: 'cbt-livescore', id: 'sp-live' }),
       el('div', { class: 'cbt-chat', id: 'sp-chat' }),
-      el('div', { class: 'cbt-actions', style: { justifyContent: 'center' } },
+      foot(
         el('button', {
           class: 'cbt-btn',
           onclick: (e) => {
@@ -737,8 +757,7 @@ registerProcessor('cap', Cap);`;
       el('div', { class: 'cbt-cue', id: 'sp-cue' }),
       el('p', { class: 'small', style: { opacity: '.75' } }, '你有 1 分鐘準備，時間到會自動開始錄音。'),
       el('div', { class: 'cbt-bigtimer', id: 'sp-timer' }, fmtTime(left)),
-      el('div', { class: 'cbt-actions', style: { justifyContent: 'center' } },
-        el('button', { class: 'cbt-btn', onclick: () => { clearInterval(t); S.i += 1; nextStep(); } }, '我準備好了')));
+      foot(el('button', { class: 'cbt-btn', onclick: () => { clearInterval(t); S.i += 1; nextStep(); } }, '我準備好了')));
     fillCue(step.cueCard);
     speak('Now, I am going to give you a topic and I would like you to talk about it for one to two minutes. Before you talk you have one minute to think about what you are going to say.');
     const t = setInterval(() => {
@@ -760,7 +779,7 @@ registerProcessor('cap', Cap);`;
         el('span', { class: 'ring' }), '🎙'),
       el('div', { class: 'cbt-level' }, el('i', { id: 'sp-level' })),
       el('div', { class: 'cbt-livescore', id: 'sp-live' }),
-      el('div', { class: 'cbt-actions', style: { justifyContent: 'center' } },
+      foot(
         el('button', { class: 'cbt-btn', onclick: () => speak(step.question) }, '🔁 再聽一次'),
         el('button', { class: 'cbt-btn', onclick: () => { if (S.recording) stopRec(true); S.i += 1; nextStep(); } }, '略過 →')));
     if (step.kind === 'talk' && step.cueCard) fillCue(step.cueCard);

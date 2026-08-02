@@ -63,18 +63,39 @@ export async function newExam(username, paperOverrides = {}) {
     { testId: t.data.id, userIds: [stu.user.id], modules: 'speaking', maxAttempts: 9 }, tea.token);
   const st = await call('POST', '/exam/start',
     { assignmentId: asg.data.ids[0], testId: t.data.id }, stu.token);
-  return {
-    stu, testId: t.data.id, asgId: asg.data.ids[0], at: st.data.attemptId,
-    cleanup: async () => {
-      await call('DELETE', `/tests/assignments/${asg.data.ids[0]}`, null, tea.token);
-      await call('POST', '/manage/results/bulk', { action: 'delete', ids: [st.data.attemptId], force: true }, adm);
-      await call('DELETE', `/tests/${t.data.id}`, null, adm);
-    },
+  let cleaned = false;
+  const cleanup = async () => {
+    if (cleaned) return;
+    cleaned = true;
+    LEFTOVERS.delete(cleanup);
+    await call('DELETE', `/tests/assignments/${asg.data.ids[0]}`, null, tea.token);
+    await call('POST', '/manage/results/bulk', { action: 'delete', ids: [st.data.attemptId], force: true }, adm);
+    await call('DELETE', `/tests/${t.data.id}`, null, adm);
   };
+  LEFTOVERS.add(cleanup);
+  return { stu, testId: t.data.id, asgId: asg.data.ids[0], at: st.data.attemptId, cleanup };
+}
+
+/* 測試中途壞掉（timeout、例外、Ctrl-C）留下來的試卷會毒到 e2e ——
+   e2e 挑的是「可作答清單的第一份」，撿到殘留的假試卷就整串失敗，
+   而且看起來完全像是產品壞了。所以離場時無論如何都掃一次。 */
+const LEFTOVERS = new Set();
+let sweeping = false;
+async function sweep() {
+  if (sweeping || !LEFTOVERS.size) return;
+  sweeping = true;
+  console.error(`\n（清掉 ${LEFTOVERS.size} 份沒收乾淨的測試試卷…）`);
+  for (const fn of [...LEFTOVERS]) await fn().catch(() => {});
+}
+process.on('beforeExit', sweep);
+process.on('uncaughtException', async (e) => { await sweep(); console.error(e); process.exit(1); });
+process.on('unhandledRejection', async (e) => { await sweep(); console.error(e); process.exit(1); });
+for (const sig of ['SIGINT', 'SIGTERM']) {
+  process.on(sig, async () => { await sweep(); process.exit(130); });
 }
 
 /** 開瀏覽器並走到口說的即時對話畫面 */
-export async function openSpeaking(ex, { viewport = { width: 1280, height: 800 } } = {}) {
+export async function openSpeaking(ex, { viewport = { width: 1280, height: 800 }, init = null } = {}) {
   const br = await chromium.launch({ args: [
     '--no-sandbox', '--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream',
     '--autoplay-policy=no-user-gesture-required',
@@ -83,6 +104,7 @@ export async function openSpeaking(ex, { viewport = { width: 1280, height: 800 }
   await ctx.addInitScript(([tk, u]) => {
     localStorage.setItem('ielts_token', tk); localStorage.setItem('ielts_user', JSON.stringify(u));
   }, [ex.stu.token, ex.stu.user]);
+  if (init) await ctx.addInitScript(init);   // 探針要在頁面腳本之前埋好
   const pg = await ctx.newPage();
   const errors = [];
   pg.on('pageerror', (e) => errors.push(String(e).slice(0, 200)));

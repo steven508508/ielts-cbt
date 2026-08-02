@@ -77,11 +77,76 @@ const Exam = (() => {
             class: `cbt-btn ${a.primary ? 'primary' : ''}`,
             onclick: () => { if (a.onClick && a.onClick(dim) === false) return; finish(a.value); },
           }, a.label)))));
-      if (dismissable) dim.addEventListener('click', (e) => { if (e.target === dim) finish(null); });
+      /* 點遮罩。可關的就關掉；不可關的至少要讓對話框動一下。
+         這個遮罩是 inset:0 z-index:1300，開著的時候畫面上每一顆按鈕
+         都點不動 —— 這是刻意的，但如果學生沒注意到有對話框，症狀就是
+         「整頁的按鈕全部沒反應」，而且完全沒有線索。抖一下至少告訴他
+         「有東西在等你回答」。 */
+      dim.addEventListener('click', (e) => {
+        if (e.target !== dim) return;
+        if (dismissable) return finish(null);
+        const box = dim.firstElementChild;
+        box.classList.remove('nudge');
+        void box.offsetWidth;              // 重新觸發動畫
+        box.classList.add('nudge');
+      });
       // 被別人從 DOM 拔掉時，也要讓 await 回得來
       const obs = new MutationObserver(() => { if (!dim.isConnected) finish(null); });
       document.body.append(dim);
       obs.observe(document.body, { childList: true });
+      guardVisible(dim);
+    });
+  }
+
+  /**
+   * 對話框一定要看得見。
+   *
+   * 這層保險是被上一個 bug 逼出來的：對話框搬到 body 之後失去了
+   * .cbt 上的配色變數，畫出來是一塊透明的東西 —— 但遮罩照樣蓋滿整個
+   * 畫面、照樣吃掉所有點擊。學生看到的是「口說考到一半，畫面上每一顆
+   * 按鈕都點不動」，看不出跟對話框有任何關係，也沒有任何錯誤訊息。
+   *
+   * 樣式表沒載到、被舊快取蓋掉、日後又有人把它搬走，都會再走到同一個
+   * 結果。所以畫完之後實際量一次，不對就直接補行內樣式 —— 醜一點沒關係，
+   * 至少學生看得到、按得掉，不會被鎖在一個沒有出口的畫面裡。
+   */
+  function guardVisible(dim) {
+    requestAnimationFrame(() => {
+      if (!dim.isConnected) return;
+      const box = dim.firstElementChild;
+      if (!box) return;
+      const r = box.getBoundingClientRect();
+      const see = getComputedStyle(box).backgroundColor;
+      const invisible = /^(transparent|rgba\(0, 0, 0, 0\))$/.test(see);
+      if (r.width >= 80 && r.height >= 60 && !invisible) return;
+
+      console.warn('[cbt] 對話框沒有正常畫出來，改用行內樣式（樣式表可能沒載到或是舊的）');
+      Object.assign(dim.style, {
+        position: 'fixed', inset: '0', zIndex: '1300', display: 'grid',
+        placeItems: 'center', padding: '1rem', background: 'rgba(0,0,0,.45)',
+      });
+      Object.assign(box.style, {
+        width: 'min(560px, 92vw)', maxHeight: '86vh', overflow: 'auto',
+        background: '#fff', color: '#1c1c1c', border: '1px solid #b9b9b9',
+        boxShadow: '0 6px 28px rgba(0,0,0,.35)',
+        font: '15px/1.6 system-ui, -apple-system, "Noto Sans TC", sans-serif',
+      });
+      $$('h3', box).forEach((h) => Object.assign(h.style, {
+        margin: '0', padding: '.7rem 1rem', background: '#f2f2f2',
+        borderBottom: '1px solid #b9b9b9', fontSize: '1em',
+      }));
+      $$('.bd', box).forEach((b) => Object.assign(b.style, { padding: '1rem' }));
+      $$('.ft', box).forEach((f) => Object.assign(f.style, {
+        padding: '.7rem 1rem', borderTop: '1px solid #b9b9b9',
+        display: 'flex', gap: '.5rem', justifyContent: 'flex-end',
+      }));
+      $$('button', box).forEach((b) => Object.assign(b.style, {
+        padding: '.4rem 1rem', cursor: 'pointer', font: 'inherit',
+        border: '1px solid #b9b9b9', background: '#fff', color: '#1c1c1c',
+      }));
+      $$('button.primary', box).forEach((b) => Object.assign(b.style, {
+        background: '#005c8a', color: '#fff', borderColor: '#005c8a', fontWeight: '700',
+      }));
     });
   }
   const notice = (title, body) => dlg({ title, body, actions: [{ label: 'OK', primary: true, value: true }] });

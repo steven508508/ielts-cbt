@@ -181,6 +181,69 @@ console.log('\n【4】按鈕還是要有反應（守住 v2.21.0 修的東西）'
   await ctx.close();
 }
 
+// ── 5. 對話框開著的時候，底下的按鈕本來就點不動 ──────────────
+// 這正是「頁面上所有按鈕都沒反應」的機制：遮罩 inset:0 z-index:1300，
+// 開著就吃掉整頁的點擊。所以對話框只要有一次畫不出來，學生看到的就是
+// 一個完全沒有反應、也沒有任何線索的畫面。
+console.log('\n【5】對話框開著時，整頁的按鈕會被擋住（這是刻意的）');
+{
+  const { ctx, pg } = await openExam(null);
+  await clickByText(pg, /Help/); await sleep(800);
+  const blocked = await pg.evaluate(() => {
+    const b = [...document.querySelectorAll('button')]
+      .find((x) => /Settings|顯示設定/.test(x.textContent) && x.offsetWidth);
+    if (!b) return null;
+    const r = b.getBoundingClientRect();
+    const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    return { 被擋: !!top && !b.contains(top) && top !== b, 擋住的是: top?.className || top?.tagName };
+  });
+  ok(blocked && blocked.被擋, '底下的按鈕確實被遮罩擋住', String(blocked?.擋住的是));
+
+  // 點遮罩：不可關的對話框至少要抖一下，否則學生以為整頁壞了
+  await pg.evaluate(() => {
+    const d = document.querySelector('.cbt-dim');
+    const r = d.getBoundingClientRect();
+    d.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: r.left + 8, clientY: r.top + 8 }));
+  });
+  await sleep(100);
+  ok(await pg.evaluate(() => !!document.querySelector('.cbt-dialog.nudge')),
+    '點遮罩會讓對話框抖一下（把注意力帶回來）');
+  await ctx.close();
+}
+
+// ── 6. 樣式表整個沒載到，也不能把學生鎖死 ────────────────────
+// 舊快取、CDN 拿到半條命的檔案、部署到一半 —— 都會走到這裡。
+// 沒有這層保險的話，遮罩照樣蓋滿畫面吃掉所有點擊，但學生看不到任何東西。
+console.log('\n【6】cbt.css 完全載不到時的保險');
+{
+  const ctx = await br.newContext({ viewport: { width: 1280, height: 800 } });
+  await ctx.addInitScript(([tk, u]) => {
+    localStorage.setItem('ielts_token', tk);
+    localStorage.setItem('ielts_user', JSON.stringify(u));
+  }, [stu.token, stu.user]);
+  await ctx.route('**/css/cbt.css*', (route) => route.abort());
+  const pg = await ctx.newPage();
+  await pg.goto(`${B}/#/exam/${at}`); await sleep(900); await pg.reload(); await sleep(2400);
+  await clickByText(pg, /^(資料正確|繼續)/); await sleep(1600);
+  await clickByText(pg, /Help/); await sleep(900);
+  const m = await measure(pg);
+  if (!m) { ok(false, '對話框有出現'); }
+  else {
+    ok(alphaOf(m.底色) === 1, '仍然有不透明底色（行內樣式接手）', m.底色);
+    ok(m.寬 > 100 && m.高 > 60, '仍然有正常大小', `${m.寬}×${m.高}`);
+    ok(alphaOf(m.OK底) === 1, 'OK 仍然是看得見的按鈕', m.OK底);
+    const reach = await pg.evaluate(() => {
+      const b = [...document.querySelectorAll('.cbt-dialog .cbt-btn')].pop();
+      const r = b.getBoundingClientRect();
+      const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      return !!top && (top === b || b.contains(top));
+    });
+    ok(reach, 'OK 按得到，學生不會被鎖在畫面裡');
+  }
+  await pg.screenshot({ path: '/tmp/dlgtest-nocss.png' });
+  await ctx.close();
+}
+
 await br.close();
 await call('DELETE', `/tests/assignments/${asg.data.ids[0]}`, null, tea.token);
 await call('POST', '/manage/results/bulk', { action: 'delete', ids: [at], force: true }, adm);

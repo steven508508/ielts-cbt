@@ -19,6 +19,14 @@
   --c-review:#e8a020;
   --c-hl:#ffe86b;
   --c-note:#bfe3c2;
+  /* 狀態色。以前只定義在三種高對比配色上，預設配色反而沒有 ——
+     於是 .cbt-btn.danger 的 var(--c-danger) 整條宣告失效，
+     「結束測驗」在預設配色下變成整排裡最淡的一顆，hover 也沒反應。
+     最危險的動作長得最不明顯，這是不能留的。 */
+  --c-ok:#1e7d3c;
+  --c-warn:#b36b00;
+  --c-danger:#c0392b;
+  --c-muted:#6b6b6b;
   --cbt-font: 15px;
 
   position:fixed; inset:0; display:flex; flex-direction:column;
@@ -268,6 +276,16 @@ mark.hl.has-note{background:var(--c-note); border-bottom:2px dotted currentColor
   background:var(--c-bg); color:var(--c-fg); border:1px solid var(--c-line);
   width:min(560px,96vw); max-height:88vh; overflow:auto; box-shadow:0 10px 40px rgba(0,0,0,.35);
 }
+/* 點了遮罩、但這個對話框不能關的時候抖一下。
+   遮罩開著時整頁的按鈕都點不動（本來就該如此），但學生如果沒注意到
+   有對話框，看到的就是「所有按鈕都壞了」。抖一下把注意力帶回來。 */
+.cbt-dialog.nudge{animation:cbtNudge .28s ease}
+@keyframes cbtNudge{
+  0%,100%{transform:translateX(0)}
+  20%{transform:translateX(-7px)} 45%{transform:translateX(6px)}
+  70%{transform:translateX(-3px)}
+}
+@media (prefers-reduced-motion:reduce){ .cbt-dialog.nudge{animation:none; outline:3px solid var(--c-accent)} }
 .cbt-dialog h3{margin:0; padding:.7rem 1rem; background:var(--c-bar); border-bottom:1px solid var(--c-line); font-size:1em}
 .cbt-dialog .bd{padding:1rem; line-height:1.7; font-size:.95em}
 .cbt-dialog .ft{padding:.7rem 1rem; border-top:1px solid var(--c-line); display:flex; gap:.5rem; justify-content:flex-end}
@@ -338,6 +356,11 @@ mark.hl.has-note{background:var(--c-note); border-bottom:2px dotted currentColor
 }
 .cbt-livescore .chip{border:1px solid var(--c-line); padding:.3rem .6rem; border-radius:99px}
 .cbt-livescore .chip b{font-size:1.15em; margin-left:.3rem}
+/* 口說的按鈕列釘在底部。逐字稿長出來、即時分數出現、計時器顯示，
+   都不能把學生正要按的按鈕推走 —— 按鈕在 mousedown 跟 mouseup 之間
+   移位的話，瀏覽器根本不會發出 click，看起來就是「按鈕壞了」。 */
+.sp-foot{justify-content:center; gap:.6rem; padding:.55rem .6rem; flex-wrap:wrap; font-size:1em}
+.sp-foot .cbt-btn{white-space:nowrap}
 
 @media(max-width:860px){
   .cbt-stage{flex-direction:column}

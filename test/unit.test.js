@@ -1596,6 +1596,84 @@ test('對話框：搬到 body 之後要自己帶著 cbt，否則配色變數全�
     '.cbt-dim 必須排在 .cbt 後面：兩者權重相同，靠順序才蓋得掉 background 與 display');
 });
 
+// ── 對話框畫不出來 = 整頁按鈕全部沒反應 ──────────────────────
+// 遮罩是 inset:0 z-index:1300，開著的時候整頁的按鈕都點不動。
+// 這本來就是對的，但只要對話框有一次沒畫出來，學生看到的就是
+// 「所有按鈕都壞了」，而且沒有任何線索。所以要有最後一道保險。
+test('對話框：畫不出來時要用行內樣式補救，不能變成看不見的擋板', () => {
+  const src = stripComments(
+    require('fs').readFileSync(require.resolve('../public/js/exam.js'), 'utf8'));
+  assert.match(src, /guardVisible\(dim\)/, 'dlg 掛上去之後要量一次');
+  const g = src.slice(src.indexOf('function guardVisible('), src.indexOf('const notice ='));
+  assert.match(g, /requestAnimationFrame/, '要等畫完才量得到');
+  assert.match(g, /getBoundingClientRect|backgroundColor/, '量的是實際畫出來的樣子，不是有沒有掛 class');
+  assert.match(g, /position: 'fixed'/);
+  assert.match(g, /background: '#fff'/, '樣式表沒載到時也要有不透明底色');
+});
+
+test('對話框：不能關的時候點遮罩要抖一下，不能毫無反應', () => {
+  const src = stripComments(
+    require('fs').readFileSync(require.resolve('../public/js/exam.js'), 'utf8'));
+  const block = src.slice(src.indexOf('function dlg('), src.indexOf('function guardVisible('));
+  assert.match(block, /classList\.add\('nudge'\)/);
+  assert.match(block, /void box\.offsetWidth/, '不重排的話連續點第二次不會再播動畫');
+  const css = require('fs').readFileSync(
+    require.resolve('../public/css/cbt.css').replace(/\.js$/, ''), 'utf8');
+  assert.match(css, /\.cbt-dialog\.nudge\{animation:cbtNudge/);
+  assert.match(css, /prefers-reduced-motion/, '關掉動畫的人要改用外框提示');
+});
+
+// ── 沒定義的 CSS 變數 = 整條宣告靜靜失效 ─────────────────────
+// var(--x) 找不到又沒有 fallback 的話，那一整條宣告會被丟掉，
+// 不會有錯誤、不會有警告，只是顏色不見了。--c-danger 以前只定義在
+// 三種高對比配色上，預設配色的「結束測驗」就變成整排裡最淡的一顆。
+test('配色：每個沒有 fallback 的 CSS 變數都要真的有定義', () => {
+  const css = require('fs').readFileSync(
+    require.resolve('../public/css/cbt.css').replace(/\.js$/, ''), 'utf8');
+  const defined = new Set([...css.matchAll(/(--[a-z0-9-]+)\s*:/g)].map((m) => m[1]));
+  const missing = [...new Set([...css.matchAll(/var\((--[a-z0-9-]+)\s*([,)])/g)]
+    .filter((m) => m[2] === ')' && !defined.has(m[1])).map((m) => m[1]))];
+  assert.deepEqual(missing, [], `這些變數用了卻沒定義：${missing.join(', ')}`);
+  for (const v of ['--c-ok', '--c-warn', '--c-danger', '--c-muted']) {
+    assert.ok(new RegExp(`\\.cbt\\{[^}]*${v}\\s*:`, 's').test(css),
+      `${v} 要定義在預設配色的 .cbt 上，不能只有高對比配色才有`);
+  }
+});
+
+// ── 口說的按鈕不能自己跑掉 ──────────────────────────────────
+// 逐字稿長一行、即時分數出現、計時器顯示，按鈕就整排往下移。
+// mousedown 跟 mouseup 落在不同元素上，瀏覽器不會發出 click ——
+// 學生的感受是「所有按鈕都沒反應」，事後去看畫面卻一切正常。
+test('口說：操作按鈕要釘在底部，不能跟著內容捲動', () => {
+  const src = stripComments(
+    require('fs').readFileSync(require.resolve('../public/js/speaking.js'), 'utf8'));
+  assert.match(src, /const foot = \(\.\.\.btns\) => el\('div', \{ class: 'cbt-foot sp-foot' \}/);
+  const shell = src.slice(src.indexOf('function shell('), src.indexOf('const helpText'));
+  assert.match(shell, /classList\?\.contains\('sp-foot'\)/, '底列要被抓出來，放在捲動區外面');
+  // 即時模式與問答模式的操作按鈕都要用 foot()
+  for (const fn of ['function renderLive(', 'function turnAsk(', 'function turnPrep(', 'function renderIntro(']) {
+    const i = src.indexOf(fn);
+    assert.ok(i > 0, `找不到 ${fn}`);
+    const block = src.slice(i, i + 2400);
+    assert.match(block, /foot\(/, `${fn} 的按鈕還在捲動區裡`);
+  }
+  const css = require('fs').readFileSync(
+    require.resolve('../public/css/cbt.css').replace(/\.js$/, ''), 'utf8');
+  assert.match(css, /\.sp-foot\{/);
+});
+
+// ── 學生跑的是哪一版 ────────────────────────────────────────
+// 前端沒有打包步驟，更新之後瀏覽器與 CDN 常常還抓著舊的 JS/CSS。
+// 新舊混著跑的話，畫面壞掉的樣子跟程式碼對不起來，根本沒辦法查。
+test('靜態資源：index.html 要帶版本戳，帶版本的才可以長期快取', () => {
+  const src = require('fs').readFileSync(require.resolve('../server/index.js'), 'utf8');
+  assert.match(src, /\?v=\$\{APP_VERSION\}/, '資源網址要帶版本');
+  assert.match(src, /window\.APP_VERSION/, '學生回報問題時要看得到版本');
+  assert.match(src, /max-age=31536000, immutable/, '帶版本的檔案可以放心長期快取');
+  const idx = src.slice(src.indexOf("app.get(['/', '/index.html']"), src.indexOf('app.use(express.static'));
+  assert.match(idx, /no-cache/, 'index.html 本身一定要重新驗證，否則版本戳永遠更新不了');
+});
+
 test('顯示設定：換配色要套用到所有 .cbt，含正開著的對話框', () => {
   const src = stripComments(
     require('fs').readFileSync(require.resolve('../public/js/exam.js'), 'utf8'));

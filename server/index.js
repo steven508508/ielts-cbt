@@ -23,8 +23,46 @@ app.use((req, res, next) => {
   next();
 });
 
-// 靜態資源
-app.use(express.static(config.PUBLIC_DIR, { extensions: ['html'] }));
+/* ── 靜態資源與版本戳 ─────────────────────────────────────
+ *
+ * 前端沒有打包步驟，index.html 直接寫死 /js/exam.js 這種路徑。
+ * 更新伺服器之後，學生的瀏覽器（還有中間的 CDN／反向代理）常常
+ * 還抓著舊的 JS 或 CSS —— 新舊混著跑，畫面壞掉的樣子跟程式碼對不起來，
+ * 連「他到底跑的是哪一版」都問不出來，這種回報根本沒辦法查。
+ *
+ * 所以在送出 index.html 的時候，把每個資源後面補上 ?v=<版本>。
+ * 版本一變網址就變，快取自然失效；帶了版本的檔案就可以放心讓瀏覽器
+ * 長期快取。順便把版本寫進 <meta> 與 window.APP_VERSION，
+ * 學生回報問題時看得到自己跑的是哪一版。
+ */
+const APP_VERSION = require('../package.json').version;
+const INDEX_FILE = path.join(config.PUBLIC_DIR, 'index.html');
+let indexCache = null;
+function indexHtml() {
+  if (indexCache && config.isProduction) return indexCache;
+  const html = fs.readFileSync(INDEX_FILE, 'utf8')
+    .replace(/(src|href)="(\/(?:js|css)\/[^"?]+)"/g, `$1="$2?v=${APP_VERSION}"`)
+    .replace('</head>', `<meta name="app-version" content="${APP_VERSION}">\n`
+      + `<script>window.APP_VERSION=${JSON.stringify(APP_VERSION)}</script>\n</head>`);
+  indexCache = html;
+  return html;
+}
+app.get(['/', '/index.html'], (req, res) => {
+  res.setHeader('Cache-Control', 'no-cache');   // 這一份一定要重新驗證，否則版本戳永遠更新不了
+  res.type('html').send(indexHtml());
+});
+
+app.use(express.static(config.PUBLIC_DIR, {
+  extensions: ['html'],
+  setHeaders: (res, filePath) => {
+    // 帶了 ?v= 的才可以長期快取；直接打檔名的（舊連結、爬蟲）一律重新驗證
+    if (/[.](?:js|css)$/.test(filePath) && res.req.query && res.req.query.v) {
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    } else {
+      res.setHeader('Cache-Control', 'no-cache');
+    }
+  },
+}));
 app.use('/uploads', express.static(config.UPLOAD_DIR, {
   maxAge: '7d',
   setHeaders: (res) => res.setHeader('X-Content-Type-Options', 'nosniff'),

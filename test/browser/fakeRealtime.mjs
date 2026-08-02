@@ -5,8 +5,9 @@
      · response.create 但已經有進行中的回應 → 回 error
    這三件事正是介面上摸不到、但把對話搞爛的東西。 */
 import http from 'http';
-import wspkg from 'ws';
-const { WebSocketServer } = wspkg;
+/* ws 在 ESM 底下，default 是 WebSocket 這個 class 本身，
+   WebSocketServer 只掛在具名匯出上（wspkg.WebSocketServer 會是 undefined）。 */
+import { WebSocketServer } from 'ws';
 
 const PORT = 4478;
 export const log = [];
@@ -84,7 +85,11 @@ wss.on('connection', (ws) => {
       const v = vadCfg();
       log.push({ t: 'session.update', vad: v?.type || null,
         createResponse: v?.create_response, silenceMs: v?.silence_duration_ms,
-        stage: (session.instructions || '').match(/CURRENT STAGE — ([^\n.]+)/)?.[1] || '?' });
+        stage: (session.instructions || '').match(/CURRENT STAGE — ([^\n.]+)/)?.[1] || '?',
+        /* 整份 instructions 也要留著。情境 ③ 檢查的是「這一階段的題目
+           有沒有真的送到考官手上」，只記 stage 的話那四項永遠是 undefined，
+           檢查會靜靜地全部失敗 —— 而且看起來像產品壞了。 */
+        instructions: session.instructions || '' });
       send({ type: 'session.updated', session });
       return;
     }
