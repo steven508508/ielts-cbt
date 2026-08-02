@@ -1548,3 +1548,51 @@ test('作答：其他會重畫的路徑，捲動位置要補救得回來', () =>
   assert.match(block, /requestAnimationFrame\(\(\) => \{ if \(p\.isConnected/,
     '內容還沒排版完時 scrollTop 會被夾成 0，下一幀要再補一次');
 });
+
+// ── 對話框被重畫弄死 → 按鈕看起來完全沒反應 ────────────────
+// 學生反映「有些按鈕完全無法用」。成因是對話框被 append 進 .cbt，
+// 而畫面每一次重畫都是 root().replaceChildren() —— 對話框連根被拔掉，
+// 那個 Promise 永遠不 resolve。呼叫端全部是 `const ok = await dlg(...)`，
+// 於是整條路卡死在那一行，畫面上毫無反應也沒有錯誤訊息。
+test('對話框：要掛在 document.body，不能掛在會被重畫掉的容器裡', () => {
+  const src = stripComments(
+    require('fs').readFileSync(require.resolve('../public/js/exam.js'), 'utf8'));
+  const block = src.slice(src.indexOf('function dlg('), src.indexOf('const notice ='));
+  assert.match(block, /document\.body\.append\(dim\)/);
+  assert.ok(!/document\.querySelector\('\.cbt'\) \|\| document\.body/.test(block),
+    '掛在 .cbt 裡的話，任何一次重畫都會把它連同 Promise 一起弄死');
+});
+
+test('對話框：被外力移除時 Promise 也要收掉，不能讓 await 卡死', () => {
+  const src = stripComments(
+    require('fs').readFileSync(require.resolve('../public/js/exam.js'), 'utf8'));
+  const block = src.slice(src.indexOf('function dlg('), src.indexOf('const notice ='));
+  assert.match(block, /new MutationObserver/);
+  assert.match(block, /if \(!dim\.isConnected\) finish\(null\)/);
+  assert.match(block, /if \(done\) return/, '關兩次不能 resolve 兩次');
+});
+
+// ── 口說：重整之後對話要接得回來 ──────────────────────────
+test('口說：對話從 speaking_responses 重建，不是靠即時分數那份快照', () => {
+  const src = require('fs').readFileSync(require.resolve('../server/lib/realtime'), 'utf8');
+  const block = src.slice(src.indexOf('async restore()'), src.indexOf('send(obj) {') > 0
+    ? src.indexOf('setPhase(phase') : src.length);
+  assert.match(block, /FROM speaking_responses/,
+    'speaking_live.transcript 每三輪才寫一次，學生講一兩句就重整的話裡面是空的');
+  assert.match(block, /transcript IS NOT NULL AND transcript <> ''/);
+  assert.match(block, /ORDER BY part, q_index/);
+});
+
+test('口說：整場錄音那一列不能混進評分', () => {
+  const src = require('fs').readFileSync(require.resolve('../server/lib/aiTasks'), 'utf8');
+  const block = src.slice(src.indexOf('async function gradeSpeaking('), src.indexOf('const totalWords'));
+  assert.match(block, /filter\(\(r\) => Number\(r\.part\) > 0\)/,
+    'part 0 只有音檔路徑沒有逐字稿，算進去等於多一題空白答案');
+});
+
+test('口說：Part 2 的準備與長回答不能用「叫考官接話」把考官叫起來', () => {
+  const src = require('fs').readFileSync(require.resolve('../server/lib/realtime'), 'utf8');
+  const block = src.slice(src.indexOf('  nudge() {'), src.indexOf('  maybeAdvance()'));
+  assert.match(block, /SILENT_PHASES\.has\(this\.phase\)/);
+  assert.match(block, /ignored: true/, '要回一個明確的訊息，不能讓學生以為按鈕壞了');
+});

@@ -277,22 +277,29 @@ class Session {
         const p = Number(r.part);
         if (this.qIndex[p] != null) this.qIndex[p] = Number(r.mx) + 1;
       }
+      /* 對話內容要從 speaking_responses 重建，不能靠 speaking_live.transcript ——
+         那份是「每三輪才更新一次即時分數」時順手寫的，學生只講了一兩句就
+         重新整理的話裡面根本是空的。實測重整之後對話紀錄是 0 則，
+         考官也因此完全不記得剛剛聊過什麼。speaking_responses 才是每一輪
+         都寫的權威來源。 */
+      const turns = await db.query(
+        `SELECT question, transcript FROM speaking_responses
+          WHERE attempt_id = ? AND transcript IS NOT NULL AND transcript <> ''
+          ORDER BY part, q_index`, [this.attempt.id]);
+      for (const r of turns) {
+        if (r.question) this.turns.push({ role: 'examiner', text: r.question, at: 0 });
+        this.turns.push({ role: 'candidate', text: r.transcript, at: 0 });
+      }
+      this.lastScoreAtTurn = this.turns.filter((t) => t.role === 'candidate').length;
+
       const live = await db.one(
-        'SELECT phase, transcript FROM speaking_live WHERE attempt_id = ?', [this.attempt.id]);
+        'SELECT phase FROM speaking_live WHERE attempt_id = ?', [this.attempt.id]);
       const phase = live?.phase;
       // 準備／長回答那兩段的計時器沒有跟著存，接回去會卡住不動。
       // 退到「讀題」重來一次 Part 2 是最不傷的做法。
       const RESUMABLE = ['intro', 'part1', 'part2_round', 'part3'];
       if (phase && RESUMABLE.includes(phase)) this.phase = phase;
       else if (phase && phase.startsWith('part2')) this.phase = 'part1';
-      // 把先前的對話讀回來，考官才知道已經聊過什麼、即時分數也才接得下去
-      if (live?.transcript) {
-        for (const line of String(live.transcript).split('\n')) {
-          const m = line.match(/^(EXAMINER|CANDIDATE): ([\s\S]*)$/);
-          if (m) this.turns.push({ role: m[1] === 'EXAMINER' ? 'examiner' : 'candidate', text: m[2], at: 0 });
-        }
-        this.lastScoreAtTurn = this.turns.filter((t) => t.role === 'candidate').length;
-      }
       this.resumed = this.turns.length > 0 || this.phase !== 'intro';
       if (this.resumed) this.log('接回先前的進度：階段', this.phase, '已答', this.turns.filter((t) => t.role === 'candidate').length, '句');
     } catch (e) { this.log('restore', e.message); }
@@ -834,6 +841,12 @@ class Session {
       return this.send({ type: 'error', message: '與考官的連線已中斷，請重新整理頁面' });
     }
     this.log('nudge');
+    /* Part 2 的準備時間與長回答，考官照規定是不出聲的。學生誤按這顆
+       就把考官叫起來講話，等於把剛修好的官方規則自己破壞掉。 */
+    if (SILENT_PHASES.has(this.phase)) {
+      return this.send({ type: 'nudged', ignored: true,
+        message: 'Part 2 這一段考官不會說話，請放心作答。' });
+    }
     // 就算現在標記成「正在講話」也照樣排隊 —— 學生會按這顆，
     // 就代表他等很久了，狀態很可能已經卡住。
     this.requestResponse();

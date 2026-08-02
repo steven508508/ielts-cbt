@@ -507,6 +507,9 @@ audio-only features are estimated when you only have a transcript)
 `.trim();
 
 async function gradeSpeaking({ responses, userId, hasAudioFeatures = false, strictness = '' }) {
+  /* part 0 是「整場錄音」那一列（只存音檔路徑，沒有逐字稿）。
+     混進來的話等於多一題空白答案，會把分數往下拉。 */
+  responses = (responses || []).filter((r) => Number(r.part) > 0);
   const transcriptBlock = responses
     .map((r) => `--- Part ${r.part}${r.q_index != null ? ` Q${r.q_index + 1}` : ''} (${r.duration_sec || 0}s)
 EXAMINER: ${r.question || '(cue card)'}

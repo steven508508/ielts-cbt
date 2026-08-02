@@ -30,20 +30,44 @@ const Exam = (() => {
   }
 
   // ── 官方風格對話框 ──────────────────────────────────────
+  /**
+   * 對話框。
+   *
+   * 一定要掛在 document.body，不能掛在 .cbt 裡面。
+   *
+   * 畫面上每一次重畫都是 `root().replaceChildren(...)` —— 掛在 .cbt 裡的
+   * 對話框會跟著被整個拔掉，而那個 Promise **永遠不會 resolve**。
+   * 呼叫端幾乎都是 `const ok = await dlg(...)`，於是那一行卡死在那裡：
+   * 按鈕按下去毫無反應，也沒有任何錯誤訊息。
+   * 「結束這一科」「離開」「結束測驗」這些按鈕失靈都是這樣來的。
+   *
+   * 掛在 body 之後還要再保一層：萬一 dim 真的被外力移除，也要把 Promise
+   * 收掉，不能讓呼叫端永遠停在 await。
+   */
   function dlg({ title, body, actions = [], dismissable = false }) {
     return new Promise((resolve) => {
+      let done = false;
       const dim = el('div', { class: 'cbt-dim' });
-      const close = (v) => { dim.remove(); resolve(v); };
+      const finish = (v) => {
+        if (done) return;
+        done = true;
+        obs.disconnect();
+        dim.remove();
+        resolve(v);
+      };
       dim.append(el('div', { class: 'cbt-dialog' },
         el('h3', {}, title),
         el('div', { class: 'bd' }, body),
         actions.length && el('div', { class: 'ft' }, actions.map((a) =>
           el('button', {
             class: `cbt-btn ${a.primary ? 'primary' : ''}`,
-            onclick: () => { if (a.onClick && a.onClick(dim) === false) return; close(a.value); },
+            onclick: () => { if (a.onClick && a.onClick(dim) === false) return; finish(a.value); },
           }, a.label)))));
-      if (dismissable) dim.addEventListener('click', (e) => { if (e.target === dim) close(null); });
-      (document.querySelector('.cbt') || document.body).append(dim);
+      if (dismissable) dim.addEventListener('click', (e) => { if (e.target === dim) finish(null); });
+      // 被別人從 DOM 拔掉時，也要讓 await 回得來
+      const obs = new MutationObserver(() => { if (!dim.isConnected) finish(null); });
+      document.body.append(dim);
+      obs.observe(document.body, { childList: true });
     });
   }
   const notice = (title, body) => dlg({ title, body, actions: [{ label: 'OK', primary: true, value: true }] });

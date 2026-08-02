@@ -443,7 +443,10 @@ registerProcessor('cap', Cap);`;
       case 'finishing': setStage('測驗結束，正在評分…'); break;
       case 'final_score': S.finalScore = msg; break;
       case 'done': finishRealtime(); break;
-      case 'nudged': setStage('已請考官接話'); break;
+      case 'nudged':
+        if (msg.ignored) { toast(msg.message || '這一段考官不會說話', 'warn'); break; }
+        setStage('已請考官接話');
+        break;
       case 'stt_failed': toast(msg.message, 'err'); break;
       case 'stalled':
         setStage('考官沒有接話');
