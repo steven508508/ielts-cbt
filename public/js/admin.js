@@ -1707,11 +1707,10 @@ const Admin = (() => {
       const out = {};
       for (const k of ['name', 'voice', 'accent', 'pace', 'style', 'followUps', 'strictness',
         'extraInstructions']) if (x[k]) out[k] = x[k].value;
-      for (const k of ['silenceMs', 'longTurnSilenceMs', 'part1Sec', 'part3Sec', 'prepSec', 'talkSec']) {
-        if (x[k]) out[k] = Number(x[k].value);
-      }
-      for (const k of ['allowBargeIn', 'showLiveScore', 'showTranscript', 'showPhase',
-        'showCueCard', 'showLevelMeter']) if (x[k]) out[k] = x[k].checked;
+      for (const k of ['vadThreshold', 'silenceMs', 'longTurnSilenceMs', 'part1Sec', 'part3Sec',
+        'prepSec', 'talkSec']) if (x[k]) out[k] = Number(x[k].value);
+      for (const k of ['micNoiseSuppression', 'allowBargeIn', 'showLiveScore', 'showTranscript',
+        'showPhase', 'showCueCard', 'showLevelMeter']) if (x[k]) out[k] = x[k].checked;
       return out;
     }
 
@@ -1779,6 +1778,24 @@ const Admin = (() => {
               placeholder: '例如：Avoid topics about politics or religion.',
             }, ex.extraInstructions || '')),
             el('span', { class: 'small muted' }, '用英文寫效果最好。不要在這裡寫評分規則，那在下面設定'))),
+
+        el('details', {}, el('summary', {}, el('b', {}, '收音與語音偵測'),
+          el('span', { class: 'small muted' }, '　考官「聽不到學生」時先調這裡')),
+          el('p', { class: 'small muted', style: { marginTop: '.6rem' } },
+            '學生明明在講話、考官卻沒反應，多半是聲音沒有被判定成「有人在說話」。'
+            + '系統偵測到這種情況會直接告訴學生，但根治要調下面兩項。'),
+          el('div', { class: 'row' },
+            el('label', { class: 'field' }, el('span', {}, '語音偵測門檻'),
+              (x.vadThreshold = el('input', {
+                type: 'number', step: '0.05', min: 0.1, max: 0.9,
+                value: ex.vadThreshold, disabled: !canEdit,
+              })),
+              el('span', { class: 'small muted' },
+                '0.1–0.9。越低越容易判定成說話。學生講話小聲就調低（0.3），'
+                + '環境吵、常常誤判就調高（0.6）'))),
+          chk('micNoiseSuppression', ex.micNoiseSuppression, '開啟瀏覽器降噪',
+            '預設關閉。Chrome 的降噪對人聲壓得很兇（實測音量只剩 1/4），'
+            + '壓完之後常常過不了偵測門檻。只有在環境確實吵雜時才建議開')),
 
         el('details', {}, el('summary', {}, el('b', {}, '換手靈敏度'),
           el('span', { class: 'small muted' }, '　學生停頓多久算講完')),

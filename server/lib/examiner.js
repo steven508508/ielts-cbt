@@ -51,6 +51,14 @@ const DEFAULTS = {
   style: 'neutral',
   extraInstructions: '',
 
+  // 麥克風與語音偵測
+  // 門檻越低越容易判定「有人在說話」。0.5 是端點的預設，但對安靜的學生
+  // 常常太高 —— 講了半天一次都沒被聽見，而畫面上沒有任何線索。
+  vadThreshold: 0.4,
+  // Chrome 的降噪對穩定的人聲壓得很兇（實測音量只剩 1/4），壓完之後
+  // 過不了語音偵測門檻。考場本來就安靜，預設關掉；吵的環境再開。
+  micNoiseSuppression: false,
+
   // 換手靈敏度
   silenceMs: 1100,           // 一問一答：停頓多久算講完
   longTurnSilenceMs: 2000,   // Part 2 長回答與準備時間
@@ -75,6 +83,7 @@ const DEFAULTS = {
 };
 
 const NUM_RANGES = {
+  vadThreshold: [0.1, 0.9],
   silenceMs: [400, 5000],
   longTurnSilenceMs: [800, 8000],
   part1Sec: [60, 900],
@@ -83,7 +92,7 @@ const NUM_RANGES = {
   talkSec: [30, 600],
 };
 
-const BOOL_KEYS = ['allowBargeIn', 'showLiveScore', 'showTranscript', 'showPhase', 'showCueCard', 'showLevelMeter'];
+const BOOL_KEYS = ['micNoiseSuppression', 'allowBargeIn', 'showLiveScore', 'showTranscript', 'showPhase', 'showCueCard', 'showLevelMeter'];
 const ENUMS = { accent: ACCENTS, pace: PACES, style: STYLES, followUps: FOLLOW_UPS, strictness: STRICTNESS };
 
 /**
@@ -106,7 +115,10 @@ function normalize(input, base = DEFAULTS) {
   for (const [k, [lo, hi]] of Object.entries(NUM_RANGES)) {
     if (input[k] == null || input[k] === '') continue;
     const n = Number(input[k]);
-    if (Number.isFinite(n)) out[k] = Math.min(hi, Math.max(lo, Math.round(n)));
+    if (!Number.isFinite(n)) continue;
+    const clamped = Math.min(hi, Math.max(lo, n));
+    // 門檻是 0–1 的小數，其餘都是整數
+    out[k] = k === 'vadThreshold' ? Math.round(clamped * 100) / 100 : Math.round(clamped);
   }
   for (const k of BOOL_KEYS) {
     if (input[k] != null) out[k] = !!input[k];
@@ -170,6 +182,7 @@ function strictnessPrompt(ex) {
 function displayFlags(ex) {
   return {
     showLiveScore: ex.showLiveScore,
+    micNoiseSuppression: ex.micNoiseSuppression,
     showTranscript: ex.showTranscript,
     showPhase: ex.showPhase,
     showCueCard: ex.showCueCard,

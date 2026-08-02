@@ -1327,3 +1327,52 @@ test('考官設定：額外指示有長度上限，不能塞爆提示詞', () =>
   const r = ex.normalize({ extraInstructions: 'x'.repeat(9000) });
   assert.ok(r.extraInstructions.length <= 2000);
 });
+
+// ── 收音失敗不能再是無聲的失敗 ────────────────────────────
+// 「學生明明在講話，考官卻沒聽到」以前完全沒有任何線索：
+// 考官不動、逐字稿空白、畫面沒變化。伺服器要分得出兩種情況。
+test('收音：音量門檻與判定條件是明確的常數，不是散在程式碼裡', () => {
+  const src = require('fs').readFileSync(require.resolve('../server/lib/realtime'), 'utf8');
+  const block = src.slice(src.indexOf('onMicLevel('), src.indexOf('/** 考官沒反應時再戳一次 */'));
+  assert.match(block, /rms >= 0\.02/, '要有「算不算在講話」的音量下限');
+  assert.match(block, /loudMs \|\| 0\) >= 10000/, '講了十秒還沒被聽見就要出聲');
+  assert.match(block, /!this\.everHeard/, '只有從頭到尾沒被聽見過才算異常');
+  assert.match(block, /quietMs \|\| 0\) >= 20000/, '完全沒聲音是另一種情況，訊息要不一樣');
+});
+
+test('收音：語音偵測門檻可調，而且夾在合理範圍', () => {
+  assert.equal(ex.DEFAULTS.vadThreshold, 0.4);
+  assert.equal(ex.normalize({ vadThreshold: 5 }).vadThreshold, 0.9);
+  assert.equal(ex.normalize({ vadThreshold: 0 }).vadThreshold, 0.1);
+  assert.equal(ex.normalize({ vadThreshold: 0.35 }).vadThreshold, 0.35, '小數不能被四捨五入成整數');
+  const p = rt.buildSessionPayload({ script: SCRIPT, phase: 'part1', flavor: 'ga',
+    ex: ex.normalize({ vadThreshold: 0.3 }) });
+  assert.equal(p.session.audio.input.turn_detection.threshold, 0.3, '要真的送到端點');
+});
+
+test('收音：瀏覽器降噪預設關閉（會把人聲壓掉 3/4）', () => {
+  assert.equal(ex.DEFAULTS.micNoiseSuppression, false);
+  const src = require('fs').readFileSync(require.resolve('../public/js/speaking.js'), 'utf8');
+  assert.match(src, /noiseSuppression: ns/, '要吃設定，不能寫死 true');
+});
+
+test('前端：送出的音訊要量音量並回報，伺服器才分得出是哪一種失敗', () => {
+  const src = stripComments(
+    require('fs').readFileSync(require.resolve('../public/js/speaking.js'), 'utf8'));
+  assert.match(src, /type: 'mic', rms/);
+  assert.match(src, /case 'mic_problem'/, '伺服器診斷出來了，前端要接');
+});
+
+test('斷線期間的聲音要留著補送，不能直接丟掉', () => {
+  const src = require('fs').readFileSync(require.resolve('../server/lib/realtime'), 'utf8');
+  assert.match(src, /session\.pendingAudio\.push/, '上游沒開時要先留著');
+  assert.match(src, /flushPendingAudio/, '接回來要補送');
+  assert.match(src, /24000 \* 2 \* 8/, '要有上限，不然重連失敗會一路長大');
+});
+
+test('口說分數要寫回 attempts，成績單那一欄才不會是空的', () => {
+  const src = require('fs').readFileSync(require.resolve('../server/lib/realtime'), 'utf8');
+  assert.match(src, /UPDATE attempts SET speaking_band/);
+  assert.match(src, /att\.status !== 'in_progress'/,
+    '還在考的時候不能重算總分與狀態，那會把考試標成已批改');
+});

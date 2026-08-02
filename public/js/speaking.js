@@ -61,6 +61,9 @@ const Speaking = (() => {
       const st = await API.get('/speaking/realtime/status');
       S.realtime = !!st.ok;
       S.realtimeModel = st.model;
+      // 考官設定要在開麥克風之前就拿到 —— 降噪要不要開是其中一項
+      S.ex = st.examiner || null;
+      S.version = st.version || '';
     } catch { S.realtime = false; }
     renderIntro();
   }
@@ -152,8 +155,13 @@ const Speaking = (() => {
   }
 
   async function getMic() {
+    /* 降噪預設關掉。Chrome 的降噪對穩定的人聲壓得很兇 —— 實測同一段訊號
+       開降噪的音量只有關掉的 1/4。安靜的考場配上安靜的學生，壓完之後
+       常常過不了語音偵測的門檻，症狀就是「學生講了半天考官沒反應」。
+       考場本來就安靜，不太需要降噪；吵的環境再由老師開回來。 */
+    const ns = S.ex ? !!S.ex.micNoiseSuppression : false;
     return navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
+      audio: { echoCancellation: true, noiseSuppression: ns, autoGainControl: true, channelCount: 1 },
     });
   }
 
@@ -308,6 +316,8 @@ registerProcessor('cap', Cap);`;
     const ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: RATE });
     S.ctx = ctx;
     // 瀏覽器不一定給得到指定的取樣率，拿實際值來換算
+    // 有些瀏覽器（或分頁在背景時）拿到的是 suspended，那樣 worklet 不會跑
+    if (ctx.state === 'suspended') await ctx.resume().catch(() => {});
     S.inRate = ctx.sampleRate;
     if (S.inRate !== RATE) console.warn(`[speaking] 瀏覽器給的是 ${S.inRate}Hz，送出前會降到 ${RATE}Hz`);
     await ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([WORKLET], { type: 'application/javascript' })));
@@ -338,6 +348,7 @@ registerProcessor('cap', Cap);`;
     const CHUNK = Math.round(RATE * 0.06);
     let pending = [];
     let pendingLen = 0;
+    let lvlSum = 0; let lvlCount = 0; let lvlAt = Date.now();
     node.port.onmessage = (e) => {
       if (S.ws?.readyState !== WebSocket.OPEN) return;
       const chunk = resampleTo24k(e.data, S.inRate);
@@ -349,6 +360,19 @@ registerProcessor('cap', Cap);`;
       for (const c of pending) { merged.set(c, at); at += c.length; }
       pending = []; pendingLen = 0;
       S.ws.send(f32ToPcm16(merged).buffer);
+
+      /* 順便量一下自己送出去的音量。伺服器要靠這個才分得出
+         「學生沒講話」和「學生在講話但一直沒被判定為說話」——
+         後者以前是完全無聲的失敗，學生只會覺得考官在裝死。 */
+      let sum = 0;
+      for (const v of merged) sum += v * v;
+      lvlSum += sum; lvlCount += merged.length;
+      const now = Date.now();
+      if (now - lvlAt >= 2000) {
+        const rms = lvlCount ? Math.sqrt(lvlSum / lvlCount) : 0;
+        lvlSum = 0; lvlCount = 0; lvlAt = now;
+        try { S.ws.send(JSON.stringify({ type: 'mic', rms: Number(rms.toFixed(4)) })); } catch { /* 斷線就算了 */ }
+      }
     };
 
     const buf = new Uint8Array(analyser.frequencyBinCount);
@@ -441,6 +465,15 @@ registerProcessor('cap', Cap);`;
         S.resumed = true;
         for (const t of msg.turns || []) addChat(t.role === 'examiner' ? 'ex' : 'ca', t.text);
         toast('已接回先前的進度，請從剛才的地方繼續。', 'ok');
+        break;
+      /* 收得到聲音、但一直沒被判定為說話。以前這是完全無聲的失敗。 */
+      case 'mic_problem':
+        setStage('考官聽不到你');
+        Exam.notice('考官好像聽不到你', el('div', {},
+          el('p', {}, el('b', {}, msg.message)),
+          (msg.tips || []).map((t) => el('p', {}, `· ${t}`)),
+          el('p', { class: 'small', style: { opacity: '.75' } },
+            '錄音有存下來，就算現在沒辦法解決，老師事後也聽得到你的作答。')));
         break;
       case 'error': toast(msg.message, 'err'); break;
       case 'fatal':

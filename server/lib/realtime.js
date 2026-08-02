@@ -174,7 +174,9 @@ function buildSessionPayload({ script, phase, cfg = {}, flavor = 'ga', ex = exam
   const tt = turnTakingFor(phase, ex);
   const vad = {
     type: 'server_vad',
-    threshold: 0.5,
+    // 門檻越低越容易判定「有人在說話」。安靜的學生或被降噪壓過的麥克風
+    // 調低會比較好，但太低會把冷氣聲、翻紙聲也當成說話。
+    threshold: ex.vadThreshold,
     prefix_padding_ms: 300,
     silence_duration_ms: tt.silenceMs,
     create_response: tt.createResponse,
@@ -409,12 +411,27 @@ class Session {
       up.on('close', () => this.onUpstreamClosed());
       up.on('error', (e) => this.send({ type: 'error', message: e.message }));
       this.seedHistory();
+      this.flushPendingAudio();
       this.upstreamRetries = 0;
       this.send({ type: 'upstream_reopened', message: '考官回來了，請繼續。' });
       this.log('上游已重新接上');
     } catch (e) {
       this.log('上游重連失敗：', e.message);
       this.onUpstreamClosed();
+    }
+  }
+
+  /** 斷線期間留下來的聲音，接回來之後補送上去 */
+  flushPendingAudio() {
+    const q = this.pendingAudio;
+    this.pendingAudio = [];
+    if (!q?.length || this.upstream?.readyState !== WebSocket.OPEN) return;
+    const bytes = q.reduce((n, b) => n + b.length, 0);
+    this.log(`補送斷線期間的 ${(bytes / 48000).toFixed(1)} 秒音訊`);
+    for (const b of q) {
+      this.upstream.send(JSON.stringify({
+        type: 'input_audio_buffer.append', audio: b.toString('base64'),
+      }));
     }
   }
 
@@ -512,6 +529,9 @@ class Session {
         break;
 
       case 'input_audio_buffer.speech_started': {
+        this.everHeard = true;
+        this.loudMs = 0;
+        this.quietMs = 0;
         /* 學生開口。以前是前端無條件送 cancel_response ——
            兩個問題：一是常常根本沒有進行中的回應，端點回
            「Cancellation failed: no active response found」，
@@ -664,6 +684,53 @@ class Session {
     return this.setPhase(next);
   }
 
+  /**
+   * 前端每兩秒回報一次自己送出去的音量。
+   *
+   * 這是用來分辨兩種長得一模一樣、但原因完全不同的狀況：
+   *   · 學生根本沒講話                 → 音量接近 0
+   *   · 學生在講、但一直沒被判定為說話 → 音量正常，卻從來沒有 speech_started
+   *
+   * 第二種以前是完全無聲的失敗：學生講了半天，考官不動、逐字稿空白、
+   * 畫面上沒有任何線索。最常見的成因是瀏覽器降噪把人聲壓掉，
+   * 加上端點的語音偵測門檻，安靜一點的學生整段都過不了。
+   */
+  onMicLevel(rms) {
+    if (this.closed || this.finishing) return;
+    this.micSeen = true;
+    // 0.02 大約是「有人在對著麥克風講話」的下限
+    if (rms >= 0.02) this.loudMs = (this.loudMs || 0) + 2000;
+    else this.quietMs = (this.quietMs || 0) + 2000;
+    if (this.warnedMic) return;
+
+    if ((this.loudMs || 0) >= 10000 && !this.everHeard) {
+      this.warnedMic = true;
+      this.log(`麥克風有聲音（累計 ${Math.round(this.loudMs / 1000)} 秒）但端點從未判定為說話`);
+      this.send({
+        type: 'mic_problem',
+        message: '系統收得到你的聲音，但考官那一端一直沒有判定成「有人在說話」。',
+        tips: [
+          '講大聲一點，或把麥克風靠近一些。',
+          '如果戴著耳機，確認錄音裝置是耳機的麥克風而不是筆電內建的。',
+          '關掉其他正在用麥克風的程式（視訊會議、錄音軟體）。',
+          '還是不行請舉手告訴監考老師，這需要調整系統設定。',
+        ],
+      });
+    } else if ((this.quietMs || 0) >= 20000 && !(this.loudMs || 0)) {
+      this.warnedMic = true;
+      this.log('麥克風持續近乎無聲');
+      this.send({
+        type: 'mic_problem',
+        message: '系統幾乎收不到任何聲音，麥克風可能沒有在運作。',
+        tips: [
+          '確認麥克風沒有被實體靜音鍵或系統設定關掉。',
+          '如果有多個錄音裝置，到瀏覽器的網站設定換一個試試。',
+          '請舉手告訴監考老師。',
+        ],
+      });
+    }
+  }
+
   /** 考官沒反應時再戳一次 */
   nudge() {
     if (this.closed || this.upstream?.readyState !== WebSocket.OPEN) {
@@ -807,6 +874,15 @@ class Session {
           [this.attempt.id, band, JSON.stringify(graded.criteria || {}), JSON.stringify(graded)]
         );
         await db.exec("UPDATE speaking_live SET status='final' WHERE attempt_id=?", [this.attempt.id]);
+        /* 分數也要寫回 attempts，不然成績單的口說那一欄是空的 ——
+           module_results 有分數、成績單卻顯示「—」，老師只會以為沒批改到。
+           但整份交卷前不能碰 status 與總分：那會讓還在考的考試
+           被標成「已批改」。 */
+        await db.exec('UPDATE attempts SET speaking_band = ? WHERE id = ?', [band, this.attempt.id]);
+        const att = await db.one('SELECT status FROM attempts WHERE id = ?', [this.attempt.id]);
+        if (att && att.status !== 'in_progress') {
+          await require('./grade').recomputeAttempt(this.attempt.id).catch(() => {});
+        }
         this.send({ type: 'final_score', band, criteria: graded.criteria, feedback: graded });
       } catch (e) {
         this.send({ type: 'error', message: `評分失敗：${e.message}` });
@@ -939,13 +1015,23 @@ function attach(server) {
             type: 'input_audio_buffer.append',
             audio: Buffer.from(raw).toString('base64'),
           }));
+        } else {
+          /* 上游正在重連的那幾秒，學生講的話以前是直接丟掉的 ——
+             他不知道，會一直講下去，接回來之後那一段就永遠不見了。
+             先留著，接回來再補送。只留最近幾秒，不然重連失敗會一路長大。 */
+          session.pendingAudio = session.pendingAudio || [];
+          session.pendingAudio.push(Buffer.from(raw));
+          const MAX = 24000 * 2 * 8;   // 8 秒的 PCM16
+          let total = session.pendingAudio.reduce((n, b2) => n + b2.length, 0);
+          while (total > MAX) total -= session.pendingAudio.shift().length;
         }
         return;
       }
       let msg;
       try { msg = JSON.parse(raw.toString()); } catch { return; }
 
-      if (msg.type === 'examiner_done_hook') session.fire('examiner_done_hook');
+      if (msg.type === 'mic') session.onMicLevel(Number(msg.rms) || 0);
+      else if (msg.type === 'examiner_done_hook') session.fire('examiner_done_hook');
       // 以前接到 skip 是呼叫 maybeAdvance()，那是「檢查條件到了沒」——
       // 學生才講兩句時條件不成立，按鈕就完全沒反應。要的是強制跳。
       else if (msg.type === 'skip') session.forceAdvance();

@@ -14,6 +14,8 @@ const realtime = require('../lib/realtime');
 
 const { rateLimit } = require('../middleware/rateLimit');
 
+const examinerLib = require('../lib/examiner');
+
 const router = express.Router();
 const sttLimit = rateLimit({ key: 'stt', by: 'user', windowMs: 60_000, max: 20, message: '上傳太頻繁' });
 const scoreLimit = rateLimit({ key: 'sp-score', by: 'user', windowMs: 60_000, max: 10, message: '評分請求太頻繁' });
@@ -21,7 +23,15 @@ router.use(requireAuth);
 
 /** 目前設定是否支援即時語音對話 */
 router.get('/realtime/status', async (req, res) => {
-  res.json(await realtime.isAvailable());
+  const st = await realtime.isAvailable();
+  // 麥克風設定要在開麥克風之前就拿到（降噪要不要開），所以放在這裡一起回。
+  // 版本也一起帶 —— 學生回報問題時第一件要確認的就是「跑的是哪一版」。
+  let ex = null;
+  try {
+    const misc = await db.getSettings();
+    ex = examinerLib.displayFlags(examinerLib.normalize(misc.speakingExaminer || {}));
+  } catch { /* 設定讀不到就用內建預設 */ }
+  res.json({ ...st, examiner: ex, version: require('../../package.json').version });
 });
 
 /** 即時分數（考試中每幾輪更新一次；老師監看頁也讀這支） */
