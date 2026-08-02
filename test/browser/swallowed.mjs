@@ -59,13 +59,102 @@ const paper = {
   }] }],
 };
 
-console.log('\n【驗證要擋得下來（不能再存進新的壞試卷）】');
-{
-  const r = await call('POST', '/tests', { paper }, tea.token);
-  ok(r.status === 400, '帶著殘留 bodyHtml 的題組存不進去', `→ ${r.status}`);
+const OPT = [{ key: 'A', text: 'Alpha' }, { key: 'B', text: 'Beta' }, { key: 'C', text: 'Gamma' }];
+const L = (g) => ({ title: `驗證 ${Date.now()}`, testType: 'academic',
+  modules: [{ module: 'listening', durationSec: 1800,
+    sections: [{ title: 'S2', audio: '/uploads/audio/testtone.mp3', groups: [g] }] }] });
+
+console.log('\n【驗證：合法的版面不可以被誤擋】');
+for (const [name, g] of Object.entries({
+  '配對題用 bodyHtml 排流程圖（每格一個下拉）': { type: 'matching', instructions: 'Match.', options: OPT,
+    bodyHtml: '<table><tr><td>Stage 1</td><td>[[1]]</td></tr><tr><td>Stage 2</td><td>[[2]]</td></tr></table>',
+    questions: [{ number: 1, text: '', answers: ['A'] }, { number: 2, text: '', answers: ['B'] }] },
+  '配對題不用 bodyHtml（傳統列表）': { type: 'matching', instructions: 'Match.', options: OPT,
+    questions: [{ number: 1, text: 'Speaker 1', answers: ['A'] }] },
+  '選擇題用 bodyHtml 當情境資料（時刻表＋選擇題）': { type: 'mcq_single', instructions: 'Choose.', options: OPT,
+    bodyHtml: '<table><tr><td>09:00 Train</td></tr></table>',
+    questions: [{ number: 1, text: 'Which train?', answers: ['A'] }] },
+  '簡答題用筆記版面': { type: 'short_answer', instructions: 'Complete.', bodyHtml: '<p>Name: [[1]]</p>',
+    questions: [{ number: 1, text: '', answers: ['Smith'] }] },
+})) {
+  const r = await call('POST', '/tests', { paper: L(g) }, tea.token);
+  ok(r.status === 200, name, r.status === 200 ? '' : (r.data.errors || [])[0]);
+  if (r.data.id) await call('DELETE', `/tests/${r.data.id}`, { force: true }, adm);
+}
+
+console.log('\n【驗證：真的會讓學生看不到題目的才擋】');
+for (const [name, g, want] of [
+  ['填空題沒有題幹、版面也沒有空格', { type: 'gap_fill', instructions: 'i', bodyHtml: '<p>沒有空格</p>',
+    questions: [{ number: 1, text: '', answers: ['x'] }] }, /看不到題目/],
+  ['空格指向不存在的題目（重新編號沒改版面）', { type: 'matching', instructions: 'i', options: OPT,
+    bodyHtml: '<p>[[8]] [[9]]</p>',
+    questions: [{ number: 1, text: 'Speaker 1', answers: ['A'] }] }, /沒有對應的題目/],
+]) {
+  const r = await call('POST', '/tests', { paper: L(g) }, tea.token);
   const errs = (r.data.errors || []).join(' ');
-  ok(/不使用 bodyHtml/.test(errs), '錯誤訊息講清楚為什麼', errs.slice(0, 60) + '…');
-  ok(/缺少空格/.test(errs), '空格少了也講');
+  ok(r.status === 400 && want.test(errs), name, errs.slice(0, 70) || `→ ${r.status}`);
+}
+
+/* 前面那些「合法」的判斷，前提是學生端真的畫得出來。
+   配對題的空格必須是**下拉選單**（從選項清單挑），不是文字框 ——
+   這一段就是在驗那個前提，不是憑印象說它支援。 */
+console.log('\n【配對題用 bodyHtml 排版面：學生端真的畫成下拉嗎】');
+{
+  const mp = L({ type: 'matching', instructions: 'Match each stage to a person.', options: OPT,
+    bodyHtml: '<table><tr><td>Stage 1</td><td>[[1]]</td></tr><tr><td>Stage 2</td><td>[[2]]</td></tr></table>',
+    questions: [{ number: 1, text: '', answers: ['A'] }, { number: 2, text: '', answers: ['B'] }] });
+  const t2 = await call('POST', '/tests', { paper: mp }, tea.token);
+  const a2 = await call('POST', '/tests/assignments',
+    { testId: t2.data.id, userIds: [stu.user.id], modules: 'listening', maxAttempts: 9 }, tea.token);
+  const s2 = await call('POST', '/exam/start', { assignmentId: a2.data.ids[0], testId: t2.data.id }, stu.token);
+  const at2 = s2.data.attemptId;
+
+  const br2 = await chromium.launch({ args: ['--no-sandbox', '--autoplay-policy=no-user-gesture-required'] });
+  const p2 = await br2.newPage();
+  await p2.setViewportSize({ width: 1280, height: 900 });
+  await p2.goto(B);
+  await p2.evaluate(async () => {
+    const r = await fetch('/api/auth/login', { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'student1', password: 'ielts1234' }) });
+    const j = await r.json();
+    localStorage.setItem('ielts_token', j.token); localStorage.setItem('ielts_user', JSON.stringify(j.user));
+  });
+  await p2.goto(`${B}/#/exam/${at2}`); await p2.reload(); await sleep(2600);
+  for (let i = 0; i < 10; i++) {
+    if (await p2.$('.cbt-group')) break;
+    await p2.evaluate(() => {
+      const b = [...document.querySelectorAll('button')]
+        .find((x) => /^(資料正確|繼續|開始|我聽得很清楚)/.test(x.textContent.trim()) && !x.disabled && x.offsetWidth);
+      if (b) b.click();
+    });
+    await sleep(1500);
+  }
+  await sleep(900);
+  const m = await p2.evaluate(() => ({
+    下拉數: document.querySelectorAll('.cbt-sel').length,
+    下拉選項: [...(document.querySelector('.cbt-sel')?.options || [])].map((o) => o.value),
+    有選項清單: !!document.querySelector('.cbt-bank'),
+    表格還在: !!document.querySelector('.cbt-body table'),
+    題號: [...document.querySelectorAll('[id^="q-"]')].map((n) => n.id.replace('q-', '')),
+    警示: !!document.querySelector('#q-audit'),
+  }));
+  ok(m.下拉數 === 2, '兩個空格都畫成下拉選單', `${m.下拉數} 個`);
+  ok(m.下拉選項.join(',') === ',A,B,C', '下拉裡是選項清單的字母', m.下拉選項.join(','));
+  ok(m.有選項清單, '上方有 List of options');
+  ok(m.表格還在, '流程圖／表格的版面有保留');
+  ok(m.題號.join(',') === '1,2', '題號對得上', m.題號.join(','));
+  ok(!m.警示, '沒有觸發吞題警示');
+
+  await p2.selectOption('.cbt-sel', 'C');
+  await sleep(2200);
+  const saved2 = await call('GET', `/exam/${at2}`, null, stu.token);
+  const got = (saved2.data?.saved?.answers || []).find((x) => Number(x.q_number) === 1);
+  ok(got?.response === 'C', '選了之後存得起來（存的是字母）', String(got?.response));
+  await p2.screenshot({ path: '/tmp/matching-body.png' });
+  await br2.close();
+  await call('DELETE', `/tests/assignments/${a2.data.ids[0]}`, null, tea.token);
+  await call('POST', '/manage/results/bulk', { action: 'delete', ids: [at2], force: true }, adm);
+  await call('DELETE', `/tests/${t2.data.id}`, { force: true }, adm);
 }
 
 console.log('\n【已經存進去的壞試卷，學生端要救得回來】');

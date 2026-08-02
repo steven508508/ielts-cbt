@@ -141,11 +141,21 @@ test('validatePaper：正確的試卷通過', () => {
 });
 
 test('validatePaper：bodyHtml 空格與題號不符要報錯', () => {
-  const bad = JSON.parse(JSON.stringify(MINI));
-  bad.modules[0].sections[0].groups[1].bodyHtml = 'Name: [[2]]';
-  const r = validatePaper(bad);
-  assert.equal(r.ok, false);
-  assert.match(r.errors.join(' '), /缺少空格/);
+  // 空格指向不存在的題目 → 學生會看到一個永遠不算分的空格
+  const orphan = JSON.parse(JSON.stringify(MINI));
+  orphan.modules[0].sections[0].groups[1].bodyHtml = 'Name: [[99]]';
+  const r1 = validatePaper(orphan);
+  assert.equal(r1.ok, false);
+  assert.match(r1.errors.join(' '), /沒有對應的題目/);
+
+  // 有題目既沒有題幹、版面也沒有它的空格 → 這一題學生看不到
+  const blind = JSON.parse(JSON.stringify(MINI));
+  const g = blind.modules[0].sections[0].groups[1];
+  g.bodyHtml = `Name: [[${g.questions[0].number}]]`;
+  g.questions.forEach((q) => { q.text = ''; });
+  const r2 = validatePaper(blind);
+  assert.equal(r2.ok, false);
+  assert.match(r2.errors.join(' '), /看不到題目/);
 });
 
 test('validatePaper：沒有標準答案要報錯', () => {
@@ -2141,25 +2151,54 @@ test('題目：畫完之後要對帳，少畫了要大聲講並回報', () => {
     '系統自己出的問題不能算到學生的違規次數上');
 });
 
-test('題目：不吃 bodyHtml 的題型帶著版面，驗證要擋下來', () => {
+/* 驗證只該擋「學生真的會看不到題目」的情況。
+   題型支不支援 bodyHtml、有沒有空格，本身都不是錯：
+     · 有空格 → 題目就長在空格上（配對題會畫成下拉，填空題畫成輸入框）
+     · 沒有空格 → 那段版面是情境資料（例如一張時刻表，底下才是選擇題）
+   我第一版把「不支援的題型帶著 bodyHtml」一律擋掉，結果誤殺了配對題
+   排流程圖這種官方聽力最常見的版面。 */
+test('題目：合法的 bodyHtml 版面不可以被誤擋', () => {
   const { validatePaper } = require('../server/lib/paper');
   const mk = (g) => ({ title: 't', testType: 'academic', modules: [{ module: 'listening', durationSec: 1800,
     sections: [{ title: 'S1', audio: '/a.mp3', groups: [g] }] }] });
-  const stale = validatePaper(mk({ type: 'short_answer', instructions: 'i', bodyHtml: '<p>殘留</p>',
-    questions: [{ number: 1, text: 'Q1', answers: ['x'] }] }));
-  assert.equal(stale.ok, false);
-  assert.match(stale.errors.join(' '), /不使用 bodyHtml/);
+  const OPT = [{ key: 'A', text: 'a' }, { key: 'B', text: 'b' }];
 
-  const gapMissing = validatePaper(mk({ type: 'gap_fill', instructions: 'i', bodyHtml: '<p>[[1]]</p>',
-    questions: [{ number: 1, text: '', answers: ['x'] }, { number: 2, text: '', answers: ['y'] }] }));
-  assert.equal(gapMissing.ok, false);
-  assert.match(gapMissing.errors.join(' '), /缺少空格 \[\[2\]\]/);
-
-  // 正常的不能被誤擋
+  // 配對題用 bodyHtml 排流程圖 —— 每一格是一個下拉
+  assert.equal(validatePaper(mk({ type: 'matching', instructions: 'i', options: OPT,
+    bodyHtml: '<table><tr><td>Stage 1</td><td>[[1]]</td></tr></table>',
+    questions: [{ number: 1, text: '', answers: ['A'] }] })).ok, true, '配對題排流程圖');
+  // 選擇題用 bodyHtml 當情境資料
+  assert.equal(validatePaper(mk({ type: 'mcq_single', instructions: 'i', options: OPT,
+    bodyHtml: '<table><tr><td>09:00</td></tr></table>',
+    questions: [{ number: 1, text: 'Which train?', answers: ['A'] }] })).ok, true, '表格＋選擇題');
+  // 填空題的正常情況
   assert.equal(validatePaper(mk({ type: 'gap_fill', instructions: 'i', bodyHtml: '<p>[[1]] [[2]]</p>',
     questions: [{ number: 1, text: '', answers: ['x'] }, { number: 2, text: '', answers: ['y'] }] })).ok, true);
-  assert.equal(validatePaper(mk({ type: 'short_answer', instructions: 'i',
-    questions: [{ number: 1, text: 'Q1', answers: ['x'] }] })).ok, true);
+
+  const { QUESTION_TYPES: QT } = require('../server/lib/paper');
+  for (const t of ['matching', 'short_answer', 'label_image', 'gap_fill', 'gap_fill_bank']) {
+    assert.ok(QT[t].supportsBody,
+      `${t} 的空格前端畫得出來，編輯器就要讓老師編得到 bodyHtml`);
+  }
+});
+
+test('題目：真的會讓學生看不到的才擋', () => {
+  const { validatePaper } = require('../server/lib/paper');
+  const mk = (g) => ({ title: 't', testType: 'academic', modules: [{ module: 'listening', durationSec: 1800,
+    sections: [{ title: 'S1', audio: '/a.mp3', groups: [g] }] }] });
+  const OPT = [{ key: 'A', text: 'a' }, { key: 'B', text: 'b' }];
+
+  // 沒有題幹、版面也沒有空格 → 這一題學生真的看不到
+  const blind = validatePaper(mk({ type: 'gap_fill', instructions: 'i', bodyHtml: '<p>沒有空格</p>',
+    questions: [{ number: 1, text: '', answers: ['x'] }] }));
+  assert.equal(blind.ok, false);
+  assert.match(blind.errors.join(' '), /看不到題目/);
+
+  // 空格指向不存在的題目（重新編號沒改版面）→ 永遠不算分的空格
+  const orphan = validatePaper(mk({ type: 'matching', instructions: 'i', options: OPT,
+    bodyHtml: '<p>[[8]]</p>', questions: [{ number: 1, text: 'Speaker 1', answers: ['A'] }] }));
+  assert.equal(orphan.ok, false);
+  assert.match(orphan.errors.join(' '), /沒有對應的題目/);
 });
 
 test('題目：重新編號要一併改掉 bodyHtml 裡的 [[舊號]]', () => {

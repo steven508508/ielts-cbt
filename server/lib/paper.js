@@ -57,6 +57,10 @@ const QUESTION_TYPES = {
   },
   matching: {
     label: '配對題 Matching',
+    /* 前端的 gapControl 對 matching 會畫成「從選項清單挑」的下拉 ——
+       所以配對題**可以**用 bodyHtml 排成流程圖或表格，每一格一個下拉。
+       這是官方聽力很常見的版面，不是壞掉的資料。 */
+    supportsBody: true,
     modules: ['listening', 'reading'],
     objective: true,
     answerKind: 'letter',
@@ -92,6 +96,7 @@ const QUESTION_TYPES = {
   },
   short_answer: {
     label: '簡答題 Short-answer questions',
+    supportsBody: true,          // 筆記式版面 + 文字空格
     modules: ['listening', 'reading'],
     objective: true,
     answerKind: 'text',
@@ -99,6 +104,7 @@ const QUESTION_TYPES = {
   },
   label_image: {
     label: '圖表／地圖／平面圖標示 Labelling',
+    supportsBody: true,          // 圖旁邊配一張表格，每一格一個空格
     modules: ['listening', 'reading'],
     objective: true,
     answerKind: 'mixed',
@@ -286,32 +292,33 @@ function validatePaper(input) {
           }
         }
 
-        /* bodyHtml 的檢查以前只對 supportsBody 的題型做（gap_fill／gap_fill_bank）。
-           但學生端是 `if (g.bodyHtml)` 一律採用 —— 於是一個 short_answer 或
-           mcq_single 題組只要身上帶著一段殘留的 bodyHtml（換題型、匯入、AI 出題、
-           題庫沿用都會發生），整組題目就完全不會畫出來，而驗證全綠。
-           實測一份 7 題的聽力卷被吞掉 5 題，底部題號列卻照樣列出 1–7。
-           所以：不支援 bodyHtml 的題型帶著它，直接擋下來；支援的則照舊比對空格。 */
+        /* bodyHtml 的規則。
+         *
+         * 真正該擋的只有一件事：**有題目學生看不到**。至於題型支不支援
+         * bodyHtml、有沒有空格，本身都不是錯：
+         *   · 有空格 → 那些題目就長在空格上（配對題會畫成下拉，填空題畫成
+         *     輸入框）。這是官方聽力流程圖／表格版面的標準做法。
+         *   · 沒有空格 → 那段版面只是「情境資料」（例如一張時刻表，底下才是
+         *     選擇題）。這也完全合理。
+         * 舊版只對 gap_fill 系列檢查空格，而學生端卻是 `if (g.bodyHtml)` 一律
+         * 把版面當成題目 —— 於是殘留的版面會把整組題目吞掉。現在學生端已經
+         * 不會吞了，這裡只要把「真的會看不到」的情況指出來即可。
+         * （每一題看不看得到，由下面 meta.objective 那段逐題檢查。） */
         if (g.bodyHtml && String(g.bodyHtml).trim()) {
-          if (!meta.supportsBody) {
-            errors.push(`${where} ${sec.title}：題型 ${g.type} 不使用 bodyHtml，`
-              + '但這個題組帶著一段版面 —— 學生端會只畫版面、把整組題目吞掉。請清空 bodyHtml。');
-          } else {
-            const gaps = gapsIn(g.bodyHtml);
-            const nums = g.questions.map((q) => q.number);
-            const missing = nums.filter((n) => !gaps.includes(n));
-            const extra = gaps.filter((n) => !nums.includes(n));
-            if (missing.length) {
-              errors.push(`${where} ${sec.title}：bodyHtml 缺少空格 [[${missing.join(']] [[')}]]`
-                + '（這幾題學生會看不到。重新編號之後很容易發生，記得把版面裡的號碼一起改。）');
-            }
-            if (extra.length) errors.push(`${where} ${sec.title}：bodyHtml 有多餘的空格 [[${extra.join(']] [[')}]]`);
+          const gaps = gapsIn(g.bodyHtml);
+          const nums = g.questions.map((q) => q.number);
+          const extra = gaps.filter((n) => !nums.includes(n));
+          if (extra.length) {
+            errors.push(`${where} ${sec.title}：bodyHtml 裡的空格 [[${extra.join(']] [[')}]] `
+              + '沒有對應的題目 —— 學生會看到一個永遠不算分的空格。'
+              + '（重新編號之後最容易發生，記得把版面裡的號碼一起改。）');
           }
         }
 
         if (meta.objective) {
           // 有 bodyHtml 時，空格本身就是題目；否則每一題都要有看得到的題幹
-          const bodyGaps = meta.supportsBody && g.bodyHtml ? gapsIn(g.bodyHtml) : [];
+          // 空格要對「所有」帶 bodyHtml 的題型都算 —— 學生端本來就是這樣畫的
+          const bodyGaps = g.bodyHtml ? gapsIn(g.bodyHtml) : [];
           // 多選題整組共用第一題的題幹
           const sharedStem = g.type === 'mcq_multi' && g.questions.some((q) => String(q.text || '').trim());
           for (const q of g.questions) {
