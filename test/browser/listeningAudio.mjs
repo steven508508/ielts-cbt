@@ -62,6 +62,19 @@ async function enter(at) {
     localStorage.setItem('ielts_token', tk); localStorage.setItem('ielts_user', JSON.stringify(u));
   }, [stu.token, stu.user]);
   const pg = await ctx.newPage();
+  /* 真的走一次登入。/uploads 需要 httpOnly cookie（<audio src> 帶不了
+     Authorization 標頭），只塞 localStorage 的話音檔會拿到 401 —— 而那
+     正是這一支要測的東西，不能繞過去。 */
+  await pg.goto(B);
+  await pg.evaluate(async () => {
+    const r = await fetch('/api/auth/login', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'student1', password: 'ielts1234' }),
+    });
+    const j = await r.json();
+    localStorage.setItem('ielts_token', j.token);
+    localStorage.setItem('ielts_user', JSON.stringify(j.user));
+  });
   await pg.goto(`${B}/#/exam/${at}`); await sleep(1000); await pg.reload(); await sleep(2400);
   const FWD = /^(資料正確|繼續|開始|進入|下一步|我已閱讀|同意|我聽得很清楚)/;
   for (let i = 0; i < 10; i++) {

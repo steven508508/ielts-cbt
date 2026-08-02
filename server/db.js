@@ -136,6 +136,10 @@ async function migrate() {
        途中重啟的話，那些場次永遠停在 grading，學生的成績頁一直轉圈，
        而任何日誌上都看不到原因。 */
     ['attempts', 'updated_at', 'TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP'],
+    /* v2.22.0：改密碼要能把舊 token 踢掉。以前只查 active，所以帳號密碼
+       外流之後就算改了密碼，對方手上那把 token 還有效 12 小時 —— 而介面上
+       「重設密碼」看起來就是處置動作。 */
+    ['users', 'token_version', 'INT NOT NULL DEFAULT 0'],
   ];
   for (const [t, c, d] of steps) {
     try { if (await ensureColumn(t, c, d)) added.push(`${t}.${c}`); }

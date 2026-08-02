@@ -234,7 +234,7 @@ async function call(method, path, body, token) {
   ok(peek.status === 403, '別的學生看不到這份成績');
 
   console.log('\n匯入功能');
-  const tpl = await fetch(`${BASE}/api/import/template.xlsx?token=${encodeURIComponent(tea)}`);
+  const tpl = await fetch(`${BASE}/api/import/template.xlsx`, { headers: { authorization: `Bearer ${tea}` } });
   ok(tpl.ok && Number(tpl.headers.get('content-length')) > 3000, 'Excel 範本可下載');
 
   const badJson = await call('POST', '/import/json', { paper: { title: 'x', modules: [{ module: 'reading', sections: [{ groups: [{ type: 'tfng', questions: [{ number: 1, answers: ['MAYBE'] }] }] }] }] } }, tea);
@@ -302,7 +302,7 @@ async function call(method, path, body, token) {
   const teaDel = await call('POST', '/manage/results/bulk', { action: 'delete', ids: [attemptId] }, tea);
   ok(teaDel.status === 403, '老師不能刪除成績（只有管理員可以）');
 
-  const csv = await fetch(`${BASE}/api/manage/results/export.csv?classGroup=${encodeURIComponent('示範班')}&token=${encodeURIComponent(tea)}`);
+  const csv = await fetch(`${BASE}/api/manage/results/export.csv?classGroup=${encodeURIComponent('示範班')}`, { headers: { authorization: `Bearer ${tea}` } });
   const csvText = await csv.text();
   ok(csv.ok && csvText.includes('學生') && csvText.split('\n').length > 1, '匯出成績 CSV');
 
@@ -322,7 +322,7 @@ async function call(method, path, body, token) {
   const guard = await call('POST', '/manage/tests/bulk', { action: 'delete', ids: [testId] }, adm);
   ok(guard.status === 409 && guard.data.needsForce, '刪除有成績的試卷會先攔下來要求確認');
 
-  const backup = await fetch(`${BASE}/api/manage/backup/test/${testId}.json?token=${encodeURIComponent(tea)}`);
+  const backup = await fetch(`${BASE}/api/manage/backup/test/${testId}.json`, { headers: { authorization: `Bearer ${tea}` } });
   const backupData = await backup.json();
   ok(backup.ok && backupData.test && backupData.attempts.length > 0,
     `完整備份含試卷與 ${backupData.attempts?.length} 場考試`);

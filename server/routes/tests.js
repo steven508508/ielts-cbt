@@ -1,7 +1,10 @@
 'use strict';
 const express = require('express');
 const db = require('../db');
-const { requireAuth, requireStaff } = require('../middleware/auth');
+const path = require('path');
+const config = require('../config');
+const retention = require('../lib/retention');
+const { requireAuth, requireStaff, requireRole } = require('../middleware/auth');
 const { validatePaper, normalizePaper, countQuestions, QUESTION_TYPES } = require('../lib/paper');
 const notify = require('../lib/notify');
 
@@ -112,9 +115,34 @@ router.put('/:id', requireStaff, async (req, res) => {
   res.json({ ok: true });
 });
 
-router.delete('/:id', requireStaff, async (req, res) => {
-  await db.exec('DELETE FROM tests WHERE id = ?', [req.params.id]);
-  res.json({ ok: true });
+/* 刪除試卷是不可逆的破壞性動作：attempts 對 tests 是 ON DELETE CASCADE，
+ * 一個請求就會連帶抹掉底下所有學生的作答、作文與口說紀錄。
+ *
+ * 以前這裡只有 requireStaff —— 不檢查擁有者、不數受影響的紀錄、沒有
+ * force、不寫稽核、也不清磁碟上的錄音目錄。而同一件事在管理頁
+ * （manage.js 的 tests/bulk）要求 admin、會先數 attempts、要求 force、
+ * 寫 maintenance_log、rmrf 錄音目錄。同一個動作兩條路兩種標準，
+ * 嚴格的那條等於白設。而且走這條路刪掉之後，uploads/speaking/<id>/
+ * 會變成永遠不會被清理的孤兒檔（retention 是靠 attempts 反推目錄的）。
+ */
+router.delete('/:id', requireRole('admin'), async (req, res) => {
+  const id = Number(req.params.id);
+  if (!id) return res.status(400).json({ error: '參數錯誤' });
+  const rows = await db.query('SELECT id FROM attempts WHERE test_id = ?', [id]);
+  if (rows.length && !req.body?.force) {
+    return res.status(409).json({
+      error: `這份試卷底下還有 ${rows.length} 筆考試紀錄，刪除會一併移除。確定要刪請再按一次。`,
+      attempts: rows.length, needsForce: true,
+    });
+  }
+  let freed = 0;
+  for (const a of rows) freed += retention.rmrf(path.join(config.UPLOAD_DIR, 'speaking', String(a.id)));
+  await db.exec('DELETE FROM tests WHERE id = ?', [id]);
+  await db.exec(
+    'INSERT INTO maintenance_log (action, detail, affected, freed_bytes, actor) VALUES (?,?,?,?,?)',
+    ['tests_delete', JSON.stringify([id]), 1, freed, req.user.username]
+  );
+  res.json({ ok: true, deleted: 1, freedBytes: freed });
 });
 
 router.post('/:id/duplicate', requireStaff, async (req, res) => {

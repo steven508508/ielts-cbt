@@ -53,7 +53,7 @@ const Admin = (() => {
                   ' ',
                   el('button', {
                     class: 'btn sm',
-                    onclick: () => window.open(`/api/import/export/${t.id}?token=${encodeURIComponent(API.token)}`),
+                    onclick: () => API.download(`/import/export/${t.id}`).catch((e) => UI.toast(e.message, 'err')),
                   }, '匯出'),
                   ' ',
                   el('button', {
@@ -285,7 +285,7 @@ const Admin = (() => {
     // ② Excel / CSV
     const xlsPane = el('div', {},
       el('p', { class: 'small muted' }, '一列一題，同題組填相同的 group 值。先下載範本比較快。'),
-      el('a', { class: 'btn', href: `/api/import/template.xlsx?token=${API.token}` }, '⬇ 下載 Excel 範本'),
+      el('button', { class: 'btn', onclick: () => API.download('/import/template.xlsx', 'ielts-範本.xlsx').catch((e) => UI.toast(e.message, 'err')) }, '⬇ 下載 Excel 範本'),
       el('div', { class: 'row', style: { marginTop: '.9rem' } },
         el('label', { class: 'field' }, el('span', {}, '試卷名稱'), el('input', { id: 'x-title', type: 'text', placeholder: '例：劍橋 18 Test 1' })),
         el('label', { class: 'field' }, el('span', {}, '類型'),
@@ -2378,7 +2378,7 @@ const Admin = (() => {
           el('div', { class: 'toolbar' },
             info,
             el('span', { style: { flex: 1 } }),
-            el('a', { class: 'btn sm', href: `#`, onclick: (e) => { e.preventDefault(); window.open(`/api/manage/results/export.csv?${qs()}&token=${encodeURIComponent(API.token)}`); } }, '⬇ 匯出 CSV'),
+            el('button', { class: 'btn sm', onclick: () => API.download(`/manage/results/export.csv?${qs()}`, '成績.csv').catch((e) => UI.toast(e.message, 'err')) }, '⬇ 匯出 CSV'),
             el('button', { class: 'btn sm', onclick: () => bulk('archive', false) }, '封存'),
             el('button', { class: 'btn sm', onclick: () => bulk('unarchive', false) }, '取消封存'),
             el('button', { class: 'btn sm danger', onclick: () => bulk('delete', true) }, '刪除')),
@@ -2420,12 +2420,12 @@ const Admin = (() => {
             el('td', { style: { whiteSpace: 'nowrap' } },
               el('button', {
                 class: 'btn sm',
-                onclick: () => window.open(`/api/manage/backup/test/${t.id}.json?token=${encodeURIComponent(API.token)}`),
+                onclick: () => API.download(`/manage/backup/test/${t.id}.json`).catch((e) => UI.toast(e.message, 'err')),
               }, '完整備份'),
               ' ',
               el('button', {
                 class: 'btn sm',
-                onclick: () => window.open(`/api/import/export/${t.id}?token=${encodeURIComponent(API.token)}`),
+                onclick: () => API.download(`/import/export/${t.id}`).catch((e) => UI.toast(e.message, 'err')),
               }, '匯出題目')))))));
       }
 

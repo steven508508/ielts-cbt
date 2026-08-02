@@ -1,5 +1,7 @@
 /* 與後端溝通的薄封裝 */
 const API = (() => {
+  // 版本從 <meta> 讀（CSP 不准 inline script）
+  window.APP_VERSION = document.querySelector('meta[name="app-version"]')?.content || '';
   const TOKEN_KEY = 'ielts_token';
   const USER_KEY = 'ielts_user';
 
@@ -75,6 +77,31 @@ const API = (() => {
     return data;
   }
 
+  /**
+   * 下載檔案。
+   *
+   * 以前是 window.open('/api/…?token=' + API.token) —— 於是管理員每按一次
+   * 「匯出 CSV」或「下載備份」，就把一把 12 小時有效、全權限的 token
+   * 寫進反向代理的存取日誌（query string 預設會記）、瀏覽器歷史與下載紀錄。
+   * 拿得到日誌的人就等於拿到管理員，而且那把 token 撤不掉。
+   *
+   * 改成用 fetch 把檔案抓成 blob 再觸發下載，token 只走 Authorization 標頭。
+   */
+  async function download(path, filename) {
+    const res = await req('GET', path, null, { raw: true, timeout: 120000 });
+    const blob = await res.blob();
+    const cd = res.headers.get('content-disposition') || '';
+    const named = /filename\*?=(?:UTF-8'')?"?([^";]+)/i.exec(cd);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename || (named ? decodeURIComponent(named[1]) : 'download');
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+  }
+
   return {
     get token() { return token; },
     get user() { return user; },
@@ -83,6 +110,12 @@ const API = (() => {
     post: (p, b, o) => req('POST', p, b, o),
     put: (p, b) => req('PUT', p, b),
     del: (p) => req('DELETE', p),
-    logout() { setSession('', null); location.hash = '#/login'; },
+    download,
+    logout() {
+      // 順便把 /uploads 用的那個 httpOnly cookie 收回來
+      req('POST', '/auth/logout').catch(() => {});
+      setSession('', null);
+      location.hash = '#/login';
+    },
   };
 })();

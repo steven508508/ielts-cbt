@@ -17,6 +17,26 @@ app.use((req, res, next) => {
   res.setHeader('X-Frame-Options', 'SAMEORIGIN');
   res.setHeader('Referrer-Policy', 'same-origin');
   res.setHeader('Permissions-Policy', 'microphone=(self), camera=(), geolocation=()');
+  /* 內容安全政策。整個專案以前一條都沒有。
+     萬一真的被塞進一段同源的腳本（上傳、題目 HTML、老師貼的內容），
+     CSP 是最後一道 —— 只跑自己網域的 js，不准 inline script，
+     也不准把偷到的東西往外送。
+     style 必須放行 inline：UI.el() 大量使用行內樣式。
+     connect-src 要含 ws/wss：口說是 WebSocket。 */
+  res.setHeader('Content-Security-Policy', [
+    "default-src 'self'",
+    "script-src 'self' https://challenges.cloudflare.com",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob:",
+    "media-src 'self' blob:",
+    "font-src 'self' data:",
+    "connect-src 'self' ws: wss:",
+    "frame-src https://challenges.cloudflare.com",
+    "object-src 'none'",
+    "base-uri 'none'",
+    "form-action 'self'",
+    "frame-ancestors 'self'",
+  ].join('; '));
   if (config.isProduction && req.secure) {
     res.setHeader('Strict-Transport-Security', 'max-age=15552000; includeSubDomains');
   }
@@ -42,8 +62,8 @@ function indexHtml() {
   if (indexCache && config.isProduction) return indexCache;
   const html = fs.readFileSync(INDEX_FILE, 'utf8')
     .replace(/(src|href)="(\/(?:js|css)\/[^"?]+)"/g, `$1="$2?v=${APP_VERSION}"`)
-    .replace('</head>', `<meta name="app-version" content="${APP_VERSION}">\n`
-      + `<script>window.APP_VERSION=${JSON.stringify(APP_VERSION)}</script>\n</head>`);
+    // 版本只放在 meta（CSP 不准 inline script）；前端自己去讀這個標籤
+    .replace('</head>', `<meta name="app-version" content="${APP_VERSION}">\n</head>`);
   indexCache = html;
   return html;
 }
@@ -63,10 +83,50 @@ app.use(express.static(config.PUBLIC_DIR, {
     }
   },
 }));
-app.use('/uploads', express.static(config.UPLOAD_DIR, {
-  maxAge: '7d',
-  setHeaders: (res) => res.setHeader('X-Content-Type-Options', 'nosniff'),
-}));
+/* ── /uploads：要驗身分，而且絕不讓它變成可執行的網頁 ────────
+ *
+ * 以前這裡是 express.static 直接掛上去，前面沒有任何中介層：
+ *   · 任何人（連登入都不用）只要猜到路徑，就能下載全校學生的口說錄音。
+ *     檔名完全可預測 —— uploads/speaking/<attemptId>/full-interview.webm，
+ *     attemptId 就是自增整數，從 1 一路數上去即可。
+ *   · Content-Type 由副檔名決定，而副檔名以前是上傳的人說了算，
+ *     所以學生可以在同源底下放一個會執行的 .html。
+ *
+ * 現在：口說錄音只給本人與教職員；所有檔案的 Content-Type 由伺服器
+ * 依副檔名指定，白名單以外一律當附件下載。
+ *
+ * 身分是從 httpOnly cookie 讀的 —— <audio src> 與 <img src> 沒辦法帶
+ * Authorization 標頭，這是唯一能讓瀏覽器自然帶上身分的方式。
+ */
+const { resolveUser, readToken, readCookie, FILE_COOKIE } = require('./middleware/auth');
+const { serveHeaders } = require('./lib/uploadSafety');
+
+app.use('/uploads', async (req, res, next) => {
+  // 路徑正規化，擋掉 ../ 之類的花樣
+  let rel;
+  try { rel = decodeURIComponent(req.path).replace(/^\/+/, ''); } catch { return res.status(400).end(); }
+  const full = path.resolve(config.UPLOAD_DIR, rel);
+  if (!full.startsWith(path.resolve(config.UPLOAD_DIR) + path.sep)) return res.status(403).end();
+  if (!fs.existsSync(full) || !fs.statSync(full).isFile()) return res.status(404).end();
+
+  const user = await resolveUser(readToken(req) || readCookie(req, FILE_COOKIE));
+  if (!user) return res.status(401).json({ error: '請先登入' });
+
+  // 口說錄音是個人資料：只有本人與教職員
+  const m = rel.match(/^speaking\/(\d+)\//);
+  if (m && user.role === 'student') {
+    const owner = await db.one('SELECT user_id FROM attempts WHERE id = ?', [Number(m[1])]);
+    if (!owner || owner.user_id !== user.id) return res.status(403).json({ error: '權限不足' });
+  }
+
+  const h = serveHeaders(path.extname(full));
+  res.setHeader('Content-Type', h['Content-Type']);
+  res.setHeader('Content-Disposition', h['Content-Disposition']);
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  // 個人錄音不可以被中間的代理／CDN 留副本
+  res.setHeader('Cache-Control', m ? 'private, no-store' : 'private, max-age=604800');
+  res.sendFile(full, { headers: {}, dotfiles: 'deny' }, (err) => { if (err) next(err); });
+});
 
 // API
 // wrapRouter：Express 4 接不住 async handler 的 rejection，沒包的話

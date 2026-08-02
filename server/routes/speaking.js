@@ -74,7 +74,15 @@ router.get('/monitor/active', requireStaff, async (req, res) => {
   });
 });
 
-const memUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 60 * 1024 * 1024 } });
+const { safeExt, fileFilter } = require('../lib/uploadSafety');
+/* fileFilter 一定要有。以前只設了 fileSize，副檔名又直接取自使用者送的
+   檔名 —— 學生可以把 evil.html 當成「錄音」上傳，落地成
+   uploads/speaking/<id>/p1_q0.html，然後以同源網頁的身分被打開。 */
+const memUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 60 * 1024 * 1024 },
+  fileFilter: fileFilter('audio'),
+});
 
 /** 考官語音（TTS）。失敗時前端會自動改用瀏覽器內建語音。 */
 router.post('/tts', sttLimit, async (req, res) => {
@@ -108,7 +116,8 @@ router.post('/:attemptId/response', sttLimit, memUpload.single('audio'), async (
   if (req.file) {
     const dir = path.join(config.UPLOAD_DIR, 'speaking', String(attempt.id));
     fs.mkdirSync(dir, { recursive: true });
-    const ext = (req.file.originalname.match(/\.\w+$/) || ['.webm'])[0];
+    const ext = safeExt(req.file.mimetype, req.file.originalname, 'audio');
+    if (!ext) return res.status(400).json({ error: '不支援的音訊格式' });
     const fname = `p${part}_q${qIndex}${ext}`;
     fs.writeFileSync(path.join(dir, fname), req.file.buffer);
     audioPath = `/uploads/speaking/${attempt.id}/${fname}`;
@@ -146,7 +155,8 @@ router.post('/:attemptId/recording', memUpload.single('audio'), async (req, res)
 
   const dir = path.join(config.UPLOAD_DIR, 'speaking', String(attempt.id));
   fs.mkdirSync(dir, { recursive: true });
-  const ext = (req.file.originalname.match(/\.\w+$/) || ['.webm'])[0];
+  const ext = safeExt(req.file.mimetype, req.file.originalname, 'audio');
+  if (!ext) return res.status(400).json({ error: '不支援的音訊格式' });
   fs.writeFileSync(path.join(dir, `full-interview${ext}`), req.file.buffer);
   const p = `/uploads/speaking/${attempt.id}/full-interview${ext}`;
 
@@ -240,11 +250,23 @@ router.post('/:attemptId/finalize', async (req, res) => {
 });
 
 /** 依考生回答動態追問（Part 1 / Part 3） */
+/* 這一支以前完全沒有比對 req.user.id —— attemptId 甚至根本沒被用到。
+   任何登入的學生都能對任意（甚至不存在的）attempt 呼叫，body 又沒有長度
+   上限（Express 收到 30 MB），等於學校的 AI 額度變成免費的 LLM 代理。 */
 router.post('/:attemptId/follow-up', scoreLimit, async (req, res) => {
+  const attempt = await db.one('SELECT * FROM attempts WHERE id = ?', [req.params.attemptId]);
+  if (!attempt) return res.status(404).json({ error: '找不到這場考試' });
+  if (attempt.user_id !== req.user.id && req.user.role === 'student')
+    return res.status(403).json({ error: '權限不足' });
+
   const { part, topic, history } = req.body || {};
+  const hist = (Array.isArray(history) ? history : []).slice(-12).map((h) => ({
+    role: String(h?.role || '').slice(0, 20),
+    text: String(h?.text || '').slice(0, 1500),
+  }));
   try {
     const question = await aiTasks.speakingFollowUp({
-      part: Number(part) || 1, topic: topic || '', history: history || [], userId: req.user.id,
+      part: Number(part) || 1, topic: String(topic || '').slice(0, 500), history: hist, userId: req.user.id,
     });
     res.json({ question });
   } catch (e) {

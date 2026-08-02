@@ -1876,3 +1876,107 @@ test('題型：多選題的 selectCount 與題號數、正解數必須一致', (
   assert.match(errs(['A', 'D'], 1)[0] || '', /selectCount 卻是 1/);
   assert.match(errs(['A'], 2).join(' '), /正解只有 1 個/);
 });
+
+// ══════════════════════════════════════════════════════════════
+// v2.22.0：成員權限稽核
+// （真正的驗證在 test/security.js —— 那一支是實際發請求打端點。
+//   這裡只把「不能再改回去」的關鍵決定釘住。）
+// ══════════════════════════════════════════════════════════════
+
+test('上傳：副檔名一律由伺服器依 MIME 決定，不能讓上傳者指定', () => {
+  const { safeExt } = require('../server/lib/uploadSafety');
+  assert.equal(safeExt('audio/webm', 'evil.html', 'audio'), '.webm');
+  assert.equal(safeExt('text/html', 'evil.html', 'audio'), null, 'HTML 不是音訊，要拒收');
+  assert.equal(safeExt('image/svg+xml', 'x.svg', 'image'), null, 'SVG 裡可以寫 script，不收');
+  assert.equal(safeExt('application/octet-stream', 'x.php', 'audio'), null);
+  assert.equal(safeExt('audio/mpeg', 'a.mp3', 'audio'), '.mp3');
+  assert.equal(safeExt('image/png', 'a.png', 'image'), '.png');
+
+  const src = require('fs').readFileSync(require.resolve('../server/routes/speaking.js'), 'utf8');
+  assert.ok(!/originalname\.match\(\/\\\.\\w\+\$\/\)/.test(src),
+    '直接拿使用者送的檔名當副檔名 = 讓學生在同源底下放一個會執行的網頁');
+  assert.match(src, /fileFilter: fileFilter\('audio'\)/);
+});
+
+test('上傳：認不得的副檔名一律當附件，絕不以 text/html 送出', () => {
+  const { serveHeaders } = require('../server/lib/uploadSafety');
+  assert.equal(serveHeaders('.webm')['Content-Type'], 'audio/webm');
+  assert.equal(serveHeaders('.html')['Content-Type'], 'application/octet-stream');
+  assert.equal(serveHeaders('.html')['Content-Disposition'], 'attachment');
+  assert.equal(serveHeaders('.svg')['Content-Type'], 'application/octet-stream');
+});
+
+test('/uploads 要驗身分，口說錄音只給本人與教職員', () => {
+  const src = require('fs').readFileSync(require.resolve('../server/index.js'), 'utf8');
+  assert.ok(!/app\.use\('\/uploads', express\.static/.test(src),
+    'express.static 直接掛上去 = 任何人猜到路徑就能下載全校的口說錄音');
+  const block = src.slice(src.indexOf("app.use('/uploads'"), src.indexOf('// API'));
+  assert.match(block, /resolveUser/);
+  assert.match(block, /speaking\\\/\(\\d\+\)\\\//, '口說目錄要比對擁有者');
+  assert.match(block, /res\.status\(403\)/);
+  assert.match(block, /startsWith\(path\.resolve\(config\.UPLOAD_DIR\) \+ path\.sep\)/, '要擋 ../');
+  assert.match(block, /private, no-store/, '個人錄音不可以被中間的代理留副本');
+});
+
+test('token：不可以從網址列傳，body 可以（sendBeacon 用）', () => {
+  const src = require('fs').readFileSync(require.resolve('../server/middleware/auth.js'), 'utf8');
+  const block = src.slice(src.indexOf('function readToken'), src.indexOf('async function resolveUser'));
+  assert.ok(!/req\.query\.token/.test(block.replace(/\/\*[\s\S]*?\*\//g, '')),
+    '網址上的 token 會被反向代理完整記進存取日誌，而且撤不掉');
+  assert.match(block, /req\.body\.token/);
+  const admin = require('fs').readFileSync(require.resolve('../public/js/admin.js'), 'utf8');
+  assert.ok(!/token=\$\{(?:encodeURIComponent\()?API\.token/.test(admin),
+    '匯出與備份改用 fetch + blob，不要把 token 寫進網址');
+});
+
+test('token：改密碼要讓舊 token 立刻失效', () => {
+  const src = require('fs').readFileSync(require.resolve('../server/middleware/auth.js'), 'utf8');
+  assert.match(src, /tv: Number\(user\.token_version \|\| 0\)/, 'token 要帶版本');
+  assert.match(src, /Number\(user\.token_version \|\| 0\) !== Number\(payload\.tv \|\| 0\)/);
+  const auth = require('fs').readFileSync(require.resolve('../server/routes/auth.js'), 'utf8');
+  assert.match(auth, /token_version = token_version \+ 1/, '自己改密碼');
+  const users = require('fs').readFileSync(require.resolve('../server/routes/users.js'), 'utf8');
+  assert.match(users, /token_version = token_version \+ 1/, '管理員重設密碼');
+  const rt = require('fs').readFileSync(require.resolve('../server/lib/realtime.js'), 'utf8');
+  assert.match(rt, /token_version/, '口說的 WebSocket 也要比對，不然是一個後門');
+  const db = require('fs').readFileSync(require.resolve('../server/db.js'), 'utf8');
+  assert.match(db, /\['users', 'token_version'/);
+});
+
+test('刪除試卷是破壞性動作：要 admin、要確認、要留稽核', () => {
+  const src = require('fs').readFileSync(require.resolve('../server/routes/tests.js'), 'utf8');
+  const block = src.slice(src.indexOf("router.delete('/:id'"), src.indexOf("router.post('/:id/duplicate'"));
+  assert.match(block, /requireRole\('admin'\)/,
+    'attempts 對 tests 是 ON DELETE CASCADE，一個請求就抹掉所有學生的作答');
+  assert.match(block, /needsForce: true/);
+  assert.match(block, /maintenance_log/);
+  assert.match(block, /retention\.rmrf/, '不清錄音目錄的話會留下永遠不會被清理的孤兒檔');
+});
+
+test('AI 端點：follow-up 要檢查擁有權，輸入要有上限', () => {
+  const src = require('fs').readFileSync(require.resolve('../server/routes/speaking.js'), 'utf8');
+  const block = src.slice(src.indexOf("router.post('/:attemptId/follow-up'"), src.indexOf("router.get('/:attemptId/responses'"));
+  assert.match(block, /attempt\.user_id !== req\.user\.id/,
+    '以前完全沒有比對，attemptId 根本沒被用到 —— 等於免費的 LLM 代理');
+  assert.match(block, /\.slice\(0, 500\)/);
+  assert.match(block, /\.slice\(-12\)/);
+});
+
+test('安全標頭：要有 CSP，而且不准 inline script', () => {
+  const src = require('fs').readFileSync(require.resolve('../server/index.js'), 'utf8');
+  assert.match(src, /Content-Security-Policy/);
+  assert.match(src, /"script-src 'self' https:\/\/challenges\.cloudflare\.com"/);
+  assert.match(src, /"object-src 'none'"/);
+  assert.match(src, /"base-uri 'none'"/);
+  assert.ok(!/<script>window\.APP_VERSION/.test(src),
+    'inline script 會被自己的 CSP 擋掉，版本要放 meta');
+});
+
+test('WebSocket：token 走子協定，不要放在網址上', () => {
+  const src = require('fs').readFileSync(require.resolve('../public/js/speaking.js'), 'utf8');
+  assert.ok(!/ws\/speaking\?token=/.test(src));
+  assert.match(src, /new WebSocket\(url, \[`bearer\.\$\{API\.token\}`\]\)/);
+  const rt = require('fs').readFileSync(require.resolve('../server/lib/realtime.js'), 'utf8');
+  assert.match(rt, /sec-websocket-protocol/);
+  assert.match(rt, /handleProtocols/, '不回應子協定的話瀏覽器會判定握手失敗');
+});

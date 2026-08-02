@@ -11,10 +11,16 @@ const { rateLimit } = require('../middleware/rateLimit');
 const router = express.Router();
 const uploadLimit = rateLimit({ key: 'upload', by: 'user', windowMs: 60_000, max: 10, message: '上傳太頻繁' });
 
+const { safeExt, safeBase } = require('../lib/uploadSafety');
+
+/* 'other' 這一類拿掉了。以前副檔名直接取自使用者送的檔名，而 kindOf
+   認不出來就丟進 uploads/other/ —— 上傳一個 .html 就會落地成一個同源、
+   免驗證、Content-Type 是 text/html 的網頁。SVG 也不再收，SVG 裡可以寫
+   script，當成圖片載入時照樣會跑。 */
 function kindOf(mime, name) {
-  if (/^audio\//.test(mime) || /\.(mp3|wav|m4a|ogg|aac|webm)$/i.test(name)) return 'audio';
-  if (/^image\//.test(mime) || /\.(png|jpe?g|gif|webp|svg)$/i.test(name)) return 'image';
-  return 'other';
+  if (safeExt(mime, name, 'audio')) return 'audio';
+  if (safeExt(mime, name, 'image')) return 'image';
+  return null;
 }
 
 const storage = multer.diskStorage({
@@ -25,13 +31,23 @@ const storage = multer.diskStorage({
     cb(null, dir);
   },
   filename(req, file, cb) {
-    const ext = path.extname(file.originalname) || '';
-    const base = path.basename(file.originalname, ext).replace(/[^\w一-龥.-]+/g, '_').slice(0, 60);
-    cb(null, `${Date.now().toString(36)}_${base}${ext}`);
+    const kind = kindOf(file.mimetype, file.originalname);
+    // 副檔名由伺服器依 MIME 決定，不是由上傳的人決定
+    const ext = safeExt(file.mimetype, file.originalname, kind);
+    cb(null, `${Date.now().toString(36)}_${safeBase(file.originalname)}${ext}`);
   },
 });
 
-const upload = multer({ storage, limits: { fileSize: 200 * 1024 * 1024 } });
+const upload = multer({
+  storage,
+  limits: { fileSize: 200 * 1024 * 1024 },
+  fileFilter(req, file, cb) {
+    if (kindOf(file.mimetype, file.originalname)) return cb(null, true);
+    const e = new Error('只接受音訊（mp3/wav/m4a/ogg/webm）與圖片（png/jpg/gif/webp）');
+    e.status = 400;
+    cb(e);
+  },
+});
 
 router.use(requireAuth);
 

@@ -819,7 +819,10 @@
           class: 'btn primary',
           onclick: async () => {
             try {
-              await API.post('/auth/password', { oldPassword: oldP.value, newPassword: newP.value });
+              /* 改完密碼，伺服器會把所有舊 token 作廢（帳號外流時才踢得掉對方）。
+                 自己這一把要換成回應裡的新 token，否則下一個請求就被登出。 */
+              const r = await API.post('/auth/password', { oldPassword: oldP.value, newPassword: newP.value });
+              if (r.token) API.setSession(r.token, API.user);
               toast('密碼已更新', 'ok'); oldP.value = newP.value = '';
             } catch (e) { UI.alert(e.message); }
           },

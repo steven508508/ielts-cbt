@@ -148,6 +148,9 @@ router.put('/:id', async (req, res) => {
   if (f.password) {
     if (String(f.password).length < 6) return res.status(400).json({ error: '密碼至少 6 個字元' });
     sets.push('password_hash = ?'); params.push(await bcrypt.hash(String(f.password), 10));
+    /* 管理員替人重設密碼，就是要把對方（或盜用者）手上的舊 token 一起收掉。
+       以前不會 —— 帳號被盜、管理員重設密碼，攻擊者照樣可以用滿 12 小時。 */
+    sets.push('token_version = token_version + 1');
   }
   if (!sets.length) return res.json({ ok: true });
   params.push(id);

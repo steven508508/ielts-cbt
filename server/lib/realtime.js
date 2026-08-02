@@ -1028,7 +1028,15 @@ class Session {
 
 // ── 掛載到 HTTP server ────────────────────────────────────────
 function attach(server) {
-  const wss = new WebSocketServer({ noServer: true });
+  /* handleProtocols 一定要回應客戶端送來的子協定，否則瀏覽器會判定
+     握手失敗並立刻關閉連線（我們用子協定夾帶 token）。 */
+  const wss = new WebSocketServer({
+    noServer: true,
+    handleProtocols: (protocols) => {
+      for (const p of protocols) if (String(p).startsWith('bearer.')) return p;
+      return false;
+    },
+  });
 
   server.on('upgrade', (req, socket, head) => {
     if (!req.url.startsWith(PATH)) {
@@ -1041,7 +1049,13 @@ function attach(server) {
 
   wss.on('connection', async (ws, req) => {
     const url = new URL(req.url, 'http://localhost');
-    const token = url.searchParams.get('token');
+    /* token 優先從 Sec-WebSocket-Protocol 取。瀏覽器的 WebSocket 沒辦法帶
+       自訂標頭，唯一乾淨的通道就是子協定 —— 放在網址上的話會被反向代理
+       的存取日誌完整記下來（query string 預設會記）。
+       仍保留 query 當作舊前端的相容路徑。 */
+    const proto = String(req.headers['sec-websocket-protocol'] || '');
+    const fromProto = /(?:^|,)\s*bearer\.([\w.-]+)/.exec(proto)?.[1] || null;
+    const token = fromProto || url.searchParams.get('token');
     const attemptId = Number(url.searchParams.get('attemptId'));
     let session = null;
 
@@ -1059,8 +1073,11 @@ function attach(server) {
 
     try {
       const payload = jwt.verify(token, config.jwtSecret);
-      const user = await db.one('SELECT id, name, username, role, active FROM users WHERE id = ?', [payload.uid]);
+      const user = await db.one(
+        'SELECT id, name, username, role, active, token_version FROM users WHERE id = ?', [payload.uid]);
       if (!user || !user.active) return fail('帳號無效');
+      // 改過密碼之後簽發的版本對不上，舊 token 一律作廢（跟 HTTP 那邊同一套）
+      if (Number(user.token_version || 0) !== Number(payload.tv || 0)) return fail('登入已過期，請重新登入');
 
       const attempt = await db.one('SELECT * FROM attempts WHERE id = ?', [attemptId]);
       if (!attempt) return fail('找不到這場考試');

@@ -301,7 +301,9 @@ registerProcessor('cap', Cap);`;
     setStage('連線中…');
 
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    const url = `${proto}://${location.host}/ws/speaking?token=${encodeURIComponent(API.token)}&attemptId=${S.attemptId}`;
+    /* token 走子協定，不放在網址上 —— 網址會被反向代理完整記進存取日誌。
+       瀏覽器的 WebSocket 不能帶自訂標頭，子協定是唯一乾淨的通道。 */
+    const url = `${proto}://${location.host}/ws/speaking?attemptId=${S.attemptId}`;
 
     /* 自動重連。以前 onclose 只把畫面文字改成「連線中斷」就結束了 ——
        網路抖一下、Wi-Fi 換基地台、筆電闔上再打開，這一科就等於報銷，
@@ -309,7 +311,8 @@ registerProcessor('cap', Cap);`;
        伺服器那邊會接回原本的階段與逐字稿，所以重連是安全的。 */
     let tries = 0;
     const open = () => {
-      const ws = new WebSocket(url);
+      // token 當作子協定送出去，伺服器讀 Sec-WebSocket-Protocol
+      const ws = new WebSocket(url, [`bearer.${API.token}`]);
       ws.binaryType = 'arraybuffer';
       S.ws = ws;
       ws.onopen = () => {
