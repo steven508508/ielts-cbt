@@ -1502,3 +1502,49 @@ test('時限：最後一科結束就直接收卷，不用等下一輪掃描', ()
   assert.match(block, /examTimer\.submitAttempt/);
   assert.match(block, /req\.attempt\.status === 'in_progress'/, '已經交過的不能再交一次');
 });
+
+// ── 選了一個選項不該把整頁重畫 ────────────────────────────
+// 學生反映：選 A/B/C/D 或 TRUE/FALSE/NOT GIVEN 之後整個網頁跳回最上面。
+// 成因是選項的 onclick 呼叫 renderExam()，整份 DOM 被 replaceChildren
+// 換掉，捲動位置跟著歸零。實測閱讀頁會從 1392px 掉回 0 ——
+// 學生每選一題就要重新捲一次去找下一題。
+test('作答：點選項只更新那一組選項，不重畫整科', () => {
+  const src = stripComments(
+    require('fs').readFileSync(require.resolve('../public/js/exam.js'), 'utf8'));
+  for (const [fn, next] of [['function mcq(', 'function mcqMulti('],
+    ['function mcqMulti(', 'function enumQ('], ['function enumQ(', 'function matchQ(']]) {
+    const block = src.slice(src.indexOf(fn), src.indexOf(next));
+    assert.ok(block.length > 100, fn);
+    assert.ok(!/renderExam\(/.test(block),
+      `${fn} 裡還在呼叫 renderExam —— 那會把整科重畫，捲動位置歸零`);
+    assert.match(block, /paintOptions\(/, `${fn} 要改成就地更新選取狀態`);
+  }
+});
+
+test('作答：選項要帶 data-k，就地更新才找得到是哪一個', () => {
+  const src = stripComments(
+    require('fs').readFileSync(require.resolve('../public/js/exam.js'), 'utf8'));
+  assert.match(src, /function paintOptions\(scope, isSelected\)/);
+  assert.match(src, /lab\.classList\.toggle\('sel', on\)/);
+  assert.match(src, /input\.checked = on/, '圓鈕／核取方塊也要跟著換');
+  assert.equal((src.match(/dataset: \{ k: /g) || []).length, 3,
+    '單選、多選、T/F/NG 三種都要標記選項代號');
+});
+
+test('作答：多選題的選取狀態自己記著，不靠重畫讀回來', () => {
+  const src = stripComments(
+    require('fs').readFileSync(require.resolve('../public/js/exam.js'), 'utf8'));
+  const block = src.slice(src.indexOf('function mcqMulti('), src.indexOf('function enumQ('));
+  assert.match(block, /let picked = \[\.\.\.cur\]/);
+  assert.match(block, /update\(o\.key, !picked\.includes\(o\.key\)\)/,
+    '要看目前的選取狀態，不能看重畫當下那份快照');
+  assert.match(block, /cbt-multi-count/, '「已選 N/M」也要跟著更新');
+});
+
+test('作答：其他會重畫的路徑，捲動位置要補救得回來', () => {
+  const src = stripComments(
+    require('fs').readFileSync(require.resolve('../public/js/exam.js'), 'utf8'));
+  const block = src.slice(src.indexOf('function renderExam('), src.indexOf('function bandBar('));
+  assert.match(block, /requestAnimationFrame\(\(\) => \{ if \(p\.isConnected/,
+    '內容還沒排版完時 scrollTop 會被夾成 0，下一幀要再補一次');
+});

@@ -766,9 +766,13 @@ const Exam = (() => {
 
     shell(topBar(), bandBar(name, sec), stage, footBar());
 
-    if (keepScroll) {
+    if (keepScroll && scroll) {
       const p = $('.cbt-pane.right') || $('.cbt-pane.single');
-      if (p) p.scrollTop = scroll;
+      if (p) {
+        p.scrollTop = scroll;
+        // 內容還沒排版完時 scrollTop 會被夾成 0，下一幀再補一次
+        requestAnimationFrame(() => { if (p.isConnected && p.scrollTop !== scroll) p.scrollTop = scroll; });
+      }
     }
     refreshFoot();
     if (name === 'reading') setupSplit();
@@ -1293,6 +1297,23 @@ const Exam = (() => {
     $$('.cbt-gapwrap').forEach((n) => n.classList.toggle('active', n.id === `q-${S.current}`));
   }
 
+  /**
+   * 就地把一組選項的選取狀態畫出來。
+   *
+   * 以前是點一下選項就 renderExam(true) 把整科重畫一次。整份 DOM 被
+   * replaceChildren 換掉，捲動位置跟著歸零 —— 學生選一題，畫面就跳回最上面，
+   * 要再捲回去找下一題。閱讀那種要捲一千多像素的頁面尤其明顯。
+   * 選一個答案只需要換兩個 class，沒有理由重建整個畫面。
+   */
+  function paintOptions(scope, isSelected) {
+    scope.querySelectorAll('.cbt-opt').forEach((lab) => {
+      const on = isSelected(lab.dataset.k);
+      lab.classList.toggle('sel', on);
+      const input = lab.querySelector('input');
+      if (input) input.checked = on;
+    });
+  }
+
   function mcq(module, g, q) {
     const cur = S.answers[module]?.[q.number] ?? '';
     const options = q.options?.length ? q.options : (g.options || []);
@@ -1301,7 +1322,12 @@ const Exam = (() => {
       el('div', { class: 'cbt-opts' }, options.map((o) =>
         el('label', {
           class: 'cbt-opt' + (cur === o.key ? ' sel' : ''),
-          onclick: () => { setAnswer(module, q.number, o.key); renderExam(true); },
+          dataset: { k: o.key },
+          onclick: (e) => {
+            setAnswer(module, q.number, o.key);
+            paintOptions(e.currentTarget.parentElement, (k) => k === o.key);
+            markActive();
+          },
         },
           el('input', { type: 'radio', name: `q${q.number}`, checked: cur === o.key, readonly: true }),
           el('span', { class: 'k' }, o.key),
@@ -1314,30 +1340,41 @@ const Exam = (() => {
     const cur = (S.answers[module]?.[nums[0]] || '').split(/[,\s]+/).filter(Boolean);
     const first = g.questions[0];
 
+    // 選取狀態存在這裡，不再靠重畫整頁把它讀回來
+    let picked = [...cur];
     const update = (key, on) => {
-      let next = on ? [...new Set([...cur, key])] : cur.filter((k) => k !== key);
+      const next = on ? [...new Set([...picked, key])] : picked.filter((k) => k !== key);
       if (next.length > pick) { toast(`最多只能選 ${pick} 個`, 'err'); return; }
       next.sort();
+      picked = next;
       const joined = next.join(',');
       nums.forEach((n, i) => { S.answers[module][n] = i < next.length ? joined : ''; queue(module, n); });
       S.current = nums[0];
       refreshFoot();
-      renderExam(true);
+      // 就地更新，不要 renderExam —— 那會把整科重畫，捲動位置歸零
+      const box = wrap.querySelector('.cbt-opts');
+      if (box) paintOptions(box, (k) => next.includes(k));
+      const counter = wrap.querySelector('.cbt-multi-count');
+      if (counter) counter.textContent = `Choose ${pick} — 已選 ${next.length}/${pick}`;
+      markActive();
     };
 
-    return el('div', { class: 'cbt-q' + (nums.includes(S.current) ? ' active' : ''), id: `q-${nums[0]}`, dataset: { n: nums[0] } },
+    const wrap = el('div', { class: 'cbt-q' + (nums.includes(S.current) ? ' active' : ''), id: `q-${nums[0]}`, dataset: { n: nums[0] } },
       el('div', { class: 'cbt-qn' }, `${nums[0]}${nums.length > 1 ? `–${nums[nums.length - 1]}` : ''}`),
       el('div', { class: 'body' },
         first.text && el('div', { class: 'cbt-stem', html: sanitize(first.text) }),
-        el('div', { class: 'small', style: { opacity: '.7', marginBottom: '.25rem' } }, `Choose ${pick} — 已選 ${cur.length}/${pick}`),
+        el('div', { class: 'small cbt-multi-count', style: { opacity: '.7', marginBottom: '.25rem' } },
+          `Choose ${pick} — 已選 ${cur.length}/${pick}`),
         el('div', { class: 'cbt-opts' }, (g.options || []).map((o) =>
           el('label', {
             class: 'cbt-opt' + (cur.includes(o.key) ? ' sel' : ''),
-            onclick: (e) => { e.preventDefault(); update(o.key, !cur.includes(o.key)); },
+            dataset: { k: o.key },
+            onclick: (e) => { e.preventDefault(); update(o.key, !picked.includes(o.key)); },
           },
             el('input', { type: 'checkbox', checked: cur.includes(o.key), readonly: true }),
             el('span', { class: 'k' }, o.key),
             el('span', { html: sanitize(o.text) }))))));
+    return wrap;
   }
 
   function enumQ(module, g, q) {
@@ -1348,7 +1385,12 @@ const Exam = (() => {
       el('div', { class: 'cbt-opts inline' }, values.map((v) =>
         el('label', {
           class: 'cbt-opt' + (cur === v ? ' sel' : ''),
-          onclick: () => { setAnswer(module, q.number, v); renderExam(true); },
+          dataset: { k: v },
+          onclick: (e) => {
+            setAnswer(module, q.number, v);
+            paintOptions(e.currentTarget.parentElement, (k) => k === v);
+            markActive();
+          },
         },
           el('input', { type: 'radio', name: `q${q.number}`, checked: cur === v, readonly: true }),
           el('span', {}, v)))));
