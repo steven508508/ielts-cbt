@@ -132,6 +132,17 @@ async function migrate() {
     catch (e) { console.warn(`[migrate] ${t}.${c}: ${e.message}`); }
   }
   if (added.length) console.log('[migrate] 新增欄位：', added.join(', '));
+
+  // v2.15.1：severity 欄位的預設值是 'warn'，而「開始作答」這種純紀錄
+  // 當初寫入時沒有指定 severity，於是全部被存成 warn，老師在成績頁上
+  // 看到的「需留意」件數因此永遠比實際多。把舊資料改回 info。
+  try {
+    const r = await exec(
+      "UPDATE exam_events SET severity = 'info' WHERE type IN ('module_start','return','fullscreen_enter','resize','device_check') AND severity = 'warn'"
+    );
+    if (r?.affectedRows) console.log(`[migrate] 修正 ${r.affectedRows} 筆紀錄型事件的等級`);
+  } catch (e) { console.warn('[migrate] exam_events.severity:', e.message); }
+
   return added;
 }
 

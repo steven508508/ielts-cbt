@@ -5,6 +5,7 @@ const { requireAuth, requireStaff } = require('../middleware/auth');
 const { normalizePaper, flattenQuestions, sectionMedia } = require('../lib/paper');
 const bands = require('../lib/bands');
 const grade = require('../lib/grade');
+const conduct = require('../lib/conduct');
 
 const { rateLimit } = require('../middleware/rateLimit');
 
@@ -118,26 +119,32 @@ router.get('/:id', async (req, res) => {
     [attempt.id]
   );
   const eventCounts = {};
+  const flagged = {};              // 只算需要留意的，給頁面上的數字方塊用
   const bySeverity = { info: 0, warn: 0, alert: 0 };
   for (const e of eventRows) {
+    const sev = e.severity || 'warn';
     eventCounts[e.type] = (eventCounts[e.type] || 0) + 1;
-    bySeverity[e.severity || 'warn'] = (bySeverity[e.severity || 'warn'] || 0) + 1;
+    if (sev !== 'info') flagged[e.type] = (flagged[e.type] || 0) + 1;
+    bySeverity[sev] = (bySeverity[sev] || 0) + 1;
   }
   // 只算真的需要留意的。裝置問題造成的離開會標成 info，不要跟切分頁混在一起，
   // 不然老師看到的是一個看不出所以然的數字。
   const realLeaves = eventRows.filter(
-    (e) => ['leave', 'fullscreen_exit'].includes(e.type) && (e.severity || 'warn') !== 'info').length;
-  const conduct = {
+    (e) => conduct.LEAVE_TYPES.includes(e.type) && (e.severity || 'warn') !== 'info').length;
+  const conductSummary = {
     counts: eventCounts,
+    // 頁面標題寫「0 次」、下面的方塊卻紅字寫 1，就是因為兩邊算法不同：
+    // 標題排除了 info，方塊沒有。方塊改用這一份。
+    flagged,
     bySeverity,
     leaveCount: realLeaves,
     excusedCount: eventRows.filter(
-      (e) => ['leave', 'fullscreen_exit'].includes(e.type) && e.severity === 'info').length,
+      (e) => conduct.LEAVE_TYPES.includes(e.type) && e.severity === 'info').length,
     events: req.user.role === 'student' ? [] : eventRows,
   };
 
   res.json({
-    conduct,
+    conduct: conductSummary,
     attempt: {
       id: attempt.id, status: attempt.status, modules: attempt.modules.split(','),
       startedAt: attempt.started_at, submittedAt: attempt.submitted_at, gradedAt: attempt.graded_at,

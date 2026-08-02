@@ -1037,3 +1037,65 @@ test('答案不會外流：答案、解析、範文都不能送到學生端', ()
   // 所以這裡只確認它還在，別讓人以為 stripAnswers 已經處理過了。
   assert.ok(safe.modules[0].sections[0].transcript, '逐字稿由考卷路由負責移除');
 });
+
+// ── 離開次數怎麼算 ────────────────────────────────────────
+// 這一組來自實測：反作弊的「次數」在三個地方各算各的，而且算法不一樣。
+
+test('離開次數：規則只有一份，不能各處抄一份 SQL', () => {
+  const fs = require('fs');
+  assert.match(conduct.LEAVE_WHERE, /severity <> 'info'/);
+  for (const f of ['../server/routes/exam.js', '../server/routes/results.js']) {
+    const src = fs.readFileSync(require.resolve(f), 'utf8');
+    const handRolled = src.match(/type IN \('leave','fullscreen_exit'\)/g) || [];
+    assert.equal(handRolled.length, 0,
+      `${f} 又自己抄了一份離開次數的條件，請改用 conduct.LEAVE_WHERE / LEAVE_TYPES`);
+  }
+});
+
+// 介面上寫的是「**允許**離開畫面幾次」+「**超過**上限時」。
+// 舊版用 count >= maxLeaves，在第二次就收卷，比老師設定的嚴格一級。
+test('上限：設 2 次代表離開兩次沒事，第三次才處置', () => {
+  assert.equal(conduct.exceedsLimit(1, 2), false);
+  assert.equal(conduct.exceedsLimit(2, 2), false, '第 2 次還在允許範圍內');
+  assert.equal(conduct.exceedsLimit(3, 2), true);
+});
+
+test('上限：設 0 代表不限，永遠不處置', () => {
+  assert.equal(conduct.exceedsLimit(99, 0), false);
+  assert.equal(conduct.remainingLeaves(99, 0), Infinity);
+});
+
+test('上限：「再離開幾次就會自動收卷」算得對', () => {
+  assert.equal(conduct.remainingLeaves(0, 2), 3);
+  assert.equal(conduct.remainingLeaves(1, 2), 2);
+  assert.equal(conduct.remainingLeaves(2, 2), 1);
+  assert.equal(conduct.remainingLeaves(3, 2), 0);
+});
+
+// 切一次分頁，瀏覽器會先送 blur、再送 visibilitychange。
+// 舊版兩個監聽器各記一次，學生切走一次被記成兩次；
+// 老師設「允許 2 次、超過收卷」的話，第一次切分頁就直接被收卷。
+test('離開次數：前端把離開當成狀態，不是一連串事件', () => {
+  const src = require('fs').readFileSync(require.resolve('../public/js/exam.js'), 'utf8');
+  const block = src.slice(src.indexOf('function setupProctoring'), src.indexOf("document.addEventListener('copy'"));
+  assert.match(block, /let away = false/, '要有「人在不在」的狀態');
+  assert.match(block, /function markAway/);
+  assert.match(block, /if \(away\s*\|\|/, '已經在外面就不能再記一次');
+  assert.match(block, /function markBack/, '回來要能把狀態清掉，下一次離開才算得到');
+  // 記一筆離開的地方只能有一個（markAway 裡面），blur 與 visibilitychange
+  // 都要走它。兩個監聽器各自記一筆的話，切一次分頁就會變成兩次。
+  assert.equal((block.match(/onViolation\('leave'/g) || []).length, 1,
+    'blur 與 visibilitychange 都要走 markAway，不能各自直接記一筆');
+  assert.equal((block.match(/markAway\(/g) || []).length, 3,
+    'markAway 應該是一次定義 + 兩個監聽器各呼叫一次');
+});
+
+test('紀錄型事件不能被算成「需留意」', () => {
+  const src = require('fs').readFileSync(require.resolve('../server/routes/exam.js'), 'utf8');
+  const inserts = src.match(/INSERT INTO exam_events[^;]*/g) || [];
+  assert.ok(inserts.length > 0);
+  for (const i of inserts) {
+    assert.match(i, /severity/,
+      'severity 欄位的預設值是 warn，不明寫的話純紀錄也會被算成違規');
+  }
+});

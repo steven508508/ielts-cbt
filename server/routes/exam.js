@@ -162,8 +162,10 @@ router.get('/:id', loadAttempt, async (req, res) => {
     : null;
   const rules = resolveRules(assignment, full, chosen);
 
+  // 條件一定要跟回報事件時算的一模一樣，否則學生一重新整理，
+  // 被判定「不算違規」的那幾次又冒出來，次數平白跳上去。
   const leaves = await db.one(
-    "SELECT COUNT(*) AS n FROM exam_events WHERE attempt_id = ? AND type IN ('leave','fullscreen_exit')",
+    `SELECT COUNT(*) AS n FROM exam_events WHERE attempt_id = ? AND ${conduct.LEAVE_WHERE}`,
     [req.attempt.id]
   );
 
@@ -202,6 +204,16 @@ router.post('/:id/module/start', loadAttempt, async (req, res) => {
   const duration = rules.durations[mod] || 1800;
 
   const st = req.state.modules[mod];
+  // 已經交卷的科目不能再進來。以前這裡只看有沒有 endsAt，於是超過離開上限
+  // 被自動收卷之後，重新整理一下又能回到作答畫面，打什麼都被默默退掉。
+  if (st && st.finished) {
+    return res.status(409).json({
+      error: st.autoSubmitted
+        ? '這一科因為離開考試畫面次數超過上限，已經自動收卷'
+        : '這一科已經交卷',
+      finished: true, autoSubmitted: !!st.autoSubmitted,
+    });
+  }
   if (st && st.endsAt) {
     return res.json({
       startedAt: st.startedAt, endsAt: st.endsAt, serverTime: Date.now(),
@@ -212,8 +224,11 @@ router.post('/:id/module/start', loadAttempt, async (req, res) => {
   const endsAt = startedAt + duration * 1000;
   req.state.modules[mod] = { startedAt, endsAt, durationSec: duration };
   await db.exec('UPDATE attempts SET state = ?, current_module = ? WHERE id = ?', [JSON.stringify(req.state), mod, req.attempt.id]);
-  await db.exec('INSERT INTO exam_events (attempt_id, module, type, detail) VALUES (?,?,?,?)',
-    [req.attempt.id, mod, 'module_start', `時限 ${Math.round(duration / 60)} 分鐘`]);
+  // severity 一定要明寫。這個欄位的預設值是 'warn'，不寫的話
+  // 「開始作答」這種純紀錄也會被算進老師看到的「需留意」件數裡。
+  await db.exec(
+    'INSERT INTO exam_events (attempt_id, module, type, detail, severity) VALUES (?,?,?,?,?)',
+    [req.attempt.id, mod, 'module_start', `時限 ${Math.round(duration / 60)} 分鐘`, 'info']);
   res.json({
     startedAt, endsAt, serverTime: Date.now(), resumed: false,
     durationSec: duration, breakdown: rules.breakdown[mod],
@@ -251,11 +266,43 @@ router.post('/:id/event', loadAttempt, async (req, res) => {
 
   // 只有 warn 以上才算「離開」。裝置問題造成的離開不該把學生推向自動收卷。
   const row = await db.one(
-    `SELECT COUNT(*) AS n FROM exam_events
-      WHERE attempt_id = ? AND type IN ('leave','fullscreen_exit') AND severity <> 'info'`,
+    `SELECT COUNT(*) AS n FROM exam_events WHERE attempt_id = ? AND ${conduct.LEAVE_WHERE}`,
     [req.attempt.id]
   );
-  res.json({ ok: true, severity, excused: severity === 'info', reason, leaveCount: Number(row?.n || 0) });
+  const leaveCount = Number(row?.n || 0);
+
+  // 上限的處置由伺服器決定並執行。以前整段判斷只寫在前端，
+  // 學生只要不讓那段 JavaScript 跑完，超過幾次都不會被收卷 ——
+  // 那樣的「上限」等於沒有。
+  const assignment = req.attempt.assignment_id
+    ? await db.one('SELECT * FROM assignments WHERE id = ?', [req.attempt.assignment_id])
+    : null;
+  const test = await db.one('SELECT content FROM tests WHERE id = ?', [req.attempt.test_id]);
+  const rules = resolveRules(assignment, normalizePaper(JSON.parse(test.content)),
+    req.attempt.modules.split(','));
+  const p = rules.proctoring || {};
+  let autoSubmitted = false;
+  if (p.enabled && p.onExceed === 'submit' && conduct.exceedsLimit(leaveCount, p.maxLeaves)
+      && module && !req.state.modules?.[module]?.finished) {
+    req.state.modules[module] = {
+      ...(req.state.modules[module] || {}), finished: true, finishedAt: Date.now(),
+      autoSubmitted: true,
+    };
+    await db.exec('UPDATE attempts SET state = ? WHERE id = ?',
+      [JSON.stringify(req.state), req.attempt.id]);
+    await db.exec(
+      'INSERT INTO exam_events (attempt_id, module, type, detail, severity) VALUES (?,?,?,?,?)',
+      [req.attempt.id, module, 'auto_submit',
+        `離開 ${leaveCount} 次，超過上限 ${p.maxLeaves} 次`, 'alert']);
+    autoSubmitted = true;
+  }
+
+  res.json({
+    ok: true, severity, excused: severity === 'info', reason, leaveCount,
+    maxLeaves: p.maxLeaves || 0,
+    remaining: p.maxLeaves > 0 ? conduct.remainingLeaves(leaveCount, p.maxLeaves) : null,
+    autoSubmitted,
+  });
 });
 
 /** 老師查看某場考試的紀律事件 */

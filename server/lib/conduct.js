@@ -51,9 +51,41 @@ function classify(type, { module = null, msSinceDeviceIssue = null } = {}) {
   return { severity: 'warn', reason: null };
 }
 
+/** 哪些事件算「離開考試畫面」 */
+const LEAVE_TYPES = ['leave', 'fullscreen_exit'];
+
+/**
+ * 「離開次數」只有一個定義，就寫在這裡。
+ *
+ * 以前這條規則被抄成三份 SQL 散在 exam.js 與 results.js 裡，而且抄錯了一份：
+ * 回報事件當下算的有排除 info，但學生一重新整理，考卷帶回來的次數又把
+ * info 算了進去。於是「麥克風權限被擋、去改設定」明明被判定為不算違規，
+ * 學生只要重新整理頁面，次數就突然跳上去，下一個小動作就被自動收卷。
+ */
+const LEAVE_WHERE = "type IN ('leave','fullscreen_exit') AND severity <> 'info'";
+
 /** 只有 warn 以上才計入「離開次數」（自動收卷的門檻用這個）*/
 function countsAsLeave(severity) {
   return severity === 'warn' || severity === 'alert';
+}
+
+/**
+ * 到了要處置的程度了嗎。
+ *
+ * maxLeaves 在介面上寫的是「**允許**離開畫面幾次」、處置寫的是「**超過**上限時」，
+ * 所以 maxLeaves = 2 的意思是「離開兩次沒關係，第三次才處置」。
+ * 舊版用 `count >= maxLeaves`，在第二次就收卷，比老師設定的嚴格一級。
+ */
+function exceedsLimit(count, maxLeaves) {
+  const limit = Number(maxLeaves) || 0;
+  return limit > 0 && Number(count) > limit;
+}
+
+/** 還可以離開幾次才會被處置 */
+function remainingLeaves(count, maxLeaves) {
+  const limit = Number(maxLeaves) || 0;
+  if (limit <= 0) return Infinity;
+  return Math.max(0, limit - Number(count) + 1);
 }
 
 const SEVERITY_LABEL = {
@@ -63,6 +95,7 @@ const SEVERITY_LABEL = {
 };
 
 module.exports = {
-  classify, countsAsLeave, SEVERITY_LABEL,
+  classify, countsAsLeave, exceedsLimit, remainingLeaves, SEVERITY_LABEL,
+  LEAVE_TYPES, LEAVE_WHERE,
   NO_FULLSCREEN_MODULES, DEVICE_GRACE_MS, ALWAYS_INFO, ALWAYS_ALERT,
 };

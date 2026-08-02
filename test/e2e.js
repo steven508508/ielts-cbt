@@ -429,6 +429,82 @@ async function call(method, path, body, token) {
   const res5stu = await call('GET', `/results/${att5}`, null, stu5);
   ok(res5stu.data.conduct?.events?.length === 0, '學生在成績頁看不到事件明細');
 
+  // ── 離開次數的算法，三個地方要一致；上限要真的由伺服器執行 ──────
+  console.log('\n離開次數與自動收卷');
+
+  // ① 同一場考試，重新整理拿到的次數要跟回報當下一樣。
+  //    以前考卷那支 API 沒有排除 info，於是「麥克風權限被擋、去改設定」
+  //    這種被判定不算違規的離開，學生一重新整理次數就跳上去。
+  const dev1 = await call('POST', `/exam/${att5}/event`,
+    { type: 'device_permission', module: 'listening', detail: '麥克風被拒' }, stu5);
+  ok(dev1.data.severity === 'info', '裝置權限問題本身不算違規');
+  const dev2 = await call('POST', `/exam/${att5}/event`,
+    { type: 'leave', module: 'listening', detail: '去改瀏覽器設定' }, stu5);
+  ok(dev2.data.excused === true && dev2.data.leaveCount === 2,
+    `寬限期內的離開不計入次數（仍是 ${dev2.data.leaveCount} 次）`);
+  const reload5 = await call('GET', `/exam/${att5}`, null, stu5);
+  ok(reload5.data.leaveCount === dev2.data.leaveCount,
+    `重新整理後的次數跟回報當下一致（${reload5.data.leaveCount} vs ${dev2.data.leaveCount}）`,
+    `重新整理拿到 ${reload5.data.leaveCount}，回報當下是 ${dev2.data.leaveCount}`);
+
+  // ② 上限的語意：介面寫「允許離開幾次」+「超過上限時」，
+  //    所以設 2 的意思是離開兩次沒事，第三次才處置。
+  // 用一份專屬的小試卷，不要共用示範試卷：/exam/start 對同一份試卷
+  // 會沿用還沒交的那一場，接到別的測試留下的考試就會連帶繼承它的狀態
+  // （例如上面那個裝置權限的寬限期），次數就完全對不起來了。
+  const limTest = await call('POST', '/tests', { paper: {
+    title: `離開上限測試 ${Date.now()}`, testType: 'academic',
+    modules: [{ module: 'reading', sections: [{ title: 'P1', passage: 'Text.', groups: [
+      { type: 'tfng', instructions: 'x', questions: [{ number: 1, text: 'Statement.', answers: ['TRUE'] }] },
+    ] }] }],
+  } }, tea);
+  const limitAsg = await call('POST', '/tests/assignments', {
+    testId: limTest.data.id, userIds: [me5.data.user.id], modules: 'reading', maxAttempts: 9,
+    proctoring: { enabled: true, requireFullscreen: false, blockCopy: false,
+      warnOnLeave: true, maxLeaves: 2, onExceed: 'submit' },
+  }, tea);
+  const limStart = await call('POST', '/exam/start',
+    { assignmentId: limitAsg.data.ids[0], testId: limTest.data.id }, stu5);
+  const limAt = limStart.data.attemptId;
+  ok(!!limAt && limStart.data.resumed !== true, '這一段用自己的試卷，拿到的是全新的一場考試');
+  const stu6 = stu5;
+  await call('POST', `/exam/${limAt}/module/start`, { module: 'reading' }, stu6);
+
+  const hit = [];
+  for (let i = 0; i < 3; i += 1) {
+    hit.push((await call('POST', `/exam/${limAt}/event`,
+      { type: 'leave', module: 'reading', detail: '切分頁' }, stu6)).data);
+  }
+  ok(hit[0].autoSubmitted === false && hit[1].autoSubmitted === false,
+    '設定「允許 2 次」時，前兩次不收卷');
+  ok(hit[2].autoSubmitted === true, '第 3 次才自動收卷');
+  ok(hit[0].remaining === 2 && hit[1].remaining === 1,
+    `「再離開幾次就收卷」算得對（${hit[0].remaining} → ${hit[1].remaining}）`);
+
+  // ③ 收卷是伺服器做的，不是靠前端那段 JavaScript。
+  //    學生把前端停掉直接打 API，一樣要被擋。
+  const afterAns = await call('POST', `/exam/${limAt}/answers`,
+    { items: [{ module: 'reading', number: 1, response: 'TRUE' }] }, stu6);
+  ok((afterAns.data.rejected || []).length === 1 && afterAns.data.saved === 0,
+    '自動收卷後，直接打 API 也存不進答案');
+  const reopen = await call('POST', `/exam/${limAt}/module/start`, { module: 'reading' }, stu6);
+  ok(reopen.status === 409 && reopen.data.autoSubmitted === true,
+    '自動收卷後不能重新整理再進來作答');
+
+  // ④ 老師端的數字：純紀錄不能被算成「需留意」
+  const limRes = await call('GET', `/results/${limAt}`, null, tea);
+  ok(limRes.data.conduct.bySeverity.info >= 1 && limRes.data.conduct.leaveCount === 3,
+    `成績頁：離開 3 次、紀錄型 ${limRes.data.conduct.bySeverity.info} 件`);
+  ok(!limRes.data.conduct.flagged.module_start,
+    '「開始作答」是純紀錄，不能出現在需留意的數字裡');
+  ok(limRes.data.conduct.flagged.leave === 3,
+    '需留意的數字方塊只算真的違規的那幾次');
+  ok(limRes.data.conduct.counts.auto_submit === 1, '自動收卷本身也留下紀錄');
+
+  await call('DELETE', `/tests/assignments/${limitAsg.data.ids[0]}`, null, tea);
+  await call('POST', '/manage/results/bulk', { action: 'delete', ids: [limAt], force: true }, adm);
+  await call('DELETE', `/tests/${limTest.data.id}`, null, adm);
+
   console.log('\n預設值（沒特別設定時不應該改變原本行為）');
   const plain = await call('GET', `/exam/${attemptId}`, null, stu);
   ok(plain.data.rules.proctoring.enabled === false, '沒開監考時預設關閉');

@@ -103,9 +103,12 @@ const Results = (() => {
   const SEV_LABEL = { info: '紀錄', warn: '需留意', alert: '可疑' };
 
   function conductReview() {
-    const c = D.conduct || { counts: {}, events: [], bySeverity: {} };
+    const c = D.conduct || { counts: {}, flagged: {}, events: [], bySeverity: {} };
+    // 數字方塊要跟上面那句「有沒有異常」用同一套算法，
+    // 不然會出現標題說 0 次、方塊卻紅字寫 1 的情況。
+    const shown = c.flagged || c.counts || {};
     const isStaff = API.user?.role !== 'student';
-    const suspicious = c.leaveCount || c.counts.copy_blocked || c.counts.paste_blocked;
+    const suspicious = c.leaveCount || shown.copy_blocked || shown.paste_blocked;
     const excused = c.excusedCount || 0;
 
     return el('div', {},
@@ -121,7 +124,7 @@ const Results = (() => {
               `另外有 ${excused} 次離開是系統判定為裝置問題（例如處理麥克風權限、或在不要求全螢幕的科目退出全螢幕），`,
               '不計入上面的次數。')
           : null,
-        el('div', { class: 'row' }, Object.entries(c.counts).map(([k, n]) => {
+        el('div', { class: 'row' }, Object.entries(shown).map(([k, n]) => {
           const [label, kind] = EVENT_LABEL[k] || [k, ''];
           if (['module_start', 'return', 'fullscreen_enter', 'device_check'].includes(k)) return null;
           return el('div', { style: { minWidth: '130px', flex: '0 0 auto' } },

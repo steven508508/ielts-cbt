@@ -138,9 +138,11 @@ const Exam = (() => {
     if (r.excused) return;
     const count = r.leaveCount ?? S.leaveCount;
 
-    // 超過上限的處置
-    if (p.maxLeaves > 0 && count >= p.maxLeaves && p.onExceed === 'submit') {
-      await reportEvent('auto_submit', `離開 ${count} 次，超過上限 ${p.maxLeaves}`);
+    // 超過上限的處置。真正的判定與收卷在伺服器，這裡只是把結果講給學生聽；
+    // 前端自己再算一次是為了離線或請求失敗時也還有提醒。
+    const overLimit = r.autoSubmitted
+      || (p.maxLeaves > 0 && p.onExceed === 'submit' && count > p.maxLeaves);
+    if (overLimit) {
       await notice('已自動結束這一科', el('div', {},
         el('p', {}, `你離開考試畫面 ${count} 次，已超過老師設定的上限（${p.maxLeaves} 次）。`),
         el('p', {}, '這一科已自動收卷，紀錄會提供給老師。')));
@@ -149,12 +151,14 @@ const Exam = (() => {
 
     if (!p.warnOnLeave || violationOpen) return;
     violationOpen = true;
+    // 「上限 2 次」的意思是還可以離開 2 次，第 3 次才處置。
+    const left = r.remaining ?? (p.maxLeaves > 0 ? Math.max(0, p.maxLeaves - count + 1) : null);
     const over = p.maxLeaves > 0 ? `（第 ${count} 次，上限 ${p.maxLeaves} 次）` : `（第 ${count} 次）`;
     await notice('考試紀律提醒', el('div', {},
       el('p', {}, el('b', {}, `偵測到你${label}${over}`)),
       el('p', {}, '考試進行中請勿切換分頁、視窗或離開全螢幕，這些行為都會被記錄下來給老師。'),
-      p.maxLeaves > 0 && p.onExceed === 'submit'
-        ? el('p', { style: { color: '#c0392b' } }, `再離開 ${Math.max(0, p.maxLeaves - count)} 次，這一科就會自動收卷。`)
+      p.maxLeaves > 0 && p.onExceed === 'submit' && left != null
+        ? el('p', { style: { color: '#c0392b' } }, `再離開 ${left} 次，這一科就會自動收卷。`)
         : null));
     violationOpen = false;
     if (p.requireFullscreen && !document.fullscreenElement) await ensureFullscreen();
@@ -177,21 +181,41 @@ const Exam = (() => {
     if (S._proctorBound) return;
     S._proctorBound = true;
 
+    // 「離開」是一個狀態，不是一連串事件。
+    //
+    // 切一次分頁，瀏覽器會先送 blur、再送 visibilitychange，兩個監聽器
+    // 各記一次，於是學生只切走一次卻被記成兩次。老師設「允許離開 2 次、
+    // 超過自動收卷」，學生第一次切分頁就直接被收卷。
+    // 現在改成：出去記一次，回來才重新開始算。
+    let away = false;
+    function markAway(label) {
+      if (away || !S || !S.module || !proc().enabled) return;
+      away = true;
+      onViolation('leave', label);
+    }
+    function markBack() {
+      if (!away) return;
+      away = false;
+      if (S?.module && proc().enabled) reportEvent('return');
+    }
+
     document.addEventListener('visibilitychange', () => {
       if (!S || !S.module) return;
       // 沒開監考就完全不要回報。以前 return 沒有被 proc().enabled 擋住，
       // 於是關掉監考的考試照樣一路寫 exam_events，而那張表沒有任何清理機制。
       if (!proc().enabled) return;
-      if (document.visibilityState === 'hidden') onViolation('leave', '切換到其他分頁或視窗');
-      else reportEvent('return');
+      if (document.visibilityState === 'hidden') markAway('切換到其他分頁或視窗');
+      else markBack();
     });
+
+    window.addEventListener('focus', markBack);
 
     window.addEventListener('blur', () => {
       if (!S || !S.module || document.visibilityState === 'hidden') return;
       // 只有真的切走才算，點擊 iframe 之類的忽略
       setTimeout(() => {
         if (document.hasFocus() || !S.module) return;
-        onViolation('leave', '離開考試視窗');
+        markAway('離開考試視窗');
       }, 400);
     });
 
