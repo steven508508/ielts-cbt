@@ -2,6 +2,7 @@
 const express = require('express');
 const db = require('../db');
 const { requireAuth, requireStaff } = require('../middleware/auth');
+const scope = require('../lib/scope');
 const { normalizePaper, flattenQuestions, sectionMedia } = require('../lib/paper');
 const bands = require('../lib/bands');
 const grade = require('../lib/grade');
@@ -26,6 +27,8 @@ router.get('/', requireStaff, async (req, res) => {
   if (testId) { where.push('a.test_id = ?'); params.push(testId); }
   if (classGroup) { where.push('u.class_group = ?'); params.push(classGroup); }
   if (status) { where.push('a.status = ?'); params.push(status); }
+  const f = await scope.classFilter(req.user, 'u.class_group');
+  if (f.sql) { where.push(f.sql.replace(/^ AND /, '').trim()); params.push(...f.params); }
   const rows = await db.query(
     `SELECT a.id, a.status, a.started_at, a.submitted_at, a.modules,
             a.listening_band, a.reading_band, a.writing_band, a.speaking_band, a.overall_band,
@@ -47,6 +50,9 @@ router.get('/:id', async (req, res) => {
   if (!attempt) return res.status(404).json({ error: '找不到這場考試' });
   if (attempt.user_id !== req.user.id && req.user.role === 'student')
     return res.status(403).json({ error: '權限不足' });
+  // 班級隔離：受限的老師看不到別班學生的成績、逐字稿與錄音
+  if (req.user.role !== 'student' && !(await scope.canSeeAttempt(req.user, attempt.id)))
+    return res.status(403).json({ error: '這位學生不在你管理的班級內' });
 
   const user = await db.one(
     'SELECT id, name, username, candidate_no, class_group, date_of_birth, nationality FROM users WHERE id = ?',
@@ -184,6 +190,8 @@ router.post('/:id/grade', requireStaff, async (req, res) => {
   const { module: mod, band, criteria, comment, taskNo } = req.body || {};
   const attempt = await db.one('SELECT id FROM attempts WHERE id = ?', [req.params.id]);
   if (!attempt) return res.status(404).json({ error: '找不到這場考試' });
+  if (!(await scope.canSeeAttempt(req.user, attempt.id)))
+    return res.status(403).json({ error: '這位學生不在你管理的班級內' });
 
   if (mod === 'writing' && taskNo) {
     await db.exec(
@@ -223,6 +231,8 @@ router.post('/:id/grade', requireStaff, async (req, res) => {
 
 /** 老師：重新批改（例如改了答案卷之後） */
 router.post('/:id/regrade', regradeLimit, requireStaff, async (req, res) => {
+  if (!(await scope.canSeeAttempt(req.user, req.params.id)))
+    return res.status(403).json({ error: '這位學生不在你管理的班級內' });
   try {
     const out = await grade.gradeAttempt(req.params.id, {
       speakingMode: req.body?.speakingMode || 'ai',
@@ -245,11 +255,12 @@ router.get('/stats/overview', requireStaff, async (req, res) => {
      FROM tests t LEFT JOIN attempts a ON a.test_id = t.id AND a.status = 'graded'
      GROUP BY t.id, t.title ORDER BY t.id DESC`
   );
+  const cf = await scope.classFilter(req.user, 'u.class_group');
   const byClass = await db.query(
     `SELECT u.class_group, COUNT(a.id) AS attempts, AVG(a.overall_band) AS avg_overall
      FROM attempts a JOIN users u ON u.id = a.user_id
-     WHERE a.status = 'graded' AND u.class_group IS NOT NULL
-     GROUP BY u.class_group ORDER BY u.class_group`
+     WHERE a.status = 'graded' AND u.class_group IS NOT NULL ${cf.sql}
+     GROUP BY u.class_group ORDER BY u.class_group`, cf.params
   );
   const pending = await db.one(
     "SELECT COUNT(*) AS n FROM attempts WHERE status IN ('submitted','grading')"

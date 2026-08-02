@@ -255,9 +255,13 @@ async function call(method, path, body, token) {
   ok(monStu.status === 403, '學生不能看即時監看');
 
   console.log('\n資料總覽');
-  const ov = await call('GET', '/manage/overview', null, tea);
+  // v2.23.0：全站統計、維護紀錄、清理、整份備份都改成只給管理員 ——
+  // 這些東西沒有辦法照班級過濾，給了受限的老師就等於繞過班級隔離。
+  const ov = await call('GET', '/manage/overview', null, adm);
   ok(ov.status === 200 && ov.data.counts.attempts > 0, `資料總覽：${ov.data.counts.attempts} 場考試，資料庫 ${(ov.data.dbBytes / 1048576).toFixed(2)} MB`);
   ok(ov.data.storage.totalBytes >= 0 && ov.data.policy, '含空間統計與保留政策');
+  const ovTea = await call('GET', '/manage/overview', null, tea);
+  ok(ovTea.status === 403, '老師看不到全站資料總覽（無法照班級過濾）');
   const ovStu = await call('GET', '/manage/overview', null, stu);
   ok(ovStu.status === 403, '學生看不到資料總覽');
 
@@ -322,7 +326,11 @@ async function call(method, path, body, token) {
   const guard = await call('POST', '/manage/tests/bulk', { action: 'delete', ids: [testId] }, adm);
   ok(guard.status === 409 && guard.data.needsForce, '刪除有成績的試卷會先攔下來要求確認');
 
-  const backup = await fetch(`${BASE}/api/manage/backup/test/${testId}.json`, { headers: { authorization: `Bearer ${tea}` } });
+  // 備份會把整份試卷底下所有學生的作答、作文與逐字稿倒出來，沒辦法照班級
+  // 過濾，所以只給管理員
+  const backupTea = await fetch(`${BASE}/api/manage/backup/test/${testId}.json`, { headers: { authorization: `Bearer ${tea}` } });
+  ok(backupTea.status === 403, '老師拿不到完整備份（含全校學生的作文與逐字稿）');
+  const backup = await fetch(`${BASE}/api/manage/backup/test/${testId}.json`, { headers: { authorization: `Bearer ${adm}` } });
   const backupData = await backup.json();
   ok(backup.ok && backupData.test && backupData.attempts.length > 0,
     `完整備份含試卷與 ${backupData.attempts?.length} 場考試`);
@@ -336,18 +344,21 @@ async function call(method, path, body, token) {
   const polTea = await call('PUT', '/manage/policy', { policy: { keepResultsMonths: 1 } }, tea);
   ok(polTea.status === 403, '老師不能改保留政策');
 
-  const dry = await call('POST', '/manage/cleanup', { dryRun: true, policy: { keepResultsMonths: 999 } }, tea);
+  const dry = await call('POST', '/manage/cleanup', { dryRun: true, policy: { keepResultsMonths: 999 } }, adm);
   ok(dry.data.report.dryRun === true && dry.data.report.affected === 0, '試算不會刪除任何東西');
 
-  const realTea = await call('POST', '/manage/cleanup', { dryRun: false }, tea);
-  ok(realTea.status === 403, '老師不能實際執行清理');
+  // v2.23.0：清理連試算都改成只給管理員 —— 報告本身就是一份全站資料摘要
+  const dryTea = await call('POST', '/manage/cleanup', { dryRun: true }, tea);
+  ok(dryTea.status === 403, '老師連清理試算都不能跑（報告本身就是全站摘要）');
 
   const abandoned = await call('POST', '/manage/cleanup', {
     dryRun: true, policy: { keepAbandonedDays: 0, keepResultsMonths: 0, keepAiLogsDays: 0, deleteUnusedMediaDays: 0, keepSpeakingAudioMonths: 0 },
   }, adm);
   ok(abandoned.data.report.affected === 0, '保留天數設 0 代表永久保留，不會刪除');
 
-  const mlog = await call('GET', '/manage/log', null, tea);
+  const mlogTea = await call('GET', '/manage/log', null, tea);
+  ok(mlogTea.status === 403, '老師看不到維護紀錄');
+  const mlog = await call('GET', '/manage/log', null, adm);
   ok(Array.isArray(mlog.data.log) && mlog.data.log.length > 0, `維護紀錄有 ${mlog.data.log.length} 筆`);
 
   // ── 老師自訂的考試規則 ─────────────────────────────────
@@ -737,7 +748,7 @@ async function call(method, path, body, token) {
   const gone = await call('GET', `/users?q=${stamp}`, null, adm);
   ok(gone.data.users.length === 0, '刪掉的成員真的不見了');
 
-  const mlog2 = await call('GET', '/manage/log', null, tea);
+  const mlog2 = await call('GET', '/manage/log', null, adm);
   ok(mlog2.data.log.some((r) => r.action === 'user_delete' || r.action === 'users_delete'),
     '刪除成員會留下維護紀錄');
 

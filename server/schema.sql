@@ -284,3 +284,16 @@ CREATE TABLE IF NOT EXISTS device_checks (
   INDEX idx_dc_time (created_at),
   CONSTRAINT fk_dc_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ── v2.22.1：班級隔離 ──────────────────────────────────────
+-- 老師管哪些班。**沒有任何一列 = 全校範圍**，這是刻意的：
+-- 升級之前就存在的老師帳號不會突然被鎖在外面，而科目負責人、教務、
+-- 代課老師這種本來就跨班的角色，不指定就好。要限制誰就明確給他班級。
+CREATE TABLE IF NOT EXISTS teacher_classes (
+  user_id     INT UNSIGNED NOT NULL,
+  class_group VARCHAR(60)  NOT NULL,
+  created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (user_id, class_group),
+  INDEX idx_tc_class (class_group),
+  CONSTRAINT fk_tc_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

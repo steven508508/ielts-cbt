@@ -462,3 +462,13 @@ table.data tr.warn-row td{background:#fffaf0}
 }
 .rev-opts .tag.ok  { background: #fff; color: #1e7d3c; border-color: #bfe3ca; }
 .rev-opts .tag.err { background: #fff; color: #a5342a; border-color: #f0c9c3; }
+
+/* ── 班級選擇器（設定老師管哪些班）───────────────────────── */
+.chip-picker{display:flex; flex-wrap:wrap; gap:.4rem; margin:.35rem 0 .2rem}
+.chip-picker .chip{
+  border:1px solid var(--line, #ccc); background:#fff; color:inherit;
+  padding:.28rem .7rem; border-radius:99px; cursor:pointer; font-size:.88rem;
+  user-select:none; white-space:nowrap;
+}
+.chip-picker .chip:hover{background:rgba(128,128,128,.1)}
+.chip-picker .chip.on{background:var(--accent, #005c8a); color:#fff; border-color:var(--accent, #005c8a); font-weight:600}

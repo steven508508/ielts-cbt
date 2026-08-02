@@ -6,6 +6,7 @@ const db = require('../db');
 const config = require('../config');
 const retention = require('../lib/retention');
 const { requireAuth, requireStaff, requireRole } = require('../middleware/auth');
+const scope = require('../lib/scope');
 
 const router = express.Router();
 router.use(requireAuth, requireStaff);
@@ -34,6 +35,15 @@ router.get('/', async (req, res) => {
     where.push('(username LIKE ? OR name LIKE ? OR candidate_no LIKE ? OR email LIKE ?)');
     params.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`);
   }
+  /* 班級隔離：被指定班級的老師只看得到自己班的學生。
+     教職員（老師／管理員）不屬於任何班級 —— 受限的老師看不到他們，
+     否則等於把全校的教職員名冊連 email 一起攤開給每一位老師。 */
+  const mine = await scope.classesOf(req.user);
+  if (mine !== null) {
+    where.push("u.role = 'student'");
+    if (mine.length) { where.push(`u.class_group IN (${mine.map(() => '?').join(',')})`); params.push(...mine); }
+    else where.push('1=0');
+  }
   const rows = await db.query(
     `SELECT u.id, u.username, u.name, u.email, u.role, u.class_group, u.candidate_no,
             u.date_of_birth, u.nationality, u.active, u.created_at,
@@ -43,6 +53,11 @@ router.get('/', async (req, res) => {
      ORDER BY FIELD(u.role,'admin','teacher','student'), u.class_group, u.name`,
     params
   );
+  // 老師的管轄班級一次帶出來（成員清單要顯示）
+  const teacherIds = rows.filter((r) => r.role === 'teacher').map((r) => r.id);
+  const byTeacher = await scope.classesForMany(teacherIds);
+  for (const r of rows) if (r.role === 'teacher') r.manages = byTeacher[r.id] || [];
+
   const summary = await db.query(
     'SELECT role, COUNT(*) AS n, SUM(active) AS active FROM users GROUP BY role'
   );
@@ -50,14 +65,22 @@ router.get('/', async (req, res) => {
     users: rows,
     summary: Object.fromEntries(summary.map((s) => [s.role, { total: Number(s.n), active: Number(s.active) }])),
     adminCount: await activeAdminCount(),
+    myClasses: mine,          // null = 全校
   });
 });
 
 router.get('/classes', async (req, res) => {
+  const f = await scope.classFilter(req.user, 'class_group');
   const rows = await db.query(
+    `SELECT class_group AS name, COUNT(*) AS n FROM users
+      WHERE role='student' AND class_group IS NOT NULL AND class_group <> '' ${f.sql}
+      GROUP BY class_group ORDER BY class_group`, f.params
+  );
+  // 管理員設定老師時要看得到全部班級，不受自己的（不存在的）限制影響
+  const all = req.user.role === 'admin' ? rows : await db.query(
     "SELECT class_group AS name, COUNT(*) AS n FROM users WHERE role='student' AND class_group IS NOT NULL AND class_group <> '' GROUP BY class_group ORDER BY class_group"
   );
-  res.json({ classes: rows });
+  res.json({ classes: rows, allClasses: all, myClasses: await scope.classesOf(req.user) });
 });
 
 router.post('/', async (req, res) => {
@@ -65,6 +88,11 @@ router.post('/', async (req, res) => {
   if (!username || !password || !name) return res.status(400).json({ error: '帳號、密碼、姓名為必填' });
   if (role !== 'student' && req.user.role !== 'admin')
     return res.status(403).json({ error: '只有管理員能建立老師或管理員帳號' });
+  // 受限的老師只能把學生加進自己管的班
+  if (role === 'student' && !(await scope.canSeeClass(req.user, classGroup))) {
+    const mine = await scope.classesOf(req.user);
+    return res.status(403).json({ error: `你只能新增這些班級的學生：${(mine || []).join('、')}` });
+  }
   const dup = await db.one('SELECT id FROM users WHERE username = ?', [username]);
   if (dup) return res.status(409).json({ error: `帳號 ${username} 已存在` });
   const id = await db.insert(
@@ -73,6 +101,10 @@ router.post('/', async (req, res) => {
     [username, await bcrypt.hash(String(password), 10), name, email || null, role,
      classGroup || null, candidateNo || null, dateOfBirth || null, nationality || null]
   );
+  // 建立老師時可以直接指定他管哪些班（空的 = 全校，例如科目負責人）
+  if (role === 'teacher' && Array.isArray(req.body.manages)) {
+    await scope.setClasses(id, req.body.manages);
+  }
   res.json({ id });
 });
 
@@ -80,6 +112,7 @@ router.post('/', async (req, res) => {
 router.post('/bulk', async (req, res) => {
   const { text, defaultPassword = 'ielts1234', classGroup = '' } = req.body || {};
   if (!text) return res.status(400).json({ error: '沒有內容' });
+  const mineB = await scope.classesOf(req.user);
   const lines = String(text).split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   const created = [];
   const skipped = [];
@@ -93,6 +126,10 @@ router.post('/bulk', async (req, res) => {
     const candNo = parts[4] || null;
     if (!username) {
       username = `s${Date.now().toString(36)}${created.length}`;
+    }
+    // 每一行都可以自帶班級，所以要逐行檢查，不能只看預設值
+    if (mineB !== null && !mineB.includes(String(cls || ''))) {
+      skipped.push(`${name}（${cls || '未指定班級'} 不在你管理的班級內）`); continue;
     }
     const dup = await db.one('SELECT id FROM users WHERE username = ?', [username]);
     if (dup) { skipped.push(`${name} (${username} 已存在)`); continue; }
@@ -112,8 +149,13 @@ router.put('/:id', async (req, res) => {
   if (!target) return res.status(404).json({ error: '找不到使用者' });
   if (target.role !== 'student' && req.user.role !== 'admin')
     return res.status(403).json({ error: '只有管理員能修改老師或管理員帳號' });
+  if (!(await scope.canSeeUser(req.user, id)) && req.user.role !== 'admin')
+    return res.status(403).json({ error: '這位學生不在你管理的班級內' });
 
   const f = req.body || {};
+  // 也不能把學生「搬」到自己管不到的班去
+  if (f.classGroup !== undefined && !(await scope.canSeeClass(req.user, f.classGroup)))
+    return res.status(403).json({ error: '不能把學生移到你沒有管理的班級' });
   const sets = [];
   const params = [];
   const map = {
@@ -152,6 +194,9 @@ router.put('/:id', async (req, res) => {
        以前不會 —— 帳號被盜、管理員重設密碼，攻擊者照樣可以用滿 12 小時。 */
     sets.push('token_version = token_version + 1');
   }
+  if (Array.isArray(f.manages) && req.user.role === 'admin') {
+    await scope.setClasses(id, f.manages);
+  }
   if (!sets.length) return res.json({ ok: true });
   params.push(id);
   await db.exec(`UPDATE users SET ${sets.join(', ')} WHERE id = ?`, params);
@@ -163,6 +208,8 @@ router.get('/:id/impact', async (req, res) => {
   const id = Number(req.params.id);
   const user = await db.one('SELECT id, username, name, role FROM users WHERE id = ?', [id]);
   if (!user) return res.status(404).json({ error: '找不到使用者' });
+  if (user.role === 'student' && !(await scope.canSeeUser(req.user, id)))
+    return res.status(403).json({ error: '這位學生不在你管理的班級內' });
   const [att, tests, asg] = await Promise.all([
     db.one('SELECT COUNT(*) AS n FROM attempts WHERE user_id = ?', [id]),
     db.one('SELECT COUNT(*) AS n FROM tests WHERE created_by = ?', [id]),
@@ -220,6 +267,10 @@ router.post('/bulk-action', async (req, res) => {
   if (staffTargets.length && req.user.role !== 'admin') {
     return res.status(403).json({ error: '只有管理員能操作老師或管理員帳號' });
   }
+  /* 整批都要在範圍內，否則整批拒絕。做一半再回報「成功」的話，
+     老師會以為全部都處理好了。 */
+  const chk = await scope.assertUsers(req.user, list);
+  if (!chk.ok) return res.status(403).json({ error: chk.error });
 
   if (action === 'activate' || action === 'deactivate') {
     const val = action === 'activate' ? 1 : 0;

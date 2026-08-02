@@ -5,6 +5,7 @@ const path = require('path');
 const config = require('../config');
 const retention = require('../lib/retention');
 const { requireAuth, requireStaff, requireRole } = require('../middleware/auth');
+const scope = require('../lib/scope');
 const { validatePaper, normalizePaper, countQuestions, QUESTION_TYPES } = require('../lib/paper');
 const notify = require('../lib/notify');
 
@@ -159,12 +160,26 @@ router.post('/:id/duplicate', requireStaff, async (req, res) => {
 
 // ── 指派 ───────────────────────────────────────────────────────
 router.get('/assignments/all', requireStaff, async (req, res) => {
+  /* 班級隔離。指派有兩種：指到某位學生（user_id）或指到整個班（class_group），
+     兩種都要照範圍過濾，不然老師會看到（甚至刪掉）別班的指派。 */
+  const mine = await scope.classesOf(req.user);
+  let where = '';
+  const params = [];
+  if (mine !== null) {
+    if (!mine.length) where = 'WHERE 1=0';
+    else {
+      const q = mine.map(() => '?').join(',');
+      where = `WHERE (u.class_group IN (${q}) OR a.class_group IN (${q}))`;
+      params.push(...mine, ...mine);
+    }
+  }
   const rows = await db.query(
     `SELECT a.*, t.title AS test_title, u.name AS student_name
      FROM assignments a
      JOIN tests t ON t.id = a.test_id
      LEFT JOIN users u ON u.id = a.user_id
-     ORDER BY a.created_at DESC`
+     ${where}
+     ORDER BY a.created_at DESC`, params
   );
   res.json({ assignments: rows });
 });
@@ -183,6 +198,14 @@ router.post('/assignments', requireStaff, async (req, res) => {
     examiner = null,              // 這一場的 AI 考官設定，留空 = 沿用系統預設
   } = req.body || {};
   if (!testId) return res.status(400).json({ error: '請選擇試卷' });
+
+  // 班級隔離：只能指派給自己管的班／自己班的學生
+  if (classGroup && !(await scope.canSeeClass(req.user, classGroup))) {
+    const mine = await scope.classesOf(req.user);
+    return res.status(403).json({ error: `你只能指派給這些班級：${(mine || []).join('、')}` });
+  }
+  const chk = await scope.assertUsers(req.user, userIds);
+  if (!chk.ok) return res.status(403).json({ error: chk.error });
 
   // 只留下有填、且是正整數秒數的科目
   const cleanOverrides = {};
@@ -259,6 +282,13 @@ router.delete('/assignments/:id', requireStaff, async (req, res) => {
   // 沒有這道檢查的話，非數字的 id 會直接送進 SQL：
   // MySQL 嚴格模式會丟出 Truncated incorrect DOUBLE value，變成看不懂的 500
   if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: '指派編號不正確' });
+  const asg = await db.one(
+    `SELECT a.id, a.class_group, u.class_group AS student_class
+       FROM assignments a LEFT JOIN users u ON u.id = a.user_id WHERE a.id = ?`, [id]);
+  if (!asg) return res.status(404).json({ error: '找不到這筆指派' });
+  const target = asg.class_group || asg.student_class;
+  if (!(await scope.canSeeClass(req.user, target)))
+    return res.status(403).json({ error: '這筆指派不在你管理的班級內' });
   const r = await db.exec('DELETE FROM assignments WHERE id = ?', [id]);
   if (!r.affectedRows) return res.status(404).json({ error: '找不到這筆指派' });
   res.json({ ok: true });

@@ -147,6 +147,19 @@ async function migrate() {
   }
   if (added.length) console.log('[migrate] 新增欄位：', added.join(', '));
 
+  /* v2.22.1：班級隔離。schema.sql 的 CREATE TABLE IF NOT EXISTS 只有在
+     initSchema 跑得到，既有安裝也要補上。 */
+  try {
+    await exec(`CREATE TABLE IF NOT EXISTS teacher_classes (
+      user_id     INT UNSIGNED NOT NULL,
+      class_group VARCHAR(60)  NOT NULL,
+      created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (user_id, class_group),
+      INDEX idx_tc_class (class_group),
+      CONSTRAINT fk_tc_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+  } catch (e) { console.warn('[migrate] teacher_classes:', e.message); }
+
   // v2.15.1：severity 欄位的預設值是 'warn'，而「開始作答」這種純紀錄
   // 當初寫入時沒有指定 severity，於是全部被存成 warn，老師在成績頁上
   // 看到的「需留意」件數因此永遠比實際多。把舊資料改回 info。

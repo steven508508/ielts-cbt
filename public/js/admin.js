@@ -872,7 +872,13 @@ const Admin = (() => {
                   self ? el('span', { class: 'pill info', style: { marginLeft: '.4rem' } }, '這是你') : null,
                   el('div', { class: 'small muted' }, u.username, u.email ? ` · ${u.email}` : '')),
                 el('td', {}, el('span', { class: `pill ${ROLE_PILL[u.role]}` }, ROLE_LABEL[u.role] || u.role)),
-                el('td', { class: 'small' }, u.class_group || '—',
+                el('td', { class: 'small' },
+                  /* 老師顯示他管的班級，一目了然誰被限制了、誰是全校範圍 */
+                  u.role === 'teacher'
+                    ? (u.manages?.length
+                      ? el('span', {}, u.manages.join('、'))
+                      : el('span', { class: 'pill info' }, '全校'))
+                    : (u.class_group || '—'),
                   u.candidate_no ? el('div', { class: 'small muted' }, `編號 ${u.candidate_no}`) : null),
                 el('td', { class: 'small' },
                   Number(u.attempts) > 0
@@ -962,6 +968,34 @@ const Admin = (() => {
     const isSelf = u && u.id === API.user?.id;
     const f = {};
 
+    // 班級清單：管理員設定老師的管轄範圍時，要看得到全校的班級
+    let allClasses = [];
+    try { allClasses = (await API.get('/users/classes')).allClasses || []; } catch { /* 沒有就算了 */ }
+    const manages = new Set(u?.manages || []);
+    const classBox = el('div', { class: 'chip-picker' });
+    const paintClasses = () => {
+      classBox.replaceChildren(
+        ...allClasses.map((c) => el('label', {
+          class: 'chip' + (manages.has(c.name) ? ' on' : ''),
+          onclick: (e) => {
+            e.preventDefault();
+            if (manages.has(c.name)) manages.delete(c.name); else manages.add(c.name);
+            paintClasses();
+          },
+        }, `${c.name}（${c.n}）`)),
+        ...(allClasses.length ? [] : [el('span', { class: 'small muted' }, '目前還沒有任何班級。')]));
+    };
+    paintClasses();
+
+    const teacherFields = el('div', {},
+      el('label', { class: 'field' },
+        el('span', {}, '管理的班級'),
+        classBox,
+        el('span', { class: 'small muted' },
+          '一個都不選＝全校範圍（科目負責人、教務、代課老師就這樣設）。'),
+        el('span', { class: 'small muted' },
+          '選了之後，這位老師只看得到、也只能指派與批改這些班級的學生。')));
+
     const roleSel = el('select', { disabled: !isAdmin || isSelf },
       el('option', { value: 'student', selected: !u || u.role === 'student' }, '學生'),
       el('option', { value: 'teacher', selected: u?.role === 'teacher' }, '老師'),
@@ -982,6 +1016,7 @@ const Admin = (() => {
 
     const syncRoleFields = () => {
       studentFields.style.display = roleSel.value === 'student' ? '' : 'none';
+      teacherFields.style.display = (roleSel.value === 'teacher' && isAdmin) ? '' : 'none';
     };
     roleSel.addEventListener('change', syncRoleFields);
 
@@ -1000,7 +1035,8 @@ const Admin = (() => {
           (f.password = el('input', { type: 'text', value: u ? '' : 'ielts1234' })))),
       el('label', { class: 'field' }, el('span', {}, 'Email（選填）'),
         (f.email = el('input', { type: 'email', value: u?.email || '' }))),
-      studentFields);
+      studentFields,
+      teacherFields);
     syncRoleFields();
 
     const ok = await UI.modal({
@@ -1018,6 +1054,7 @@ const Admin = (() => {
       dateOfBirth: f.dateOfBirth.value || null,
       nationality: f.nationality.value.trim(),
     };
+    if (roleSel.value === 'teacher' && isAdmin) payload.manages = [...manages];
     if (!payload.name) return UI.alert('請填姓名');
     if (f.password.value) payload.password = f.password.value;
 

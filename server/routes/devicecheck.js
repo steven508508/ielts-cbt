@@ -10,6 +10,7 @@ const jwt = require('jsonwebtoken');
 const config = require('../config');
 const db = require('../db');
 const { requireAuth, requireStaff } = require('../middleware/auth');
+const scope = require('../lib/scope');
 const { rateLimit } = require('../middleware/rateLimit');
 const devicecheck = require('../lib/devicecheck');
 
@@ -58,12 +59,17 @@ router.post('/', rateLimit({ key: 'devicecheck', by: 'ip', windowMs: 60_000, max
 
 /** 老師端：誰測過、誰有問題 */
 router.get('/list', requireAuth, requireStaff, async (req, res) => {
+  const items = await devicecheck.list({
+    limit: req.query.limit,
+    userId: req.query.userId,
+    onlyProblems: req.query.problems === '1',
+  });
+  /* 班級隔離。沒登入就測的那些沒有 class_group，一律只給不受限制的人看 ——
+     受限的老師看到一堆匿名紀錄也沒有意義。 */
+  const mine = await scope.classesOf(req.user);
   res.json({
-    items: await devicecheck.list({
-      limit: req.query.limit,
-      userId: req.query.userId,
-      onlyProblems: req.query.problems === '1',
-    }),
+    items: mine === null ? items
+      : items.filter((i) => i.class_group && mine.includes(String(i.class_group))),
   });
 });
 

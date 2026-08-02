@@ -6,6 +6,7 @@ const express = require('express');
 const db = require('../db');
 const config = require('../config');
 const { requireAuth, requireStaff, requireRole } = require('../middleware/auth');
+const scope = require('../lib/scope');
 const retention = require('../lib/retention');
 
 const router = express.Router();
@@ -14,7 +15,7 @@ router.use(requireAuth, requireStaff);
 const idList = (ids) => (Array.isArray(ids) ? ids : []).map(Number).filter((n) => Number.isInteger(n) && n > 0);
 
 // ── 總覽：空間、筆數、最舊資料 ────────────────────────────────
-router.get('/overview', async (req, res) => {
+router.get('/overview', requireRole('admin'), async (req, res) => {
   const counts = {};
   for (const t of ['users', 'tests', 'assignments', 'attempts', 'answers', 'writing_responses',
     'speaking_responses', 'module_results', 'media', 'question_bank', 'ai_logs']) {
@@ -130,7 +131,7 @@ router.put('/policy', requireRole('admin'), async (req, res) => {
 });
 
 /** 試算 / 執行清理 */
-router.post('/cleanup', async (req, res) => {
+router.post('/cleanup', requireRole('admin'), async (req, res) => {
   const dryRun = req.body?.dryRun !== false;
   if (!dryRun && req.user.role !== 'admin')
     return res.status(403).json({ error: '只有管理員能實際執行清理' });
@@ -146,7 +147,7 @@ router.post('/cleanup', async (req, res) => {
   }
 });
 
-router.get('/log', async (req, res) => {
+router.get('/log', requireRole('admin'), async (req, res) => {
   const rows = await db.query('SELECT * FROM maintenance_log ORDER BY id DESC LIMIT 100');
   res.json({
     log: rows.map((r) => {
@@ -292,9 +293,13 @@ router.post('/tests/bulk', async (req, res) => {
 });
 
 // ── 成績管理 ──────────────────────────────────────────────────
-function resultFilterSql(q) {
+/* 成績清單、批次動作、匯出 CSV 共用同一個過濾器，班級隔離就掛在這裡 ——
+   只有一個地方，不會漏掉其中一條路。 */
+async function resultFilterSql(q, user) {
   const where = [];
   const params = [];
+  const f = await scope.classFilter(user, 'u.class_group');
+  if (f.sql) { where.push(f.sql.replace(/^ AND /, '').trim()); params.push(...f.params); }
   if (q.testId) { where.push('a.test_id = ?'); params.push(Number(q.testId)); }
   if (q.classGroup) { where.push('u.class_group = ?'); params.push(q.classGroup); }
   if (q.status) { where.push('a.status = ?'); params.push(q.status); }
@@ -313,7 +318,7 @@ function resultFilterSql(q) {
 }
 
 router.get('/results', async (req, res) => {
-  const { clause, params } = resultFilterSql(req.query);
+  const { clause, params } = await resultFilterSql(req.query, req.user);
   const limit = Math.min(2000, Math.max(1, Number(req.query.limit) || 500));
   const rows = await db.query(
     `SELECT a.id, a.status, a.archived, a.started_at, a.submitted_at, a.modules,
@@ -344,7 +349,7 @@ router.post('/results/bulk', async (req, res) => {
 
   // 也可以用條件批次選取（例如「刪除 12 個月前的成績」）
   if (!targets.length && filter) {
-    const { clause, params } = resultFilterSql(filter);
+    const { clause, params } = await resultFilterSql(filter, req.user);
     if (!clause) return res.status(400).json({ error: '為了安全，批次操作必須指定條件' });
     const rows = await db.query(
       `SELECT a.id FROM attempts a JOIN users u ON u.id = a.user_id ${clause}`, params
@@ -352,6 +357,27 @@ router.post('/results/bulk', async (req, res) => {
     targets = rows.map((r) => r.id);
   }
   if (!targets.length) return res.json({ ok: true, affected: 0, message: '沒有符合的資料' });
+
+  /* 班級隔離。用 filter 選的已經過濾過了，但直接帶 ids 進來的那一條路
+     以前完全繞過去 —— 老師在畫面上看不到別班的場次，卻可以自己送 id
+     把別班的成績封存甚至（管理員誤用時）刪掉。整批都要在範圍內，
+     否則整批拒絕：做一半再回報成功，比直接失敗更糟。 */
+  const mine = await scope.classesOf(req.user);
+  if (mine !== null) {
+    const rows = await db.query(
+      `SELECT a.id FROM attempts a JOIN users u ON u.id = a.user_id
+        WHERE a.id IN (${targets.map(() => '?').join(',')})
+          ${mine.length ? `AND u.class_group IN (${mine.map(() => '?').join(',')})` : 'AND 1=0'}`,
+      [...targets, ...mine]
+    );
+    const allowed = new Set((rows || []).map((r) => Number(r.id)));
+    const outside = targets.filter((id) => !allowed.has(Number(id)));
+    if (outside.length) {
+      return res.status(403).json({
+        error: `其中 ${outside.length} 筆不在你管理的班級內（你管理：${mine.join('、')}）`,
+      });
+    }
+  }
 
   if (action === 'archive' || action === 'unarchive') {
     await db.raw(`UPDATE attempts SET archived = ${action === 'archive' ? 1 : 0} WHERE id IN (${targets.join(',')})`);
@@ -386,7 +412,7 @@ router.post('/results/bulk', async (req, res) => {
 
 /** 匯出成績 CSV（含 BOM，Excel 開啟不亂碼） */
 router.get('/results/export.csv', async (req, res) => {
-  const { clause, params } = resultFilterSql(req.query);
+  const { clause, params } = await resultFilterSql(req.query, req.user);
   const rows = await db.query(
     `SELECT a.id, a.status, a.started_at, a.submitted_at,
             a.listening_band, a.reading_band, a.writing_band, a.speaking_band, a.overall_band,
@@ -410,7 +436,9 @@ router.get('/results/export.csv', async (req, res) => {
 });
 
 /** 打包備份：把一份試卷連同所有成績匯出成 JSON */
-router.get('/backup/test/:id.json', async (req, res) => {
+router.get('/backup/test/:id.json', requireRole('admin'), async (req, res) => {
+  /* 這一支會把整份試卷底下**所有**學生的作答、作文與口說逐字稿倒出來，
+     沒有辦法照班級過濾（備份本來就是整份）。所以只給管理員。 */
   const id = Number(req.params.id);
   const test = await db.one('SELECT * FROM tests WHERE id = ?', [id]);
   if (!test) return res.status(404).json({ error: '找不到試卷' });

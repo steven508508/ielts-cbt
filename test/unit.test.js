@@ -1980,3 +1980,64 @@ test('WebSocket：token 走子協定，不要放在網址上', () => {
   assert.match(rt, /sec-websocket-protocol/);
   assert.match(rt, /handleProtocols/, '不回應子協定的話瀏覽器會判定握手失敗');
 });
+
+// ══════════════════════════════════════════════════════════════
+// v2.23.0：班級隔離
+// （實測在 test/scope.js —— 那一支建兩個班、三位老師實際打端點。
+//   這裡釘住的是「不能被改回去」的關鍵決定。）
+// ══════════════════════════════════════════════════════════════
+
+test('班級隔離：沒指定班級 = 全校，這是刻意的', () => {
+  const src = require('fs').readFileSync(require.resolve('../server/lib/scope.js'), 'utf8');
+  assert.match(src, /if \(user\.role === 'admin'\) return null/, '管理員永遠不受限制');
+  assert.match(src, /return list\.length \? list : null/,
+    '沒指定 = null = 全校：升級後既有老師不會突然被鎖在外面，科目負責人也用這個表示');
+  assert.match(src, /if \(t\.role !== 'student'\) return false/,
+    '受限的老師不該去動別的教職員');
+});
+
+test('班級隔離：整批只要有一位越界就整批拒絕', () => {
+  const src = require('fs').readFileSync(require.resolve('../server/lib/scope.js'), 'utf8');
+  const block = src.slice(src.indexOf('async function assertUsers'), src.indexOf('async function setClasses'));
+  assert.match(block, /if \(!bad\.length\) return \{ ok: true \}/);
+  assert.match(block, /ok: false/,
+    '做一半再回報成功，老師會以為全部都處理好了 —— 比直接失敗更糟');
+});
+
+test('班級隔離：四個限制點都要接上', () => {
+  const fs = require('fs');
+  const users = fs.readFileSync(require.resolve('../server/routes/users.js'), 'utf8');
+  const results = fs.readFileSync(require.resolve('../server/routes/results.js'), 'utf8');
+  const tests = fs.readFileSync(require.resolve('../server/routes/tests.js'), 'utf8');
+  const manage = fs.readFileSync(require.resolve('../server/routes/manage.js'), 'utf8');
+
+  // ① 看得到哪些學生
+  assert.match(users, /where\.push\("u\.role = 'student'"\)/, '受限的老師看不到教職員名冊');
+  assert.match(users, /scope\.classesForMany/, '老師的管轄班級要一次撈完，不要 N+1');
+  // ② 新增與編輯學生
+  assert.match(users, /你只能新增這些班級的學生/);
+  assert.match(users, /不能把學生移到你沒有管理的班級/);
+  assert.match(users, /scope\.assertUsers\(req\.user, list\)/, '批次動作');
+  // ③ 指派考試
+  assert.match(tests, /你只能指派給這些班級/);
+  assert.match(tests, /這筆指派不在你管理的班級內/);
+  assert.match(tests, /a\.class_group IN/, '整班指派也要照範圍過濾');
+  // ④ 看與批改成績
+  assert.match(results, /scope\.canSeeAttempt/);
+  assert.ok((results.match(/canSeeAttempt/g) || []).length >= 3,
+    '看成績、改分數、重跑批改三條路都要擋');
+  assert.match(manage, /async function resultFilterSql\(q, user\)/,
+    '清單／批次／匯出共用同一個過濾器，只有一個地方才不會漏');
+  assert.match(manage, /不在你管理的班級內/,
+    '直接帶 ids 的批次動作會繞過 filter，要另外擋');
+});
+
+test('班級隔離：全站維護與整份備份只給管理員', () => {
+  const src = require('fs').readFileSync(require.resolve('../server/routes/manage.js'), 'utf8');
+  for (const [route, why] of [
+    ["router.get('/overview', requireRole('admin')", '全站統計'],
+    ["router.get('/log', requireRole('admin')", '維護紀錄'],
+    ["router.post('/cleanup', requireRole('admin')", '清理是破壞性動作'],
+    ["router.get('/backup/test/:id.json', requireRole('admin')", '備份會倒出全校學生的作文與逐字稿'],
+  ]) assert.ok(src.includes(route), `${why} 要限管理員：${route}`);
+});

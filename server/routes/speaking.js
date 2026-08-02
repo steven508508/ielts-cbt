@@ -6,6 +6,7 @@ const multer = require('multer');
 const db = require('../db');
 const config = require('../config');
 const { requireAuth, requireStaff } = require('../middleware/auth');
+const scope = require('../lib/scope');
 const ai = require('../lib/ai');
 const aiTasks = require('../lib/aiTasks');
 const bands = require('../lib/bands');
@@ -55,6 +56,7 @@ router.get('/:attemptId/live', async (req, res) => {
 
 /** 老師：目前正在進行中的口說考試 */
 router.get('/monitor/active', requireStaff, async (req, res) => {
+  const mf = await scope.classFilter(req.user, 'u.class_group');
   const rows = await db.query(
     `SELECT l.attempt_id, l.part, l.turns, l.band, l.criteria, l.notes, l.status, l.updated_at,
             u.name AS student_name, u.class_group, t.title AS test_title
@@ -62,8 +64,8 @@ router.get('/monitor/active', requireStaff, async (req, res) => {
      JOIN attempts a ON a.id = l.attempt_id
      JOIN users u ON u.id = a.user_id
      JOIN tests t ON t.id = a.test_id
-     WHERE l.updated_at > DATE_SUB(NOW(), INTERVAL 2 HOUR)
-     ORDER BY l.updated_at DESC LIMIT 50`
+     WHERE l.updated_at > DATE_SUB(NOW(), INTERVAL 2 HOUR) ${mf.sql}
+     ORDER BY l.updated_at DESC LIMIT 50`, mf.params
   );
   res.json({
     sessions: rows.map((r) => {
@@ -280,6 +282,8 @@ router.get('/:attemptId/responses', async (req, res) => {
   if (!attempt) return res.status(404).json({ error: '找不到這場考試' });
   if (attempt.user_id !== req.user.id && req.user.role === 'student')
     return res.status(403).json({ error: '權限不足' });
+  if (req.user.role !== 'student' && !(await scope.canSeeAttempt(req.user, attempt.id)))
+    return res.status(403).json({ error: '這位學生不在你管理的班級內' });
   const rows = await db.query(
     'SELECT part, q_index, question, transcript, duration_sec, audio_path FROM speaking_responses WHERE attempt_id = ? ORDER BY part, q_index',
     [attempt.id]
