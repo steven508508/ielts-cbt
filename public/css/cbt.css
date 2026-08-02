@@ -211,6 +211,19 @@ mark.hl.has-note{background:var(--c-note); border-bottom:2px dotted currentColor
 .cbt-audio .bar i{display:block; height:100%; background:var(--c-accent); width:0}
 .cbt-audio input[type=range]{width:110px; accent-color:var(--c-accent)}
 
+/* 時鐘的寬度要固定。文字從「10 minutes」變「9 minutes」、再變「01:00」，
+   長度一路縮短，右邊那排 Hide／📝／Help／Settings 就跟著往右跳最多約 25px，
+   足以按到隔壁那一顆。註記徽章也一樣：存下第一則註記時它從無到有，
+   Help 與 Settings 會整組左移約一顆按鈕的寬度。 */
+.cbt-clock .t{display:inline-block; min-width:8.5em; text-align:right; font-variant-numeric:tabular-nums}
+#note-count{display:inline-block !important; min-width:3.2em; text-align:center}
+
+/* 圖片先把位置佔好。沒有寬高也沒有 aspect-ratio 的話，圖片載完（或載失敗
+   被收起來）的那一刻，底下所有選項與填空框會整批上下位移數百 px ——
+   而聽力一進畫面就開始播音檔，學生正在趕答題。 */
+.sec-img, .cbt-group img.fig{min-height:120px; background:var(--c-rubric)}
+.sec-img[data-loaded], .cbt-group img.fig[data-loaded]{min-height:0; background:none}
+
 /* ── 底部題號列 ─────────────────────────────────────────── */
 .cbt-foot{
   flex:0 0 auto; background:var(--c-bar); border-top:1px solid var(--c-line);

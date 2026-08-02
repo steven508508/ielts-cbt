@@ -337,10 +337,17 @@ async function requeueStuck({ olderThanMin = 3, limit = 20 } = {}) {
   sweeping = true;
   try {
     // 重啟後還掛著 'grading' 的其實早就沒有在跑了
-    await db.exec(
-      "UPDATE attempts SET status='submitted' WHERE status='grading' AND updated_at < DATE_SUB(NOW(), INTERVAL ? MINUTE)",
-      [olderThanMin]
-    ).catch(() => {});
+    /* 不要再吞掉錯誤。這句以前是 .catch(() => {})，而 attempts 根本沒有
+       updated_at 這個欄位 —— 於是它每五分鐘失敗一次、連續失敗了不知道多久，
+       完全沒有人知道，學生的成績頁就這樣一直轉圈。 */
+    try {
+      await db.exec(
+        "UPDATE attempts SET status='submitted' WHERE status='grading' AND updated_at < DATE_SUB(NOW(), INTERVAL ? MINUTE)",
+        [olderThanMin]
+      );
+    } catch (e) {
+      console.error('[grade] 撿回卡住的批改失敗：', e.code || '', e.sqlMessage || e.message);
+    }
 
     const rows = await db.query(
       `SELECT a.id, a.assignment_id FROM attempts a

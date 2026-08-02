@@ -22,7 +22,28 @@ const API = (() => {
       headers['content-type'] = 'application/json';
       payload = JSON.stringify(body);
     }
-    const res = await fetch(`/api${path}`, { method, headers, body: payload });
+    /* 一定要有逾時。
+       整個前端以前沒有任何一個地方設過，而 fetch 預設是「等到天荒地老」。
+       校園 Wi-Fi 漫遊、captive portal 這種「TCP 通但沒有回應」的狀態下，
+       await 永遠不會回來 —— 學生按下交卷之後畫面一片死寂，沒有轉圈、
+       沒有錯誤、按鈕也沒有變灰，只能一直重按。
+       AI 批改那類本來就慢的請求可以自己放寬 opts.timeout。 */
+    const ms = opts.timeout ?? (path.startsWith('/ai/') ? 180000 : 25000);
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), ms);
+    let res;
+    try {
+      res = await fetch(`/api${path}`, { method, headers, body: payload, signal: ctl.signal });
+    } catch (e) {
+      if (e.name === 'AbortError') {
+        const err = new Error(`伺服器在 ${Math.round(ms / 1000)} 秒內沒有回應，請檢查網路`);
+        err.timeout = true;
+        throw err;
+      }
+      throw e;
+    } finally {
+      clearTimeout(timer);
+    }
 
     // 401 有兩種完全不同的情況，不能混為一談：
     //   1. 登入請求本身失敗 → 是帳號密碼錯，要把伺服器的原始訊息顯示出來

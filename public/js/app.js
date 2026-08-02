@@ -861,7 +861,16 @@
 
     // 考試畫面是全螢幕，不套外框
     const examMatch = path.match(/^\/exam\/(\d+)$/);
-    if (examMatch) return Exam.open(Number(examMatch[1]));
+    if (examMatch) {
+      /* exam-body 這個 class 全專案只有三處 remove、一處都沒有 add ——
+         於是 cbt.css 裡那條「提示訊息不要蓋在底部題號列與上下題按鈕上」
+         從來沒有生效過。toast 一律停在 bottom:16px，正好蓋住 ◀ ▶ 與
+         「結束這一科」的上緣；視窗窄一點的時候整條題號列都被蓋掉。
+         而 toast 最常出現的時機就是存檔失敗與多選超選 —— 學生正在連點的
+         那一刻。症狀跟按鈕壞掉一模一樣，3.6 秒後還會自己消失。 */
+      document.body.classList.add('exam-body');
+      return Exam.open(Number(examMatch[1]));
+    }
 
     const editMatch = path.match(/^\/admin\/edit\/(\d+)$/);
 

@@ -206,6 +206,18 @@ function normalizePaper(input) {
             if (q.answers == null) q.answers = [];
             if (!Array.isArray(q.answers)) q.answers = [q.answers];
             q.answers = q.answers.map((a) => (a == null ? '' : String(a)));
+            /* 選項字母型的答案，老師最自然的寫法是「A,D」。
+               匯入只認 // ; ；當分隔符，於是變成 answers:['A,D'] 這一個字串。
+               驗證卻是 String(a).split(/[,\s]+/) 逐字檢查 —— 兩個字母都在選項
+               清單裡，所以驗證全綠。但評分是整串比對，學生選了 A 和 D 會拿到
+               「選了 2 個，超過規定的 1 個」，全班 0 分，而檢討頁上「你的答案」
+               與「正解」印出來一模一樣。這裡把它拆開。 */
+            if (meta.answerKind === 'letter' || meta.answerKind === 'letters') {
+              q.answers = q.answers
+                .flatMap((a) => String(a).split(/[,、，\s]+/))
+                .map((a) => a.trim())
+                .filter(Boolean);
+            }
           }
         }
       }
@@ -251,6 +263,28 @@ function validatePaper(input) {
           errors.push(`${where} ${sec.title}：題型 ${g.type} 需要 options 選項清單（可放在題組層或每一題）`);
         if (meta.needsImage && !g.image)
           warnings.push(`${where} ${sec.title}：${g.type} 建議提供 image 圖片`);
+
+        /* 多選題的題號數、selectCount、正解個數三者必須一致。
+           以前完全沒有檢查：selectCount 沒填時前端會退回 1，指示語寫著
+           「Choose TWO letters」，學生選第二個卻跳出「最多只能選 1 個」——
+           錯誤訊息看起來像在怪學生，而這一題必然 0 分。
+           selectCount 比題號數少的話，多出來的題號也永遠拿不到分。 */
+        if (g.type === 'mcq_multi' && g.questions.length) {
+          const slots = g.questions.length;
+          const keys = [...new Set(g.questions.flatMap((q) => q.answers || []).map((a) => String(a).toUpperCase()))];
+          const pick = Number(g.selectCount || 0);
+          if (!pick) {
+            errors.push(`${where} ${sec.title}：多選題必須指定 selectCount（要選幾個），`
+              + `否則學生只能選 1 個，但指示語會寫要選 ${slots} 個`);
+          } else if (pick !== slots) {
+            errors.push(`${where} ${sec.title}：多選題佔 ${slots} 個題號，selectCount 卻是 ${pick} —— `
+              + `兩者必須一致，否則多出來的題號永遠拿不到分`);
+          }
+          if (keys.length && pick && keys.length !== pick) {
+            errors.push(`${where} ${sec.title}：多選題要選 ${pick} 個，`
+              + `但正解只有 ${keys.length} 個（${keys.join('、')}）`);
+          }
+        }
 
         if (meta.supportsBody && g.bodyHtml) {
           const gaps = gapsIn(g.bodyHtml);

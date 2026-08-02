@@ -385,9 +385,9 @@ const Exam = (() => {
       }, el('span', { id: 'hide-lbl' }, 'Hide')),
       withTools && el('button', {
         class: 'cbt-tool', id: 'note-count', title: '看我寫過的註記',
-        style: { display: 'none' },
+        style: { visibility: 'hidden', pointerEvents: 'none' },   // 位置先佔著，不要讓右邊整排跳
         onclick: showAllNotes,
-      }, ''),
+      }, '📝'),
       el('button', { class: 'cbt-tool', onclick: showHelp }, '❓ Help'),
       el('button', { class: 'cbt-tool', onclick: showSettings }, '⚙ Settings'));
   }
@@ -669,7 +669,11 @@ const Exam = (() => {
        而且伺服器自己也會收卷 —— 它收掉了，這裡要立刻跟上，不能讓學生
        繼續對著一份已經結束的考卷作答。 */
     clearInterval(syncTick);
-    syncTick = setInterval(syncTime, 20000);
+    syncTick = setInterval(() => {
+      syncTime();
+      // 沒存出去的要一直重試，不能等學生下次剛好改到題目才有機會補送
+      if (pending.size || Object.keys(S.writingDirty || {}).length) flush();
+    }, 20000);
   }
 
   async function syncTime() {
@@ -685,9 +689,13 @@ const Exam = (() => {
     if ((m.finished || t.status !== 'in_progress') && !S.expiring) {
       S.expiring = true;
       stopTimer();
+      const stuck = pending.size + Object.keys(S.writingDirty || {}).length;
       await notice('時間到', el('div', {},
         el('p', {}, `「${UI.MODULE_LABEL[S.module] || S.module}」的作答時間已經結束，系統已經幫你收卷。`),
-        el('p', { class: 'small', style: { opacity: '.75' } }, '已經作答的內容都有存下來。')));
+        stuck
+          ? el('p', { style: { color: 'var(--c-danger)', fontWeight: '700' } },
+            `注意：有 ${stuck} 筆作答沒有成功存到伺服器，請立刻告訴監考老師。`)
+          : el('p', { class: 'small', style: { opacity: '.75' } }, '已經作答的內容都有存下來。')));
       finishModule(true);
     }
   }
@@ -706,6 +714,9 @@ const Exam = (() => {
       if (!ok) return;
     }
     await flush();
+    // 結束前再試一次，並且把「有沒有東西沒存出去」帶到結束畫面上
+    if (pending.size || Object.keys(S.writingDirty || {}).length) await flush();
+    const unsaved = pending.size + Object.keys(S.writingDirty || {}).length;
     const name = S.module;
     try { await API.post(`/exam/${S.attemptId}/module/finish`, { module: name }); } catch {}
     S.state.modules[name] = { ...(S.state.modules[name] || {}), finished: true };
@@ -730,7 +741,13 @@ const Exam = (() => {
           auto ? el('p', {}, '這一科的作答時間已經結束，系統已自動收卷。') : null,
           name !== 'writing'
             ? el('p', {}, `共 ${qs.length} 題，你作答了 `, el('b', {}, String(answered)), ' 題。')
-            : el('p', {}, '你的作文已儲存。'),
+            /* 以前這句是無條件寫死的。存不出去的時候學生看到的還是
+               「你的作文已儲存」，然後這一科就被鎖死了。 */
+            : el('p', {}, unsaved ? '你的作文可能沒有完整儲存。' : '你的作文已儲存。'),
+          unsaved
+            ? el('p', { style: { color: 'var(--c-danger)', fontWeight: '700' } },
+              `注意：有 ${unsaved} 筆內容沒有成功存到伺服器，請立刻告訴監考老師。`)
+            : null,
           el('p', { class: 'small', style: { opacity: '.7' } }, '成績要等全部科目考完、正式交卷後才會公布。'),
           el('div', { class: 'cbt-actions' },
             nextInChain
@@ -809,20 +826,72 @@ const Exam = (() => {
     saveTimer = setTimeout(flush, 900);
   }
 
+  /**
+   * 送出待存的作答。
+   *
+   * 以前這裡有三個會讓學生整段作答無聲消失的問題：
+   *   · 送出**之前**就 pending.clear()，失敗之後沒有任何地方把它放回去，
+   *     也沒有重試。一次 Wi-Fi 漫遊就吃掉那 900 毫秒內的所有題目。
+   *   · 寫作連那個 3 秒的提示都沒有（catch 是空的），而且只要學生停止
+   *     打字，writingDirty 就不會再被填回去 —— 那一段永遠不會再送出。
+   *     然後結束畫面還直接寫「你的作文已儲存。」
+   *   · 伺服器把答案退掉（該科已結束、已被自動收卷）時照樣回 200 並附上
+   *     rejected 清單，前端從來不看，題號列照樣顯示已作答。
+   *
+   * 現在一律「成功才清掉」，失敗放回去等下一次重試，並且把狀態顯示出來。
+   */
   async function flush() {
     clearTimeout(saveTimer);
     const items = [...pending.values()];
-    pending.clear();
+    const essays = Object.entries(S.writingDirty || {});
+    if (!items.length && !essays.length) { paintSaveState(); return; }
     const jobs = [];
+
     if (items.length) {
-      jobs.push(API.post(`/exam/${S.attemptId}/answers`, { items })
-        .catch(() => toast('答案儲存失敗，請檢查網路連線', 'err')));
+      jobs.push(API.post(`/exam/${S.attemptId}/answers`, { items }).then((r) => {
+        items.forEach((it) => {
+          // 期間又改過的不要覆蓋掉
+          const k = `${it.module}:${it.number}`;
+          if (pending.get(k) === it) pending.delete(k);
+        });
+        const rej = r?.rejected || [];
+        if (rej.length) onRejected(rej);
+      }, () => { S.saveFailed = true; }));
     }
-    for (const [taskNo, essay] of Object.entries(S.writingDirty || {})) {
-      jobs.push(API.post(`/exam/${S.attemptId}/writing`, { taskNo: Number(taskNo), essay }).catch(() => {}));
+    for (const [taskNo, essay] of essays) {
+      jobs.push(API.post(`/exam/${S.attemptId}/writing`, { taskNo: Number(taskNo), essay }).then(() => {
+        if (S.writingDirty?.[taskNo] === essay) delete S.writingDirty[taskNo];
+      }, () => { S.saveFailed = true; }));
     }
-    S.writingDirty = {};
     await Promise.all(jobs);
+    const stuck = pending.size + Object.keys(S.writingDirty || {}).length;
+    S.saveFailed = stuck > 0;
+    if (S.saveFailed && !S.saveWarned) {
+      S.saveWarned = true;
+      toast('答案還沒存到伺服器，系統會持續重試 —— 請確認網路', 'err');
+    }
+    if (!S.saveFailed) S.saveWarned = false;
+    paintSaveState();
+  }
+
+  /** 伺服器收到卻不接受（該科已結束／已被自動收卷）—— 這種事必須讓學生知道 */
+  function onRejected(rej) {
+    if (S.rejectedWarned) return;
+    S.rejectedWarned = true;
+    notice('這一科已經結束', el('div', {},
+      el('p', {}, el('b', {}, `伺服器沒有接受你最近的 ${rej.length} 題作答。`)),
+      el('p', {}, rej[0]?.reason || '這一科的作答時間已經結束。'),
+      el('p', {}, '請不要再繼續作答，並告訴監考老師。')));
+  }
+
+  /** 把「存好了／還沒存出去」直接寫在畫面上，不要只靠一閃而過的提示 */
+  function paintSaveState() {
+    const n = $('#save-state');
+    if (!n) return;
+    const stuck = pending.size + Object.keys(S.writingDirty || {}).length;
+    n.textContent = stuck ? `⚠ 有 ${stuck} 筆還沒存出去（重試中）` : '已自動儲存';
+    n.style.color = stuck ? 'var(--c-danger)' : '';
+    n.style.fontWeight = stuck ? '700' : '';
   }
 
   function setAnswer(module, number, value) {
@@ -858,7 +927,12 @@ const Exam = (() => {
 
   // ── 主畫面 ──────────────────────────────────────────────
   function renderExam(keepScroll = false) {
+    // 重畫會把註記框連根拔掉，先把打到一半的字收下來（任何觸發路徑都涵蓋到）
+    commitOpenNote();
     const scroll = keepScroll ? ($('.cbt-pane.right')?.scrollTop ?? $('.cbt-pane.single')?.scrollTop ?? 0) : 0;
+    const passScroll = $('#pane-passage')?.scrollTop ?? 0;
+    const splitFlex = $('.cbt-pane.left')?.style.flex || S._splitFlex || '';
+    S._splitFlex = splitFlex;
     const name = S.module;
     const mod = moduleOf(name);
     const sec = mod.sections[S.section] || mod.sections[0];
@@ -877,13 +951,22 @@ const Exam = (() => {
         requestAnimationFrame(() => { if (p.isConnected && p.scrollTop !== scroll) p.scrollTop = scroll; });
       }
     }
+    if (name === 'reading') {
+      // 文章欄的捲動位置以前完全沒有還原 —— 學生畫一條線，文章就跳回最上面
+      const lp = $('#pane-passage');
+      if (lp && passScroll) {
+        lp.scrollTop = passScroll;
+        requestAnimationFrame(() => { if (lp.isConnected && lp.scrollTop !== passScroll) lp.scrollTop = passScroll; });
+      }
+    }
     refreshFoot();
     if (name === 'reading') setupSplit();
-    if (name === 'listening') setupAudio();
+    if (name === 'listening') setupAudio(sec);
     // 畫記在重畫後要塗回去 —— 這是官方機考的行為，畫記整科都留著
     setupContextMenu();
     restoreMarks();
     refreshNoteCount();
+    paintSaveState();
   }
 
   function bandBar(name, sec) {
@@ -905,56 +988,135 @@ const Exam = (() => {
       el('div', { class: 'cbt-pane single' },
         el('div', { class: 'inner' },
           audioBar(sec),
-          sec.image ? el('img', { src: sec.image, class: 'sec-img', alt: sec.title || '本節圖片' }) : null,
+          sec.image ? el('img', { src: sec.image, class: 'sec-img', alt: sec.title || '本節圖片', ...imgGuard() }) : null,
           sec.groups.map((g, gi) => renderGroup('listening', g, S.section, gi)))));
   }
 
+  /**
+   * 圖片的版面保險。
+   *
+   * 這些 <img> 沒有 width/height 也沒有 aspect-ratio，高度要等檔案載完才
+   * 確定。聽力的地圖／平面圖就夾在音檔列與所有題目之間 —— 圖片一載完，
+   * 底下每一個選項與填空框整批往下移數百 px，而學生正在趕答題（聽力
+   * 一進畫面就開始播）。載失敗時舊寫法是 display:none，高度又縮回去，
+   * 等於再跳一次。
+   *
+   * 作法：CSS 先給一塊 min-height 佔位，載完（或載失敗）再標記 data-loaded
+   * 讓它收掉；失敗改用 visibility 而不是 display，位置至少不會再變。
+   */
+  const imgGuard = () => ({
+    onload: (e) => { e.target.dataset.loaded = '1'; },
+    onerror: (e) => { e.target.dataset.loaded = '1'; e.target.style.visibility = 'hidden'; },
+  });
+
   function audioBar(sec) {
     if (!sec.audio) return el('div', { class: 'cbt-audio' }, el('span', { class: 'st' }, '（本 Part 沒有音檔）'));
+    /* 這裡只畫「狀態列」，不畫 <audio>。
+       播放器本體掛在 document.body 底下（見 audioEl），因為畫面上任何
+       一次重畫都是 root().replaceChildren() —— <audio> 一旦離開 document，
+       瀏覽器依規範必須把它暫停。以前它就畫在這裡面，於是學生在聽力時
+       只要右鍵畫一條螢光筆、存一則註記，聲音就永遠停掉，而狀態列還會
+       寫「本 Part 音檔已播過（只播放一次）」，看起來完全像是系統照規則
+       在運作。那個 Part 的十題等於整組作廢，畫面上沒有任何錯誤。 */
     return el('div', { class: 'cbt-audio' },
       el('span', { class: 'st', id: 'aud-st' }, '準備播放'),
       el('div', { class: 'bar' }, el('i', { id: 'aud-pg' })),
       el('span', {}, '🔊'),
       el('input', {
-        type: 'range', min: 0, max: 1, step: 0.05, value: 1, id: 'aud-vol',
-        oninput: (e) => { const a = $('#aud-el'); if (a) a.volume = Number(e.target.value); },
-      }),
-      el('audio', { id: 'aud-el', src: sec.audio, preload: 'auto', style: { display: 'none' } }));
+        type: 'range', min: 0, max: 1, step: 0.05, value: audioEl() ? audioEl().volume : 1, id: 'aud-vol',
+        oninput: (e) => { const a = audioEl(); if (a) a.volume = Number(e.target.value); },
+      }));
   }
 
-  function setupAudio() {
-    const a = $('#aud-el');
-    if (!a) return;
-    const st = $('#aud-st');
-    const pg = $('#aud-pg');
+  /** 常駐的播放器。永遠掛在 body 上，不隨畫面重畫而生滅。 */
+  function audioEl() { return S?._aud || null; }
+  function dropAudio() {
+    if (!S?._aud) return;
+    try { S._aud.pause(); } catch { /* 已經沒了就算了 */ }
+    S._aud.remove();
+    S._aud = null;
+  }
+
+  function setupAudio(sec) {
+    if (!sec?.audio) { dropAudio(); return; }
     const audioState = (S.state.audio = S.state.audio || {});
     const key = `s${S.section}`;
+    const st = () => $('#aud-st');
+    const say = (t) => { const n = st(); if (n) n.textContent = t; };
 
-    a.addEventListener('timeupdate', () => {
-      if (a.duration) pg.style.width = `${(a.currentTime / a.duration) * 100}%`;
-      audioState[key] = a.currentTime;
-    });
-    a.addEventListener('error', () => { st.textContent = '音檔載入失敗，請通知老師'; });
-    a.addEventListener('ended', () => {
-      st.textContent = '本 Part 音檔已播畢';
-      const mod = moduleOf('listening');
-      if (S.section < mod.sections.length - 1) {
-        setTimeout(() => { S.section += 1; S.current = flat('listening').find((q) => q.si === S.section)?.number ?? S.current; renderExam(); }, 1500);
-      }
-    });
-    // 官方規則：只播一次、不能倒轉
-    a.addEventListener('seeking', () => {
-      if (a.currentTime < (audioState[key] || 0) - 0.6) a.currentTime = audioState[key] || 0;
-    });
+    let a = S._aud;
+    if (!a) {
+      a = el('audio', { preload: 'auto', style: { display: 'none' } });
+      document.body.append(a);
+      S._aud = a;
+      // 監聽器只掛一次；要更新的節點都在觸發當下才去找，重畫過也還是對的
+      a.addEventListener('timeupdate', () => {
+        const pg = $('#aud-pg');
+        if (pg && a.duration) pg.style.width = `${(a.currentTime / a.duration) * 100}%`;
+        audioState[`s${S.section}`] = a.currentTime;
+      });
+      a.addEventListener('error', () => {
+        // 這一則要留住。以前它會在 200 毫秒內被 play() 的失敗訊息蓋掉，
+        // 學生最後看到的是「播放中…」配上一片寂靜。
+        a.dataset.failed = '1';
+        say('音檔載入失敗，請通知老師');
+        reportEvent('audio_error', `第 ${S.section + 1} 段音檔載入失敗`);
+      });
+      a.addEventListener('ended', () => {
+        say('本 Part 音檔已播畢');
+        const mod = moduleOf('listening');
+        if (S.section < mod.sections.length - 1) {
+          setTimeout(() => {
+            if (!S || S.module !== 'listening') return;
+            commitOpenNote();          // 學生正在打的註記不能被這一下吃掉
+            S.section += 1;
+            S.current = flat('listening').find((q) => q.si === S.section)?.number ?? S.current;
+            renderExam(true);
+          }, 1500);
+        }
+      });
+      // 官方規則：不能倒轉
+      a.addEventListener('seeking', () => {
+        const back = audioState[`s${S.section}`] || 0;
+        if (a.currentTime < back - 0.6) a.currentTime = back;
+      });
+    }
 
-    if (audioState[`${key}_played`]) { st.textContent = '本 Part 音檔已播過（只播放一次）'; return; }
-    st.textContent = '播放中…';
-    audioState[`${key}_played`] = true;
-    a.play().catch(() => {
-      st.textContent = '請點畫面任一處開始播放';
-      const go = () => { a.play(); st.textContent = '播放中…'; };
-      document.addEventListener('click', go, { once: true });
-    });
+    if (a.dataset.src !== sec.audio) {
+      a.dataset.src = sec.audio;
+      delete a.dataset.failed;
+      a.src = sec.audio;
+    }
+    const vol = $('#aud-vol');
+    if (vol) vol.value = String(a.volume);
+
+    if (a.dataset.failed) return say('音檔載入失敗，請通知老師');
+    if (audioState[`${key}_played`]) {
+      // 重畫回來的時候如果還在播，就不要謊稱已經播完了
+      return say(a.paused ? '本 Part 音檔已播過（只播放一次）' : '播放中…');
+    }
+    say('播放中…');
+    a.play().then(
+      // 真的播出去了才記成「播過」。以前是先記再播，載入失敗的話
+      // 學生連重試的入口都沒有。
+      () => { audioState[`${key}_played`] = true; },
+      () => {
+        /* 「載入失敗」跟「瀏覽器擋自動播放」是兩件完全不同的事，給的指示
+           也不一樣。以前一律說「請點畫面任一處開始播放」—— 音檔 404 的時候
+           那個 error 事件講的實話會在幾十毫秒內被這一句蓋掉，學生點了畫面
+           之後狀態還會變成「播放中…」配上一片寂靜。 */
+        if (a.dataset.failed || a.error || a.networkState === 3) {
+          a.dataset.failed = '1';
+          return say('音檔載入失敗，請通知老師');
+        }
+        say('請點畫面任一處開始播放');
+        const go = () => {
+          if (a.dataset.failed || a.error) return say('音檔載入失敗，請通知老師');
+          a.play().then(() => { audioState[`${key}_played`] = true; say('播放中…'); },
+            () => say('音檔播不出來，請通知老師'));
+        };
+        document.addEventListener('click', go, { once: true });
+      });
   }
 
   // ── 閱讀 ────────────────────────────────────────────────
@@ -965,26 +1127,40 @@ const Exam = (() => {
         sec.source && el('div', { class: 'sub' }, sec.source),
         // 素材編輯器的「本節圖片（地圖／平面圖）」以前沒有任何地方讀，
         // 老師填了等於丟進黑洞，學生看到的是空白
-        sec.image ? el('img', { src: sec.image, class: 'sec-img', alt: sec.title || '本節圖片' }) : null,
+        sec.image ? el('img', { src: sec.image, class: 'sec-img', alt: sec.title || '本節圖片', ...imgGuard() }) : null,
         el('div', { html: sanitize(sec.passage || '<p>（沒有文章內容）</p>') })),
       el('div', { class: 'cbt-split', id: 'splitter' }),
       el('div', { class: 'cbt-pane right' },
         sec.groups.map((g, gi) => renderGroup('reading', g, S.section, gi))));
   }
 
+  /* 分隔線。
+     兩個以前的問題：
+     · 拖出來的寬度只寫在行內樣式上，沒有存起來 —— 任何一次重畫（畫一條線、
+       存一則註記）欄寬就跳回 50%，右邊整批選項與填空框跟著水平位移，
+       學生下一次點擊的目標已經換了位置。
+     · window 的 mouseup/mousemove 每次重畫都再掛一組、從不移除，重畫幾十次
+       之後同一個事件會跑幾十遍。 */
+  let splitDrag = false;
+  let splitBound = false;
   function setupSplit() {
     const sp = $('#splitter');
     const left = $('#pane-passage');
     if (!sp || !left) return;
-    let dragging = false;
+    if (S._splitFlex) left.style.flex = S._splitFlex;
     const move = (x) => {
       const pct = Math.min(78, Math.max(22, (x / window.innerWidth) * 100));
-      left.style.flex = `0 0 ${pct}%`;
+      const l = $('#pane-passage');
+      if (!l) return;
+      S._splitFlex = `0 0 ${pct}%`;
+      l.style.flex = S._splitFlex;
     };
-    sp.addEventListener('mousedown', (e) => { dragging = true; e.preventDefault(); document.body.style.cursor = 'col-resize'; });
-    window.addEventListener('mouseup', () => { dragging = false; document.body.style.cursor = ''; });
-    window.addEventListener('mousemove', (e) => { if (dragging) move(e.clientX); });
+    sp.addEventListener('mousedown', (e) => { splitDrag = true; e.preventDefault(); document.body.style.cursor = 'col-resize'; });
     sp.addEventListener('touchmove', (e) => { move(e.touches[0].clientX); }, { passive: true });
+    if (splitBound) return;
+    splitBound = true;
+    window.addEventListener('mouseup', () => { splitDrag = false; document.body.style.cursor = ''; });
+    window.addEventListener('mousemove', (e) => { if (splitDrag) move(e.clientX); });
   }
 
   /* ═══════════════════════════════════════════════════════════
@@ -1206,8 +1382,21 @@ const Exam = (() => {
     saveMarks();
   }
 
-  function openNote(host, mark, rec) {
+  /* 目前開著的註記框。任何一次重畫都會把它連同還沒存的文字一起拔掉 ——
+     聽力的音檔播完會自動換段重畫，那正是學生剛聽完、在寫筆記的時候。
+     所以重畫之前一律先把打到一半的內容收下來。 */
+  let openNoteRef = null;
+  function commitOpenNote() {
+    if (!openNoteRef) return;
+    const { rec, ta } = openNoteRef;
+    openNoteRef = null;
+    if (ta.isConnected) rec.note = ta.value.trim() || null;
     $$('.cbt-note').forEach((n) => n.remove());
+    saveMarks();
+  }
+
+  function openNote(host, mark, rec) {
+    commitOpenNote();
     if (!rec) return;
     const r = mark.getBoundingClientRect();
     const ta = el('textarea', { placeholder: '寫下你的想法…' }, rec.note || '');
@@ -1218,12 +1407,13 @@ const Exam = (() => {
       ta,
       el('div', { class: 'acts' },
         el('button', {
-          onclick: () => { rec.note = null; box.remove(); renderExam(true); saveMarks(); },
+          onclick: () => { openNoteRef = null; rec.note = null; box.remove(); renderExam(true); saveMarks(); },
         }, '刪除註記'),
         el('button', {
-          onclick: () => { rec.note = ta.value.trim() || null; box.remove(); renderExam(true); saveMarks(); },
+          onclick: () => { openNoteRef = null; rec.note = ta.value.trim() || null; box.remove(); renderExam(true); saveMarks(); },
         }, '儲存')));
     (document.querySelector('.cbt') || document.body).append(box);
+    openNoteRef = { rec, ta };
     ta.focus();
     box.addEventListener('click', (e) => e.stopPropagation());
   }
@@ -1235,8 +1425,12 @@ const Exam = (() => {
       .reduce((sum, [, list]) => sum + list.filter((r) => r.note).length, 0);
     const badge = $('#note-count');
     if (badge) {
-      badge.textContent = n ? `📝 ${n}` : '';
-      badge.style.display = n ? '' : 'none';
+      /* 用 visibility 不用 display。徽章從無到有的時候，整排工具按鈕會
+         左移約一顆按鈕的寬度 —— 學生憑記憶按 Settings 會按到 Help。 */
+      badge.textContent = n ? `📝 ${n}` : '📝';
+      badge.style.visibility = n ? '' : 'hidden';
+      badge.style.pointerEvents = n ? '' : 'none';
+      badge.style.display = '';
     }
   }
 
@@ -1308,10 +1502,7 @@ const Exam = (() => {
         el('div', { class: 'cbt-rubric' },
           el('span', { class: 'rng' }, `WRITING TASK ${t.taskNo}`),
           `You should spend about ${t.taskNo === 2 ? 40 : 20} minutes on this task. Write at least ${t.minWords} words.`),
-        t.image && el('img', {
-          class: 'fig', src: t.image, alt: `Task ${t.taskNo}`,
-          onerror: (e) => { e.target.style.display = 'none'; },
-        }),
+        t.image && el('img', { class: 'fig', src: t.image, alt: `Task ${t.taskNo}`, ...imgGuard() }),
         t.visualDescription && el('div', { class: 'cbt-rubric' },
           el('span', { class: 'rng' }, '圖表說明 Figure description'), t.visualDescription),
         el('div', { class: 'cbt-body', html: sanitize(t.prompt) })),
@@ -1322,7 +1513,9 @@ const Exam = (() => {
           el('span', {}, 'Words: ', el('b', { id: 'wc' }, String(wc(S.writing[t.taskNo])))),
           el('span', { style: { opacity: '.7' } }, `（最少 ${t.minWords} 字）`),
           el('span', { style: { flex: 1 } }),
-          el('span', { style: { opacity: '.7' } }, '自動儲存中'))));
+          /* 以前這裡是寫死的「自動儲存中」，存不出去也照樣這樣寫。
+             學生看到的訊號從頭到尾都是「有在存」。 */
+          el('span', { id: 'save-state', style: { opacity: '.7' } }, '已自動儲存'))));
   }
 
   // ── 題組渲染 ────────────────────────────────────────────
@@ -1337,7 +1530,7 @@ const Exam = (() => {
       el('div', { class: 'cbt-rubric' },
         range && el('span', { class: 'rng' }, range),
         el('span', { html: sanitize(g.instructions || '') })),
-      g.image && el('img', { class: 'fig', src: g.image, alt: '', onerror: (e) => { e.target.style.display = 'none'; } }));
+      g.image && el('img', { class: 'fig', src: g.image, alt: '', ...imgGuard() }));
 
     if (['matching', 'gap_fill_bank', 'label_image'].includes(g.type) && g.options?.length) {
       wrap.append(optionBank(g));
@@ -1604,6 +1797,9 @@ const Exam = (() => {
         el('div', { class: 'cbt-arrows' },
           el('button', { class: 'cbt-btn', onclick: () => finishModule(false) }, '結束寫作')));
     }
+    /* 存檔狀態要三科都看得到，不能只有寫作有。
+       閱讀與聽力的「已作答」深色標記是從記憶體算的 —— 存不出去的時候
+       畫面看起來一模一樣，學生要等成績出來才會發現整段是空的。 */
 
     const mod = moduleOf(name);
     const parts = el('div', { class: 'cbt-parts', id: 'cbt-parts' });
@@ -1638,6 +1834,7 @@ const Exam = (() => {
         el('span', {}, 'Review')),
       parts,
       el('div', { class: 'cbt-arrows' },
+        el('span', { id: 'save-state', class: 'small', style: { opacity: '.7', marginRight: '.4rem' } }, '已自動儲存'),
         el('button', { title: '上一題', onclick: () => step(-1) }, '◀'),
         el('button', { title: '下一題', onclick: () => step(1) }, '▶'),
         el('button', { class: 'cbt-btn', onclick: () => finishModule(false) }, '結束這一科')));
@@ -1688,8 +1885,42 @@ const Exam = (() => {
     if (e.key === 'ArrowLeft') step(-1);
   });
 
+  /**
+   * 離開頁面時的最後一次儲存。
+   *
+   * 以前用的是一般的 fetch —— 使用者按下「離開」之後瀏覽器會直接中止
+   * 進行中的請求，等於沒存。而且只掛了 beforeunload：平板／手機把分頁
+   * 回收、筆電闔上、瀏覽器當掉，這個事件根本不會觸發，最後 900 毫秒內
+   * 的作答就直接消失，學生重進來只會發現最後幾題回到空白。
+   *
+   * sendBeacon 是瀏覽器保證會送出去的通道（頁面關掉也照送）。
+   */
+  function beacon() {
+    if (!S?.attemptId || !S.module) return;
+    const items = [...pending.values()];
+    const essays = Object.entries(S.writingDirty || {});
+    if (!items.length && !essays.length) return;
+    const send = (path, body) => {
+      const blob = new Blob([JSON.stringify({ ...body, token: API.token })], { type: 'application/json' });
+      if (!navigator.sendBeacon?.(`/api/exam/${S.attemptId}${path}`, blob)) {
+        // 沒有 sendBeacon 的老瀏覽器：keepalive 至少不會被中止
+        fetch(`/api/exam/${S.attemptId}${path}`, {
+          method: 'POST', keepalive: true,
+          headers: { 'content-type': 'application/json', authorization: `Bearer ${API.token}` },
+          body: JSON.stringify(body),
+        }).catch(() => {});
+      }
+    };
+    if (items.length) send('/answers', { items });
+    essays.forEach(([taskNo, essay]) => send('/writing', { taskNo: Number(taskNo), essay }));
+  }
   window.addEventListener('beforeunload', (e) => {
-    if (S && S.module) { flush(); e.preventDefault(); e.returnValue = ''; }
+    if (S && S.module) { beacon(); e.preventDefault(); e.returnValue = ''; }
+  });
+  // pagehide 才是分頁被系統回收、切到背景後被殺掉時真正會觸發的那一個
+  window.addEventListener('pagehide', beacon);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') beacon();
   });
 
   return { open, dlg, notice, prefs, applyPrefs };

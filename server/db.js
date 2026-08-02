@@ -130,6 +130,12 @@ async function migrate() {
     ['speaking_live', 'phase', 'VARCHAR(20) NULL'],
     // v2.17：這一場考試要不要用不一樣的考官設定（不填就沿用系統預設）
     ['assignments', 'examiner', 'TEXT NULL'],
+    /* v2.21.3：attempts 一直沒有 updated_at，而 grade.js 的「把卡在 grading
+       的場次撿回來」用的正是這個欄位 —— 那句 UPDATE 從第一天起就是
+       ER_BAD_FIELD_ERROR，而且被 .catch(() => {}) 吞掉。結果是伺服器在批改
+       途中重啟的話，那些場次永遠停在 grading，學生的成績頁一直轉圈，
+       而任何日誌上都看不到原因。 */
+    ['attempts', 'updated_at', 'TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP'],
   ];
   for (const [t, c, d] of steps) {
     try { if (await ensureColumn(t, c, d)) added.push(`${t}.${c}`); }

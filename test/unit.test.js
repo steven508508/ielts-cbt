@@ -1450,7 +1450,11 @@ test('時限：前端要用伺服器時間校正，不能信任學生的時鐘',
 test('時限：要定期跟伺服器對時，回到前景也要對一次', () => {
   const src = stripComments(
     require('fs').readFileSync(require.resolve('../public/js/exam.js'), 'utf8'));
-  assert.match(src, /syncTick = setInterval\(syncTime/, '時鐘會漂，而且背景分頁的計時器會被節流');
+  assert.match(src, /syncTick = setInterval\(/, '時鐘會漂，而且背景分頁的計時器會被節流');
+  const tickBlock = src.slice(src.indexOf('syncTick = setInterval('), src.indexOf('async function syncTime'));
+  assert.match(tickBlock, /syncTime\(\)/);
+  assert.match(tickBlock, /flush\(\)/,
+    '沒存出去的作答要靠這個 tick 一直重試，不能等學生剛好又改到題目才有機會補送');
   assert.match(src, /visibilityState === 'visible'\) syncTime\(\)/,
     '背景期間「時間到該收卷」那一刻可能整個被跳過，回來要補檢查');
   assert.match(src, /m\.finished \|\| t\.status !== 'in_progress'/,
@@ -1706,4 +1710,169 @@ test('口說：Part 2 的準備與長回答不能用「叫考官接話」把考�
   const block = src.slice(src.indexOf('  nudge() {'), src.indexOf('  maybeAdvance()'));
   assert.match(block, /SILENT_PHASES\.has\(this\.phase\)/);
   assert.match(block, /ignored: true/, '要回一個明確的訊息，不能讓學生以為按鈕壞了');
+});
+
+// ══════════════════════════════════════════════════════════════
+// v2.21.3：全科目稽核找出來的沉默失敗
+// ══════════════════════════════════════════════════════════════
+
+// ── 存檔失敗 = 答案永久消失 ──────────────────────────────────
+// 以前 flush() 在送出「之前」就 pending.clear()，失敗之後沒有任何地方
+// 把它放回去、也沒有重試。一次 Wi-Fi 漫遊就吃掉那 900 毫秒內的所有題目，
+// 而底部題號列的「已作答」是從記憶體算的 —— 畫面看起來一模一樣。
+test('儲存：成功才可以把待存清掉，失敗要留著重試', () => {
+  const src = stripComments(
+    require('fs').readFileSync(require.resolve('../public/js/exam.js'), 'utf8'));
+  const block = src.slice(src.indexOf('async function flush()'), src.indexOf('function onRejected('));
+  assert.ok(!/pending\.clear\(\)/.test(block),
+    '送出前清空的話，失敗就等於永久遺失');
+  assert.match(block, /if \(pending\.get\(k\) === it\) pending\.delete\(k\)/,
+    '只刪掉真的存成功、而且期間沒有再被改過的那幾筆');
+  assert.match(block, /if \(S\.writingDirty\?\.\[taskNo\] === essay\) delete S\.writingDirty\[taskNo\]/);
+  assert.match(block, /r\?\.rejected/, '伺服器退掉的答案是 200 + rejected，一定要看');
+});
+
+test('儲存：三科都要看得到「還沒存出去」，不能只有一閃而過的提示', () => {
+  const src = stripComments(
+    require('fs').readFileSync(require.resolve('../public/js/exam.js'), 'utf8'));
+  assert.match(src, /function paintSaveState\(\)/);
+  assert.match(src, /id: 'save-state'/g);
+  assert.ok((src.match(/id: 'save-state'/g) || []).length >= 2,
+    '寫作與閱讀／聽力的底列都要有');
+  assert.ok(!/'自動儲存中'/.test(src),
+    '寫死的「自動儲存中」是謊話 —— 存不出去的時候它照樣這樣寫');
+});
+
+test('儲存：離開頁面要用 sendBeacon，一般 fetch 會被瀏覽器中止', () => {
+  const src = stripComments(
+    require('fs').readFileSync(require.resolve('../public/js/exam.js'), 'utf8'));
+  assert.match(src, /navigator\.sendBeacon/);
+  assert.match(src, /keepalive: true/, '沒有 sendBeacon 的瀏覽器至少要 keepalive');
+  assert.match(src, /addEventListener\('pagehide', beacon\)/,
+    '平板把分頁回收時不會觸發 beforeunload，pagehide 才會');
+});
+
+test('連線：fetch 一定要有逾時，否則交卷會永遠沒有反應', () => {
+  const src = stripComments(
+    require('fs').readFileSync(require.resolve('../public/js/api.js'), 'utf8'));
+  assert.match(src, /new AbortController\(\)/);
+  assert.match(src, /signal: ctl\.signal/);
+  assert.match(src, /AbortError/);
+});
+
+// ── 聽力音檔被重畫弄死 ──────────────────────────────────────
+test('聽力：播放器要掛在 body，不能放在會被重畫掉的區塊裡', () => {
+  const src = stripComments(
+    require('fs').readFileSync(require.resolve('../public/js/exam.js'), 'utf8'));
+  const bar = src.slice(src.indexOf('function audioBar('), src.indexOf('function audioEl('));
+  assert.ok(!/el\('audio'/.test(bar),
+    '<audio> 一離開 document 瀏覽器就必須把它暫停 —— 畫一條螢光筆就整段沒了');
+  const setup = src.slice(src.indexOf('function setupAudio('), src.indexOf('function readingStage('));
+  assert.match(setup, /document\.body\.append\(a\)/);
+  assert.match(setup, /a\.play\(\)\.then\(/, '真的播出去了才可以記成「播過」');
+  assert.ok(!/audioState\[`\$\{key\}_played`\] = true;\s*\n\s*a\.play\(\)/.test(setup),
+    '先記再播的話，載入失敗時學生連重試的入口都沒有');
+  assert.match(setup, /a\.dataset\.failed \|\| a\.error/,
+    '「載入失敗」跟「擋自動播放」是兩件事，訊息不能互相蓋掉');
+  assert.match(setup, /reportEvent\('audio_error'/, '老師事後要查得到');
+});
+
+test('註記：重畫之前要把打到一半的字收下來', () => {
+  const src = stripComments(
+    require('fs').readFileSync(require.resolve('../public/js/exam.js'), 'utf8'));
+  assert.match(src, /function commitOpenNote\(\)/);
+  const r = src.slice(src.indexOf('function renderExam('), src.indexOf('function bandBar('));
+  assert.match(r, /commitOpenNote\(\)/, '所有重畫路徑都要涵蓋到，不能逐一補');
+});
+
+// ── 版面會動的東西 ─────────────────────────────────────────
+test('版面：提示訊息不可以吃掉底部按鈕的點擊', () => {
+  const css = require('fs').readFileSync(
+    require.resolve('../public/css/ielts.css').replace(/\.js$/, ''), 'utf8');
+  assert.match(css, /#toasts\{[^}]*pointer-events:none/s,
+    'toast 就停在右下角，正好蓋住 ◀ ▶ 與「結束這一科」');
+  const app = require('fs').readFileSync(require.resolve('../public/js/app.js'), 'utf8');
+  assert.match(app, /classList\.add\('exam-body'\)/,
+    'cbt.css 那條「不要蓋住題號列」的規則靠這個 class，以前只有 remove 沒有 add');
+});
+
+test('版面：時鐘與註記徽章不可以把工具列推來推去', () => {
+  const css = require('fs').readFileSync(
+    require.resolve('../public/css/cbt.css').replace(/\.js$/, ''), 'utf8');
+  assert.match(css, /\.cbt-clock \.t\{[^}]*min-width/s, '10 minutes → 9 minutes → 01:00 長度一路縮短');
+  assert.match(css, /#note-count\{[^}]*min-width/s);
+  const src = stripComments(
+    require('fs').readFileSync(require.resolve('../public/js/exam.js'), 'utf8'));
+  const badge = src.slice(src.indexOf('function refreshNoteCount('), src.indexOf('function refreshNoteCount(') + 700);
+  assert.match(badge, /visibility/, '用 display 切換會讓右邊整排跳一顆按鈕的寬度');
+});
+
+test('版面：圖片要先把高度佔好，載完不能整批位移', () => {
+  const src = stripComments(
+    require('fs').readFileSync(require.resolve('../public/js/exam.js'), 'utf8'));
+  assert.match(src, /const imgGuard = \(\) =>/);
+  assert.ok(!/onerror: \(e\) => \{ e\.target\.style\.display = 'none'; \}/.test(src),
+    '載失敗改 display:none 的話高度又縮回去，等於再跳一次');
+  const css = require('fs').readFileSync(
+    require.resolve('../public/css/cbt.css').replace(/\.js$/, ''), 'utf8');
+  assert.match(css, /\.sec-img, \.cbt-group img\.fig\{[^}]*min-height/s);
+  assert.match(css, /data-loaded\]/);
+});
+
+test('閱讀：欄寬與文章捲動位置在重畫之後要留著', () => {
+  const src = stripComments(
+    require('fs').readFileSync(require.resolve('../public/js/exam.js'), 'utf8'));
+  const r = src.slice(src.indexOf('function renderExam('), src.indexOf('function bandBar('));
+  assert.match(r, /S\._splitFlex/, '欄寬只寫在行內樣式的話，一重畫就跳回 50%');
+  assert.match(r, /passScroll/, '文章欄的捲動位置以前完全沒有還原');
+  const sp = src.slice(src.indexOf('function setupSplit('), src.indexOf('function setupSplit(') + 1200);
+  assert.match(sp, /if \(splitBound\) return/,
+    'window 監聽器每次重畫都再掛一組的話，重畫幾十次後同一個事件會跑幾十遍');
+});
+
+// ── 批改卡住撿不回來 ────────────────────────────────────────
+test('批改：attempts 要有 updated_at，否則卡住的場次永遠撿不回來', () => {
+  const db = require('fs').readFileSync(require.resolve('../server/db.js'), 'utf8');
+  assert.match(db, /\['attempts', 'updated_at'/,
+    'grade.js 撿回卡住場次用的就是這個欄位，而它一直不存在');
+  assert.match(db, /ON UPDATE CURRENT_TIMESTAMP/);
+  const g = require('fs').readFileSync(require.resolve('../server/lib/grade.js'), 'utf8');
+  const block = g.slice(g.indexOf('async function requeueStuck'), g.indexOf('async function requeueStuck') + 1400);
+  assert.ok(!/\)\.catch\(\(\) => \{\}\);/.test(block),
+    '吞掉錯誤的話，它每五分鐘失敗一次也沒有人會知道');
+  assert.match(block, /console\.error\('\[grade\]/);
+});
+
+// ── 多選題答案寫成 "A,D" ────────────────────────────────────
+test('題型：字母型答案要拆開，"A,D" 不能當成一個答案', () => {
+  const { normalizePaper } = require('../server/lib/paper');
+  const mk = (answers, selectCount) => ({
+    title: 't', testType: 'academic',
+    modules: [{ module: 'reading', durationSec: 3600, sections: [{ title: 'P1', passage: '<p>x</p>',
+      groups: [{ type: 'mcq_multi', selectCount, instructions: 'Choose TWO letters.',
+        options: [{ key: 'A', text: 'a' }, { key: 'B', text: 'b' }, { key: 'C', text: 'c' }, { key: 'D', text: 'd' }],
+        questions: [{ number: 1, text: 'q', answers }, { number: 2, text: 'q', answers }] }] }] }],
+  });
+  const g = (p) => p.modules[0].sections[0].groups[0].questions[0].answers;
+  assert.deepEqual(g(normalizePaper(mk(['A,D'], 2))), ['A', 'D'], '老師最自然的寫法就是 A,D');
+  assert.deepEqual(g(normalizePaper(mk(['A、D'], 2))), ['A', 'D'], '中文頓號也要接受');
+  assert.deepEqual(g(normalizePaper(mk(['A D'], 2))), ['A', 'D']);
+  assert.deepEqual(g(normalizePaper(mk(['A', 'D'], 2))), ['A', 'D'], '本來就對的不能被改壞');
+});
+
+test('題型：多選題的 selectCount 與題號數、正解數必須一致', () => {
+  const { normalizePaper, validatePaper } = require('../server/lib/paper');
+  const mk = (answers, selectCount) => ({
+    title: 't', testType: 'academic',
+    modules: [{ module: 'reading', durationSec: 3600, sections: [{ title: 'P1', passage: '<p>x</p>',
+      groups: [{ type: 'mcq_multi', ...(selectCount ? { selectCount } : {}), instructions: 'Choose TWO letters.',
+        options: [{ key: 'A', text: 'a' }, { key: 'B', text: 'b' }, { key: 'C', text: 'c' }, { key: 'D', text: 'd' }],
+        questions: [{ number: 1, text: 'q', answers }, { number: 2, text: 'q', answers }] }] }] }],
+  });
+  const errs = (a, s) => validatePaper(normalizePaper(mk(a, s))).errors;
+  assert.deepEqual(errs(['A', 'D'], 2), [], '正常的不要報錯');
+  assert.match(errs(['A', 'D'], 0)[0] || '', /必須指定 selectCount/,
+    '沒填的話學生只能選 1 個，但指示語會寫要選 2 個 —— 這一題必然 0 分');
+  assert.match(errs(['A', 'D'], 1)[0] || '', /selectCount 卻是 1/);
+  assert.match(errs(['A'], 2).join(' '), /正解只有 1 個/);
 });

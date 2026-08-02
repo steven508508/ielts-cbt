@@ -15,6 +15,11 @@ function readToken(req) {
   const h = req.headers.authorization || '';
   if (h.startsWith('Bearer ')) return h.slice(7);
   if (req.query && req.query.token) return String(req.query.token);
+  /* navigator.sendBeacon 沒有辦法帶自訂標頭。學生關掉分頁、或平板把分頁
+     回收的時候，最後那一批作答只能靠 beacon 送出去 —— 沒有這一行的話
+     那些請求全部會被擋在 401，而且前端已經沒有機會知道。
+     只在 body 裡找，跟原本的 Bearer 一樣要通過 jwt.verify。 */
+  if (req.body && typeof req.body.token === 'string') return req.body.token;
   return null;
 }
 

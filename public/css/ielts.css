@@ -76,7 +76,12 @@ table.data tr:hover td{background:#fbfbfb}
 .empty{padding:2.5rem 1rem; text-align:center; color:var(--muted)}
 
 /* ── 提示訊息 ─────────────────────────────────────────── */
-#toasts{position:fixed; right:16px; bottom:16px; z-index:9999; display:flex; flex-direction:column; gap:.5rem}
+/* 提示訊息本身不可以吃掉點擊。以前 #toasts 是一整塊 z-index:9999 的浮層，
+   考試中它就停在右下角，正好蓋住底部的 ◀ ▶ 與「結束這一科」——
+   而且它最常出現的時機（存檔失敗、多選超選）正是學生在連續點擊的時候。
+   pointer-events:none 之後，就算位置重疊也只是擋住視線，不會擋住手。 */
+#toasts{position:fixed; right:16px; bottom:16px; z-index:9999; display:flex; flex-direction:column; gap:.5rem;
+  pointer-events:none}
 .toast{background:#2b2b2b; color:#fff; padding:.65rem 1rem; border-radius:var(--radius); font-size:.9rem;
   box-shadow:0 4px 14px rgba(0,0,0,.25); max-width:380px; animation:slideIn .18s ease}
 .toast.err{background:#a5271b} .toast.ok{background:#1e6b38}
