@@ -85,6 +85,11 @@ Then read the topic line ONCE (only the topic line, not the bullet points), and 
 The candidate now has one minute of silent preparation — do not speak again until told to.
 ${cue}`,
 
+    part2_prep: `CURRENT STAGE — Part 2 preparation minute.
+The candidate is silently making notes. Say NOTHING AT ALL. Do not prompt, do not repeat the
+topic, do not ask if they are ready. Remain completely silent until you are told the time is up.
+${cue}`,
+
     part2_talk: `CURRENT STAGE — Part 2 long turn.
 Say: "All right? Remember you have one to two minutes for this, so don't worry if I stop you.
 I'll tell you when the time is up. Can you start speaking now, please?" Then STOP and listen.
@@ -140,16 +145,47 @@ const GA_EVENT_ALIASES = {
  * modalities → output_modalities，而且多了 session.type:'realtime'。
  * 抽成純函式才測得到，不用真的連上端點。
  */
+/**
+ * 每個階段的換手規則。
+ *
+ * 以前整場只用同一組設定：停頓 700 毫秒就自動叫考官接話。Part 1／3 一問一答
+ * 是對的，但 Part 2 的長回答完全不行 —— 官方規則是考官**不能打斷**考生，
+ * 而考生講一兩分鐘本來就會停下來想。實測學生在長回答中停頓三次，考官插話三次。
+ * 準備的那一分鐘也一樣：學生自言自語做筆記，考官就會冒出來講話。
+ *
+ * createResponse=false 只是不自動接話，語音辨識照常跑，逐字稿不會少。
+ */
+const PHASE_TURN_TAKING = {
+  // 考官不能開口的兩段
+  part2_prep: { createResponse: false, silenceMs: 2000 },
+  part2_talk: { createResponse: false, silenceMs: 2000 },
+  // 一問一答。700 毫秒對考生太短了 —— 話講到一半換個氣就被搶走，
+  // 這也是「講起來很不順」的一大原因。
+  _default: { createResponse: true, silenceMs: 1100 },
+};
+
+/** 這些是中繼層自己該處理掉的協定雜訊，不該變成學生畫面上的紅字 */
+const INTERNAL_ERRORS =
+  /no active response|already has an active response|conversation_already_has_active_response|cancellation failed/i;
+
+/** 哪些階段可以讓學生插話把考官打斷（Part 2 讀題與長回答不行）*/
+const BARGE_IN_PHASES = new Set(['intro', 'part1', 'part2_round', 'part3']);
+
+function turnTakingFor(phase) {
+  return PHASE_TURN_TAKING[phase] || PHASE_TURN_TAKING._default;
+}
+
 function buildSessionPayload({ script, phase, cfg = {}, flavor = 'ga' }) {
   const instructions = examinerInstructions(script, phase);
   const voice = cfg.voice || 'alloy';
   const sttModel = cfg.sttModel || 'whisper-1';
+  const tt = turnTakingFor(phase);
   const vad = {
     type: 'server_vad',
     threshold: 0.5,
     prefix_padding_ms: 300,
-    silence_duration_ms: 700,
-    create_response: true,
+    silence_duration_ms: tt.silenceMs,
+    create_response: tt.createResponse,
   };
 
   if (flavor === 'beta') {
@@ -216,6 +252,45 @@ class Session {
     if (this.ws.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(obj));
   }
 
+  /**
+   * 斷線重連時接回原本的進度。
+   *
+   * 以前 qIndex 一律從 0 開始，而 speaking_responses 的唯一鍵是
+   * (attempt_id, part, q_index) —— 重連後的第一句話會直接蓋掉考試一開始
+   * 的第一句話。實測考四句、斷線一次，資料庫最後只剩兩句。
+   * 階段也一樣從 intro 重來，學生已經考到 Part 3 了考官又問一次名字。
+   */
+  async restore() {
+    try {
+      const rows = await db.query(
+        'SELECT part, MAX(q_index) AS mx FROM speaking_responses WHERE attempt_id = ? GROUP BY part',
+        [this.attempt.id]
+      );
+      for (const r of rows) {
+        const p = Number(r.part);
+        if (this.qIndex[p] != null) this.qIndex[p] = Number(r.mx) + 1;
+      }
+      const live = await db.one(
+        'SELECT phase, transcript FROM speaking_live WHERE attempt_id = ?', [this.attempt.id]);
+      const phase = live?.phase;
+      // 準備／長回答那兩段的計時器沒有跟著存，接回去會卡住不動。
+      // 退到「讀題」重來一次 Part 2 是最不傷的做法。
+      const RESUMABLE = ['intro', 'part1', 'part2_round', 'part3'];
+      if (phase && RESUMABLE.includes(phase)) this.phase = phase;
+      else if (phase && phase.startsWith('part2')) this.phase = 'part1';
+      // 把先前的對話讀回來，考官才知道已經聊過什麼、即時分數也才接得下去
+      if (live?.transcript) {
+        for (const line of String(live.transcript).split('\n')) {
+          const m = line.match(/^(EXAMINER|CANDIDATE): ([\s\S]*)$/);
+          if (m) this.turns.push({ role: m[1] === 'EXAMINER' ? 'examiner' : 'candidate', text: m[2], at: 0 });
+        }
+        this.lastScoreAtTurn = this.turns.filter((t) => t.role === 'candidate').length;
+      }
+      this.resumed = this.turns.length > 0 || this.phase !== 'intro';
+      if (this.resumed) this.log('接回先前的進度：階段', this.phase, '已答', this.turns.filter((t) => t.role === 'candidate').length, '句');
+    } catch (e) { this.log('restore', e.message); }
+  }
+
   log(...a) { console.log(`[rt:${this.attempt.id}]`, ...a); }
 
   // ── 連線到 Realtime 模型 ──────────────────────────────────
@@ -237,7 +312,7 @@ class Session {
         this.flavor = flavor;
         this.upstream = up;
         up.on('message', (raw) => this.onUpstream(raw));
-        up.on('close', () => { if (!this.closed) this.send({ type: 'upstream_closed' }); });
+        up.on('close', () => this.onUpstreamClosed());
         up.on('error', (e) => this.send({ type: 'error', message: e.message }));
         this.log('upstream ready', flavor);
         return;
@@ -315,6 +390,56 @@ class Session {
     });
   }
 
+  /**
+   * 上游掉線。
+   *
+   * 以前只送一個 upstream_closed 就沒了 —— 而前端根本沒有處理這個訊息，
+   * 學生的畫面完全不會變，就只是考官從此再也不講話。網路抖一下就等於這一科報銷。
+   * 現在自動重接，並且把先前的對話補回去讓考官接得下去。
+   */
+  async onUpstreamClosed() {
+    if (this.closed || this.finishing) return;
+    this.responseActive = false;
+    this.upstreamRetries = (this.upstreamRetries || 0) + 1;
+    if (this.upstreamRetries > 3) {
+      return this.send({ type: 'upstream_closed', fatal: true,
+        message: '與考官的連線中斷，重試多次仍然接不回來。錄音有存下來，請舉手告訴監考老師。' });
+    }
+    this.send({ type: 'upstream_closed', retrying: this.upstreamRetries,
+      message: `與考官的連線中斷，正在重新接上（第 ${this.upstreamRetries} 次）…` });
+    await new Promise((r) => setTimeout(r, 800 * this.upstreamRetries));
+    if (this.closed || this.finishing) return;
+    try {
+      const up = await this.openUpstream(this.flavor);
+      this.upstream = up;
+      up.on('message', (raw) => this.onUpstream(raw));
+      up.on('close', () => this.onUpstreamClosed());
+      up.on('error', (e) => this.send({ type: 'error', message: e.message }));
+      this.seedHistory();
+      this.upstreamRetries = 0;
+      this.send({ type: 'upstream_reopened', message: '考官回來了，請繼續。' });
+      this.log('上游已重新接上');
+    } catch (e) {
+      this.log('上游重連失敗：', e.message);
+      this.onUpstreamClosed();
+    }
+  }
+
+  /** 重連後把先前的對話補給模型，否則考官會忘記聊過什麼、從頭再問一次 */
+  seedHistory() {
+    if (this.upstream?.readyState !== WebSocket.OPEN) return;
+    for (const t of this.turns.slice(-12)) {
+      this.upstream.send(JSON.stringify({
+        type: 'conversation.item.create',
+        item: {
+          type: 'message',
+          role: t.role === 'examiner' ? 'assistant' : 'user',
+          content: [{ type: t.role === 'examiner' ? 'output_text' : 'input_text', text: t.text }],
+        },
+      }));
+    }
+  }
+
   sessionPayload(flavor = this.flavor) {
     return buildSessionPayload({ script: this.script, phase: this.phase, cfg: this.cfg, flavor });
   }
@@ -332,6 +457,9 @@ class Session {
     if (phase === 'part2_round' && this.roundStartTurns == null) this.roundStartTurns = done;
     this.phase = phase;
     this.log('phase →', phase);
+    // 存起來，斷線重連時才接得回去
+    db.exec('UPDATE speaking_live SET phase = ? WHERE attempt_id = ?', [phase, this.attempt.id])
+      .catch(() => {});
     this.configureSession();
     this.send({
       type: 'phase',
@@ -339,12 +467,35 @@ class Session {
       cueCard: phase.startsWith('part2') ? this.script.part2 : null,
       elapsed: Math.round((Date.now() - this.startedAt) / 1000),
     });
-    if (speak && this.upstream?.readyState === WebSocket.OPEN) {
+    if (speak) this.requestResponse(extra);
+  }
+
+  /**
+   * 請考官講話。
+   *
+   * 一定要先確認沒有正在進行的回應。以前是無條件送 response.create ——
+   * 學生剛講完話、端點自己已經在產生回應時再送一次，端點會回
+   * 「Conversation already has an active response」，那則錯誤原封不動
+   * 變成學生畫面上的紅字。實測跑完一場會跳三次。
+   */
+  requestResponse(extra = '') {
+    if (this.closed || this.upstream?.readyState !== WebSocket.OPEN) return false;
+    const create = () => {
+      if (this.closed || this.upstream?.readyState !== WebSocket.OPEN) return;
       this.upstream.send(JSON.stringify({
         type: 'response.create',
-        response: { instructions: extra || undefined },
+        response: extra ? { instructions: extra } : undefined,
       }));
+    };
+    if (this.responseActive) {
+      // 換階段時舊的回應已經不合時宜了，先取消再重下
+      this.upstream.send(JSON.stringify({ type: 'response.cancel' }));
+      this.responseActive = false;
+      setTimeout(create, 120);
+      return true;
     }
+    create();
+    return true;
   }
 
   // ── 上游事件 ──────────────────────────────────────────────
@@ -361,9 +512,28 @@ class Session {
         // 開場白改在連上之後明確觸發 —— GA 握手時這顆事件已經被讀掉。
         break;
 
-      case 'input_audio_buffer.speech_started':
-        this.send({ type: 'candidate_speaking', on: true });
+      case 'response.created':
+        this.responseActive = true;
         break;
+
+      case 'input_audio_buffer.speech_started': {
+        /* 學生開口。以前是前端無條件送 cancel_response ——
+           兩個問題：一是常常根本沒有進行中的回應，端點回
+           「Cancellation failed: no active response found」，
+           學生畫面就跳一則莫名其妙的紅字；二是沒戴耳機時考官自己的
+           聲音會被麥克風收回去，考官因此把自己講到一半的話砍掉。
+           改由伺服器判斷 —— 只有它知道考官到底在不在講話。 */
+        const bargeIn = this.responseActive && BARGE_IN_PHASES.has(this.phase);
+        if (bargeIn && this.upstream?.readyState === WebSocket.OPEN) {
+          this.upstream.send(JSON.stringify({ type: 'response.cancel' }));
+          this.responseActive = false;
+        }
+        // 記下這一題是考官問的哪一句。等逐字稿回來時考官可能已經在問下一題了，
+        // 那時候再取「最後一句考官的話」就會把答案配到錯的題目上。
+        this.questionForTurn = [...this.turns].reverse().find((t) => t.role === 'examiner')?.text || '';
+        this.send({ type: 'candidate_speaking', on: true, bargeIn });
+        break;
+      }
 
       case 'input_audio_buffer.speech_stopped':
         this.send({ type: 'candidate_speaking', on: false });
@@ -419,6 +589,7 @@ class Session {
       }
 
       case 'response.done':
+        this.responseActive = false;
         this.send({ type: 'examiner_done' });
         // Part 2 指示唸完 → 開始 1 分鐘準備
         this.fire('examiner_done_hook');
@@ -440,10 +611,16 @@ class Session {
         break;
       }
 
-      case 'error':
-        this.log('upstream error', ev.error?.message);
-        this.send({ type: 'error', message: ev.error?.message || '模型回報錯誤' });
+      case 'error': {
+        const m = ev.error?.message || '模型回報錯誤';
+        this.log('upstream error', m);
+        /* 協定層的雜訊不要丟到學生臉上 —— 他看到一句英文的
+           「Cancellation failed: no active response found」只會慌，
+           而且完全無從處理。記在伺服器日誌就好。 */
+        if (INTERNAL_ERRORS.test(m)) break;
+        this.send({ type: 'error', message: m });
         break;
+      }
 
       default:
         /* 沒處理到的事件一律記下來。上游改版（例如 Beta → GA）時，
@@ -463,7 +640,10 @@ class Session {
   /** 把考生的一輪回答寫進資料庫 */
   async saveTurn(text) {
     const part = this.phase.startsWith('part2') ? 2 : this.phase === 'part3' ? 3 : 1;
-    const lastExaminer = [...this.turns].reverse().find((t) => t.role === 'examiner');
+    // 學生開口那一刻的題目才是他在回答的題目。語音辨識與考官的回應是兩條
+    // 各自跑的管線，等逐字稿回來時考官可能已經問下一題了。
+    const question = this.questionForTurn
+      || [...this.turns].reverse().find((t) => t.role === 'examiner')?.text || '';
     const idx = this.qIndex[part]++;
     const dur = Math.max(1, Math.round(text.split(/\s+/).length / 2.3));  // 依字數估算秒數
     try {
@@ -472,7 +652,7 @@ class Session {
          VALUES (?,?,?,?,?,?)
          ON DUPLICATE KEY UPDATE question=VALUES(question), transcript=VALUES(transcript),
            duration_sec=VALUES(duration_sec)`,
-        [this.attempt.id, part, idx, lastExaminer?.text || '', text, dur]
+        [this.attempt.id, part, idx, question, text, dur]
       );
     } catch (e) { this.log('saveTurn', e.message); }
   }
@@ -495,7 +675,11 @@ class Session {
       return this.send({ type: 'error', message: '與考官的連線已中斷，請重新整理頁面' });
     }
     this.log('nudge');
-    this.upstream.send(JSON.stringify({ type: 'response.create' }));
+    if (this.responseActive) {
+      // 考官其實正在講話，只是學生還沒聽到（或聲音被吃掉了）
+      return this.send({ type: 'nudged', already: true });
+    }
+    this.requestResponse();
     this.send({ type: 'nudged' });
   }
 
@@ -539,7 +723,10 @@ class Session {
     if (this.phase !== 'part2_instruct' || this.closed) return;
     const prepSec = this.script.part2?.prepSec || 60;
     this.send({ type: 'prep', seconds: prepSec, cueCard: this.script.part2 });
-    this.phase = 'part2_prep';
+    // setPhase(speak:false)，不是直接改 this.phase ——
+    // 直接改的話新的換手設定（這一分鐘考官不准出聲）根本沒送到端點，
+    // 學生一邊做筆記一邊碎念，考官就會插進來講話。
+    this.setPhase('part2_prep', { speak: false });
     clearTimeout(this.phaseTimer);
     this.phaseTimer = setTimeout(() => {
       if (this.closed) return;
@@ -684,6 +871,8 @@ function attach(server) {
 
       const cfg = await realtimeConfig();
       session = new Session({ ws, user, attempt, paper, cfg });
+      // 先把先前的進度讀回來，connectUpstream() 才會用正確的階段送 session.update
+      await session.restore();
 
       // 連上游可能會丟出例外（金鑰錯、逾時）。先 set 再 connect 的話，
       // 失敗時會直接 return，下面的 close 監聽根本沒註冊到，
@@ -702,8 +891,16 @@ function attach(server) {
         [attemptId]
       );
 
-      session.send({ type: 'ready', api: session.flavor });
-      session.setPhase('intro');
+      session.send({ type: 'ready', api: session.flavor, resumed: !!session.resumed });
+      if (session.resumed) {
+        // 接續先前的考試：把對話補給模型、告訴前端進度，不要從頭再問一次名字
+        session.seedHistory();
+        session.send({ type: 'resumed', phase: session.phase,
+          turns: session.turns.map((t) => ({ role: t.role, text: t.text })) });
+        session.setPhase(session.phase, { speak: false });
+      } else {
+        session.setPhase('intro');
+      }
     } catch (e) {
       /* 順序很重要：session.close() 會把「學生這一條」也關掉，
          先關再 send 的話那則 fatal 永遠送不出去，學生只看到連線莫名斷掉。
@@ -743,8 +940,14 @@ function attach(server) {
       else if (msg.type === 'finish') session.finish();
       // 考官沒反應時讓學生自己戳一下
       else if (msg.type === 'nudge') session.nudge();
-      else if (msg.type === 'cancel_response' && session.upstream?.readyState === WebSocket.OPEN) {
-        session.upstream.send(JSON.stringify({ type: 'response.cancel' }));
+      // 打斷考官現在由伺服器在 speech_started 時判斷（它才知道考官在不在講話）。
+      // 保留這個訊息是為了相容舊版前端，但一樣要先確認真的有回應在跑，
+      // 否則端點會回「no active response」，變成學生畫面上的紅字。
+      else if (msg.type === 'cancel_response') {
+        if (session.responseActive && session.upstream?.readyState === WebSocket.OPEN) {
+          session.upstream.send(JSON.stringify({ type: 'response.cancel' }));
+          session.responseActive = false;
+        }
       }
     });
 
@@ -815,4 +1018,5 @@ async function isAvailable() {
 module.exports = {
   attach, closeAll, isAvailable, realtimeConfig, buildScript, examinerInstructions,
   buildSessionPayload, GA_EVENT_ALIASES, sessions,
+  PHASE_TURN_TAKING, BARGE_IN_PHASES, INTERNAL_ERRORS, turnTakingFor,
 };

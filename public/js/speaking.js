@@ -229,11 +229,33 @@ class Cap extends AudioWorkletProcessor {
 }
 registerProcessor('cap', Cap);`;
 
+  const RATE = 24000;
+
   function f32ToPcm16(f32) {
     const out = new Int16Array(f32.length);
     for (let i = 0; i < f32.length; i++) {
       const s = Math.max(-1, Math.min(1, f32[i]));
       out[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+    }
+    return out;
+  }
+
+  /**
+   * 降到 24kHz。
+   *
+   * `new AudioContext({sampleRate: 24000})` 不是每個瀏覽器都會照做（Safari
+   * 尤其常見），拿到的其實是硬體的 48kHz。舊版沒有檢查就直接當成 24kHz 送上去，
+   * 考官聽到的是慢一半的聲音 —— 辨識不出文字、答非所問，全部由此而來。
+   */
+  function resampleTo24k(f32, from) {
+    if (from === RATE) return f32;
+    const ratio = from / RATE;
+    const out = new Float32Array(Math.floor(f32.length / ratio));
+    for (let i = 0; i < out.length; i++) {
+      const pos = i * ratio;
+      const j = Math.floor(pos);
+      const frac = pos - j;
+      out[i] = f32[j] * (1 - frac) + (f32[j + 1] ?? f32[j]) * frac;
     }
     return out;
   }
@@ -252,18 +274,42 @@ registerProcessor('cap', Cap);`;
 
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     const url = `${proto}://${location.host}/ws/speaking?token=${encodeURIComponent(API.token)}&attemptId=${S.attemptId}`;
-    const ws = new WebSocket(url);
-    ws.binaryType = 'arraybuffer';
-    S.ws = ws;
 
-    ws.onopen = () => setStage('連線成功，等待考官…');
-    ws.onclose = () => { if (!S.finished) setStage('連線中斷'); };
-    ws.onerror = () => setStage('連線發生錯誤');
-    ws.onmessage = (ev) => onServer(JSON.parse(ev.data));
+    /* 自動重連。以前 onclose 只把畫面文字改成「連線中斷」就結束了 ——
+       網路抖一下、Wi-Fi 換基地台、筆電闔上再打開，這一科就等於報銷，
+       學生只能重新整理，而重新整理會讓考官從頭再問一次名字。
+       伺服器那邊會接回原本的階段與逐字稿，所以重連是安全的。 */
+    let tries = 0;
+    const open = () => {
+      const ws = new WebSocket(url);
+      ws.binaryType = 'arraybuffer';
+      S.ws = ws;
+      ws.onopen = () => {
+        tries = 0;
+        setStage(S.resumed ? '已重新連上，請繼續' : '連線成功，等待考官…');
+      };
+      ws.onmessage = (ev) => onServer(JSON.parse(ev.data));
+      ws.onerror = () => {};
+      ws.onclose = () => {
+        if (S.finished || S.fatal) return;
+        tries += 1;
+        if (tries > 5) {
+          setStage('連線中斷');
+          return toast('連線一直接不回來。錄音有存下來，請舉手告訴監考老師。', 'err');
+        }
+        const wait = Math.min(8000, 700 * 2 ** (tries - 1));
+        setStage(`連線中斷，${Math.round(wait / 1000)} 秒後重試（第 ${tries} 次）`);
+        setTimeout(() => { if (!S.finished && !S.fatal) open(); }, wait);
+      };
+    };
+    open();
 
     // 音訊：24kHz 單聲道
-    const ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 24000 });
+    const ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: RATE });
     S.ctx = ctx;
+    // 瀏覽器不一定給得到指定的取樣率，拿實際值來換算
+    S.inRate = ctx.sampleRate;
+    if (S.inRate !== RATE) console.warn(`[speaking] 瀏覽器給的是 ${S.inRate}Hz，送出前會降到 ${RATE}Hz`);
     await ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([WORKLET], { type: 'application/javascript' })));
     const src = ctx.createMediaStreamSource(S.stream);
     const node = new AudioWorkletNode(ctx, 'cap');
@@ -271,13 +317,38 @@ registerProcessor('cap', Cap);`;
     analyser.fftSize = 512;
     src.connect(analyser);
     src.connect(node);
-    node.connect(ctx.createGain());   // 不輸出到喇叭，避免回授
+    /* 這一行以前是 `node.connect(ctx.createGain())` —— 一個沒有接到
+       ctx.destination 的 GainNode。Web Audio 是從 destination 反向拉的，
+       接到一個懸空的節點等於整條線根本不會被拉，AudioWorkletProcessor 的
+       process() 一次都不會被呼叫。實測：懸空 1.5 秒收到 0 個音框，
+       接到 destination 收到 285 個。
+       也就是說學生的聲音從來沒有送出去過 —— 考官全程在自言自語。
+       要靜音就把增益設成 0，不能不接。 */
+    const mute = ctx.createGain();
+    mute.gain.value = 0;
+    node.connect(mute);
+    mute.connect(ctx.destination);
     S.worklet = node;
+    S.mute = mute;
 
+    /* Worklet 每 128 個取樣點回呼一次 —— 24kHz 之下是 5.3 毫秒，
+       等於每秒 188 個 WebSocket 封包，每個才 256 位元組。這種碎片化
+       在經過 Cloudflare 之後延遲與抖動都很明顯，講起來就是「卡卡的」。
+       先攢到 60 毫秒再送，封包數少 11 倍。 */
+    const CHUNK = Math.round(RATE * 0.06);
+    let pending = [];
+    let pendingLen = 0;
     node.port.onmessage = (e) => {
-      if (ws.readyState !== WebSocket.OPEN) return;
-      const pcm = f32ToPcm16(e.data);
-      ws.send(pcm.buffer);
+      if (S.ws?.readyState !== WebSocket.OPEN) return;
+      const chunk = resampleTo24k(e.data, S.inRate);
+      pending.push(chunk);
+      pendingLen += chunk.length;
+      if (pendingLen < CHUNK) return;
+      const merged = new Float32Array(pendingLen);
+      let at = 0;
+      for (const c of pending) { merged.set(c, at); at += c.length; }
+      pending = []; pendingLen = 0;
+      S.ws.send(f32ToPcm16(merged).buffer);
     };
 
     const buf = new Uint8Array(analyser.frequencyBinCount);
@@ -329,7 +400,12 @@ registerProcessor('cap', Cap);`;
       case 'examiner_done': setOrb(''); break;
       case 'candidate_speaking':
         setOrb(msg.on ? 'candidate' : '');
-        if (msg.on) { stopPlayback(); S.ws?.send(JSON.stringify({ type: 'cancel_response' })); }
+        /* 只有伺服器說「這次算打斷」才停掉考官的聲音。
+           以前是一偵測到聲音就無條件停播並送 cancel_response ——
+           沒戴耳機時考官自己的聲音會被麥克風收回去，考官因此把自己
+           講到一半的話砍掉；而且多半根本沒有進行中的回應，
+           端點會回一句錯誤，變成學生畫面上莫名其妙的紅字。 */
+        if (msg.on && msg.bargeIn) stopPlayback();
         break;
       case 'candidate': addChat('ca', msg.text); break;
       case 'phase': onPhase(msg); break;
@@ -345,8 +421,26 @@ registerProcessor('cap', Cap);`;
         setStage('考官沒有接話');
         toast(msg.message, 'warn');
         break;
+      /* 上游（考官那一端）掉線。以前伺服器有送這則訊息，但這裡沒有任何
+         case 接它 —— 學生的畫面完全不會變，就只是考官從此不再講話。 */
+      case 'upstream_closed':
+        stopPlayback();
+        setStage(msg.fatal ? '與考官失去連線' : '正在重新接上考官…');
+        toast(msg.message || '與考官的連線中斷', msg.fatal ? 'err' : 'warn');
+        break;
+      case 'upstream_reopened':
+        setStage('考官回來了');
+        toast(msg.message || '考官回來了，請繼續。', 'ok');
+        break;
+      /* 接續先前的考試（重新整理或斷線之後）：把已經講過的補回畫面上 */
+      case 'resumed':
+        S.resumed = true;
+        for (const t of msg.turns || []) addChat(t.role === 'examiner' ? 'ex' : 'ca', t.text);
+        toast('已接回先前的進度，請從剛才的地方繼續。', 'ok');
+        break;
       case 'error': toast(msg.message, 'err'); break;
       case 'fatal':
+        S.fatal = true;
         Exam.notice('無法開始即時對話', el('div', {},
           el('p', {}, msg.message),
           el('p', { class: 'small' }, '將改用語音問答模式。')))

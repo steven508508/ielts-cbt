@@ -126,6 +126,8 @@ async function migrate() {
     ['attempts', 'grade_error', 'TEXT NULL'],
     // v2.10：紀律事件分等級，裝置問題不要跟作弊混在一起
     ['exam_events', 'severity', "VARCHAR(10) NOT NULL DEFAULT 'warn'"],
+    // v2.16：口說斷線重連時要接回原本的階段，不能從頭再問一次
+    ['speaking_live', 'phase', 'VARCHAR(20) NULL'],
   ];
   for (const [t, c, d] of steps) {
     try { if (await ensureColumn(t, c, d)) added.push(`${t}.${c}`); }

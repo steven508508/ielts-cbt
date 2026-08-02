@@ -1099,3 +1099,131 @@ test('紀錄型事件不能被算成「需留意」', () => {
       'severity 欄位的預設值是 warn，不明寫的話純紀錄也會被算成違規');
   }
 });
+
+// ── 口說即時對話：換手與打斷 ──────────────────────────────
+// 這一組守的是實測出來的一組問題：整場只設定一次語音偵測，
+// Part 2 的兩分鐘長回答因此每停頓 0.7 秒就被考官插話一次。
+const rt = require('../server/lib/realtime');
+
+const SCRIPT = {
+  part1: [{ topic: 'Hometown', items: ['Where do you live?'] }],
+  part2: { topic: 'A park', bullets: ['where', 'what', 'why'], prepSec: 60, talkSec: 120 },
+  part3: [{ topic: 'Cities', items: ['More parks?'] }],
+  rounding: ['Do you go often?'],
+};
+const vadOf = (phase) => {
+  const p = rt.buildSessionPayload({ script: SCRIPT, phase, cfg: {}, flavor: 'ga' });
+  return p.session.audio.input.turn_detection;
+};
+
+test('換手：Part 2 長回答時考官不准自動接話（官方規則不能打斷考生）', () => {
+  assert.equal(vadOf('part2_talk').create_response, false);
+});
+
+test('換手：Part 2 準備的那一分鐘考官也不准出聲', () => {
+  assert.equal(vadOf('part2_prep').create_response, false);
+});
+
+test('換手：一問一答的階段照常自動接話', () => {
+  for (const p of ['intro', 'part1', 'part2_round', 'part3']) {
+    assert.equal(vadOf(p).create_response, true, p);
+  }
+});
+
+test('換手：停頓門檻要夠寬，換個氣不該被搶話', () => {
+  assert.ok(vadOf('part1').silence_duration_ms >= 1000,
+    '700 毫秒對考生太短，講到一半換氣就被打斷');
+  assert.ok(vadOf('part2_talk').silence_duration_ms >= vadOf('part1').silence_duration_ms,
+    '長回答的容忍度不能比一問一答還短');
+});
+
+test('每一個階段都有自己的指示，不會掉回 Part 1', () => {
+  const seen = new Set();
+  for (const p of ['intro', 'part1', 'part2_instruct', 'part2_prep', 'part2_talk',
+    'part2_round', 'part3', 'end']) {
+    const text = rt.examinerInstructions(SCRIPT, p);
+    const stage = text.match(/CURRENT STAGE — ([^\n.]+)/)?.[1];
+    assert.ok(stage, p);
+    assert.ok(!seen.has(stage), `階段 ${p} 拿到的是「${stage}」的指示，代表它沒有自己的那一段`);
+    seen.add(stage);
+  }
+});
+
+test('Part 2 準備階段的指示要明確叫考官閉嘴', () => {
+  const text = rt.examinerInstructions(SCRIPT, 'part2_prep');
+  assert.match(text, /Say NOTHING AT ALL/);
+});
+
+test('打斷：只有一問一答的階段可以插話', () => {
+  assert.equal(rt.BARGE_IN_PHASES.has('part1'), true);
+  assert.equal(rt.BARGE_IN_PHASES.has('part3'), true);
+  assert.equal(rt.BARGE_IN_PHASES.has('part2_talk'), false, '長回答時考官本來就不該在講話');
+  assert.equal(rt.BARGE_IN_PHASES.has('part2_instruct'), false, '讀題讀到一半不該被咳嗽打斷');
+});
+
+test('協定層的雜訊不能變成學生畫面上的紅字', () => {
+  for (const m of [
+    'Cancellation failed: no active response found',
+    'Conversation already has an active response',
+  ]) assert.match(m, rt.INTERNAL_ERRORS, m);
+  assert.ok(!rt.INTERNAL_ERRORS.test('Incorrect API key provided'),
+    '真正要讓人知道的錯誤不能被濾掉');
+});
+
+/** 只看真正會執行的程式碼 —— 註解裡提到某個字串不代表程式碼在做那件事 */
+const stripComments = (src) => src
+  .replace(/\/\*[\s\S]*?\*\//g, '')
+  .replace(/(^|[^:])\/\/.*$/gm, '$1');
+
+test('前端：只有伺服器說算打斷才停掉考官的聲音', () => {
+  const src = stripComments(
+    require('fs').readFileSync(require.resolve('../public/js/speaking.js'), 'utf8'));
+  assert.match(src, /msg\.on && msg\.bargeIn/,
+    '無條件停播的話，沒戴耳機時考官會被自己的回音打斷');
+  assert.ok(!/cancel_response/.test(src),
+    '前端不該自己送 cancel_response —— 只有伺服器知道考官在不在講話');
+});
+
+test('前端：上游掉線要有人接，而且要會自動重連', () => {
+  const src = require('fs').readFileSync(require.resolve('../public/js/speaking.js'), 'utf8');
+  assert.match(src, /case 'upstream_closed'/, '伺服器有送，前端沒接的話學生完全看不到');
+  assert.match(src, /case 'upstream_reopened'/);
+  assert.match(src, /case 'resumed'/, '接回進度時要把講過的補回畫面');
+  assert.match(src, /ws\.onclose[\s\S]{0,400}setTimeout\(\(\) => \{ if \(!S\.finished/,
+    '學生那條連線斷掉要自動重連，不能只把字改成「連線中斷」就結束');
+});
+
+test('前端：取樣率不是 24k 時要自己降頻', () => {
+  const src = require('fs').readFileSync(require.resolve('../public/js/speaking.js'), 'utf8');
+  assert.match(src, /function resampleTo24k/,
+    'AudioContext 不保證給得到 24kHz，直接當成 24kHz 送上去考官會聽到慢一半的聲音');
+  assert.match(src, /S\.inRate = ctx\.sampleRate/, '要用實際拿到的取樣率，不是自己指定的那個');
+  assert.match(src, /resampleTo24k\(e\.data, S\.inRate\)/);
+});
+
+test('前端：音訊要攢一段再送，不能每 5 毫秒一個封包', () => {
+  const src = require('fs').readFileSync(require.resolve('../public/js/speaking.js'), 'utf8');
+  const m = src.match(/const CHUNK = Math\.round\(RATE \* ([\d.]+)\)/);
+  assert.ok(m, '要有明確的分塊大小');
+  assert.ok(Number(m[1]) >= 0.04,
+    `每 ${Number(m[1]) * 1000} 毫秒送一次太碎，經過 CDN 之後延遲與抖動都很明顯`);
+});
+
+// 這一條守的是整套口說裡最貴的一個教訓：
+// `node.connect(ctx.createGain())` —— 接到一個沒有接到喇叭的 GainNode。
+// Web Audio 是從喇叭端反向拉資料的，接到懸空的節點整條線根本不會被拉，
+// AudioWorkletProcessor.process() 一次都不會被呼叫。
+// 實測：懸空 1.5 秒收到 0 個音框，接到 destination 收到 285 個。
+// 也就是說學生的聲音從來沒有送出去過，考官全程在自言自語 ——
+// 而畫面上一切看起來都正常。
+test('前端：麥克風的擷取節點一定要接到 destination，否則整條線不會被拉', () => {
+  const src = stripComments(
+    require('fs').readFileSync(require.resolve('../public/js/speaking.js'), 'utf8'));
+  const block = src.slice(src.indexOf('async function startRealtime'), src.indexOf('function playChunk'));
+  assert.ok(!/node\.connect\(ctx\.createGain\(\)\)/.test(block),
+    '接到懸空的 GainNode 等於完全沒有錄音');
+  assert.match(block, /node\.connect\(mute\)/);
+  assert.match(block, /mute\.connect\(ctx\.destination\)/,
+    '要靜音就把增益設成 0，不能不接到 destination');
+  assert.match(block, /mute\.gain\.value = 0/, '增益不設 0 的話會從喇叭放出來，變成回授');
+});
