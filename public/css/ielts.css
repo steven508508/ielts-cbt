@@ -439,10 +439,17 @@ table.data tr.warn-row td{background:#fffaf0}
   white-space: pre-wrap; font-size: .85rem; line-height: 1.8;
   font-family: inherit; margin: .4rem 0;
 }
+/* 檢討頁的圖表。max-width 本來就有，但沒有 max-height —— 一張很高的
+   流程圖會把整頁撐得非常長，而且跟考試中一樣看不清楚細節。
+   加上高度上限與點擊放大（cursor:zoom-in 只是提示，行為在 results.js）。 */
 .rev-img {
   display: block; max-width: 100%; height: auto; margin: .4rem 0;
+  max-height: min(70vh, 860px); object-fit: contain;
   border: 1px solid var(--line-2); border-radius: 4px; background: #fff;
+  cursor: zoom-in;
 }
+/* 老師貼在題目 HTML 裡的圖也不能撐爆檢討頁 */
+.rev-body img, .rev-passage img{max-width:100%; height:auto; object-fit:contain}
 .rev-body {
   margin: .3rem 0; padding: .5rem .6rem; background: #f6f8fa;
   border: 1px solid var(--line-2); border-radius: 4px; line-height: 1.9;

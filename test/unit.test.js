@@ -1815,8 +1815,9 @@ test('版面：圖片要先把高度佔好，載完不能整批位移', () => {
     '載失敗改 display:none 的話高度又縮回去，等於再跳一次');
   const css = require('fs').readFileSync(
     require.resolve('../public/css/cbt.css').replace(/\.js$/, ''), 'utf8');
-  assert.match(css, /\.sec-img, \.cbt-group img\.fig\{[^}]*min-height/s);
-  assert.match(css, /data-loaded\]/);
+  // v2.23.1：圖片統一走 .cbt-fig，佔位改成「還沒載完才有」，載完就收掉
+  assert.match(css, /\.cbt-fig:not\(\[data-loaded\]\)\{min-height/,
+    '佔位只在載入中有效 —— 留著會壓到比例');
 });
 
 test('閱讀：欄寬與文章捲動位置在重畫之後要留著', () => {
@@ -2040,4 +2041,65 @@ test('班級隔離：全站維護與整份備份只給管理員', () => {
     ["router.post('/cleanup', requireRole('admin')", '清理是破壞性動作'],
     ["router.get('/backup/test/:id.json', requireRole('admin')", '備份會倒出全校學生的作文與逐字稿'],
   ]) assert.ok(src.includes(route), `${why} 要限管理員：${route}`);
+});
+
+// ══════════════════════════════════════════════════════════════
+// v2.23.1：圖表爆版
+// （實測在 test/browser/figures.mjs —— 那一支用真實尺寸的圖在三種
+//   視窗大小下量實際渲染結果。）
+// ══════════════════════════════════════════════════════════════
+
+test('圖表：所有考卷裡的圖都要有寬高上限，不能只有題組裡那一種', () => {
+  const css = require('fs').readFileSync(
+    require.resolve('../public/css/cbt.css').replace(/\.js$/, ''), 'utf8');
+  assert.match(css, /\.cbt-fig\{[^}]*max-width:100%/s);
+  assert.match(css, /\.cbt-fig\{[^}]*height:auto/s);
+  assert.match(css, /\.cbt-fig\{[^}]*max-height:min\(70vh/s,
+    '沒有高度上限的話，一張很高的流程圖會把整頁撐下去、超出視窗');
+  assert.match(css, /\.cbt-fig\{[^}]*object-fit:contain/s,
+    '保險：日後又有人加 min-height 之類的東西，圖也不會被拉變形');
+  // 老師貼在 HTML 裡的圖同樣不能撐爆
+  assert.match(css, /\.cbt-body img, \.cbt-passage img, \.cbt-stem img\{max-width:100%/);
+  const ielts = require('fs').readFileSync(
+    require.resolve('../public/css/ielts.css').replace(/\.js$/, ''), 'utf8');
+  assert.match(ielts, /\.rev-img \{[^}]*max-height/s, '檢討頁也要有高度上限');
+});
+
+test('圖表：四個出圖的地方都走同一個 figure()', () => {
+  const src = stripComments(
+    require('fs').readFileSync(require.resolve('../public/js/exam.js'), 'utf8'));
+  assert.match(src, /function figure\(src, alt\)/);
+  // 不可以再有繞過 figure() 直接輸出的 <img>
+  const raw = src.match(/el\('img', \{[^}]*class: '(fig|sec-img)'/g) || [];
+  assert.deepEqual(raw, [],
+    '寫作 Task 1 的圖表以前就是這樣繞過去的 —— 它不在 .cbt-group 裡，'
+    + '而唯一那條 max-width 只管 .cbt-group img.fig');
+  assert.ok((src.match(/figure\(/g) || []).length >= 4,
+    '聽力本節圖、閱讀本節圖、題組圖、寫作 Task 1 圖，四個都要');
+});
+
+test('圖表：可以放大檢視，而且掛在 body', () => {
+  const src = stripComments(
+    require('fs').readFileSync(require.resolve('../public/js/exam.js'), 'utf8'));
+  const block = src.slice(src.indexOf('function lightbox('), src.indexOf('const imgGuard ='));
+  assert.match(block, /document\.body\.append\(box\)/,
+    '掛在 .cbt 裡的話，任何一次重畫都會把它連根拔掉（跟對話框同一個坑）');
+  assert.match(block, /class: 'cbt cbt-lightbox'/, '要自己帶 cbt 才吃得到配色變數');
+  assert.match(block, /host\.dataset\.scheme/, '高對比配色要跟著過去');
+  assert.match(block, /e\.key === 'Escape'/);
+  assert.match(block, /addEventListener\('wheel'/, '滾輪縮放');
+  assert.match(block, /pointerdown/, '放大之後要拖得動');
+  assert.match(src, /zoom: lightbox/, '檢討頁要用得到');
+});
+
+test('圖表：寫作的分隔線要真的拖得動', () => {
+  const src = stripComments(
+    require('fs').readFileSync(require.resolve('../public/js/exam.js'), 'utf8'));
+  const w = src.slice(src.indexOf('function writingStage('), src.indexOf('function renderGroup('));
+  assert.match(w, /class: 'cbt-split', id: 'splitter'/,
+    '以前寫作這根沒有 id，setupSplit 抓不到 —— 看起來可以拖，實際上完全拖不動');
+  assert.match(w, /class: 'cbt-pane left', id: 'pane-passage'/);
+  assert.match(src, /name === 'reading' \|\| name === 'writing'\) setupSplit/);
+  assert.match(src, /wideDefault\) S\._splitFlex = '0 0 60%'/,
+    'Task 1 的圖表在 50% 欄位裡只剩約 37%，而學生不會知道那根線可以拖');
 });

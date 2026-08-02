@@ -132,7 +132,7 @@ mark.hl.has-note{background:var(--c-note); border-bottom:2px dotted currentColor
   padding:.55rem .75rem; margin-bottom:.85rem; font-size:.92em; line-height:1.5;
 }
 .cbt-rubric .rng{display:block; font-weight:700; margin-bottom:.15rem}
-.cbt-group img.fig{max-width:100%; border:1px solid var(--c-line-soft); margin:.4rem 0 .9rem}
+
 
 .cbt-q{display:flex; gap:.6rem; margin-bottom:.9rem; scroll-margin-top:60px; padding:.2rem; border-radius:3px}
 .cbt-q.active{background:rgba(0,92,138,.07); outline:1px solid var(--c-accent)}
@@ -218,11 +218,48 @@ mark.hl.has-note{background:var(--c-note); border-bottom:2px dotted currentColor
 .cbt-clock .t{display:inline-block; min-width:8.5em; text-align:right; font-variant-numeric:tabular-nums}
 #note-count{display:inline-block !important; min-width:3.2em; text-align:center}
 
-/* 圖片先把位置佔好。沒有寬高也沒有 aspect-ratio 的話，圖片載完（或載失敗
-   被收起來）的那一刻，底下所有選項與填空框會整批上下位移數百 px ——
-   而聽力一進畫面就開始播音檔，學生正在趕答題。 */
-.sec-img, .cbt-group img.fig{min-height:120px; background:var(--c-rubric)}
-.sec-img[data-loaded], .cbt-group img.fig[data-loaded]{min-height:0; background:none}
+/* ── 考卷裡的圖（Task 1 圖表、地圖、平面圖、流程圖）──────────
+ *
+ * 以前只有 `.cbt-group img.fig` 有 max-width，而寫作 Task 1 的圖表不在
+ * .cbt-group 裡面 —— 完全沒有寬度限制。1600×900 的長條圖就原尺寸畫出來，
+ * 右邊超出容器 981px、下面超出視窗 276px，學生只看得到左上角。
+ *
+ * 現在一律：縮到容器內、保持比例、不超過視窗高度。
+ * object-fit:contain 是保險 —— 就算哪天又有人加了 min-height 之類的東西，
+ * 圖也不會被拉變形。
+ */
+.cbt-figwrap{margin:.6rem 0 1rem; padding:0; display:block}
+.cbt-fig{
+  display:block; max-width:100%; height:auto;
+  max-height:min(70vh, 860px); object-fit:contain;
+  border:1px solid var(--c-line-soft); background:#fff;
+  cursor:zoom-in;
+}
+.cbt-fig:hover{border-color:var(--c-accent)}
+.cbt-figwrap figcaption{
+  display:flex; align-items:center; gap:.5rem; margin-top:.35rem; font-size:.85em; opacity:.85;
+}
+.cbt-zoom{padding:.2rem .6rem; font-size:.85em}
+/* 圖片先把位置佔好：載完（或載失敗）之前保留一塊高度，否則圖一載完
+   底下所有選項與填空框會整批上下位移數百 px —— 而聽力一進畫面就開始
+   播音檔，學生正在趕答題。載完就把佔位收掉，絕不能留著壓比例。 */
+.cbt-fig:not([data-loaded]){min-height:140px; background:var(--c-rubric)}
+
+/* 放大檢視 */
+.cbt-lightbox{position:fixed; inset:0; z-index:1400; display:flex; flex-direction:column; background:var(--c-bg)}
+.cbt-lightbox .bar{
+  flex:0 0 auto; display:flex; align-items:center; gap:.4rem; padding:.5rem .8rem;
+  background:var(--c-bar); color:var(--c-bar-fg); border-bottom:1px solid var(--c-line);
+}
+.cbt-lightbox .bar .ttl{font-weight:700}
+.cbt-lightbox .stage{
+  flex:1 1 auto; min-height:0; overflow:hidden; display:grid; place-items:center;
+  background:repeating-conic-gradient(rgba(128,128,128,.09) 0% 25%, transparent 0% 50%) 50%/22px 22px;
+}
+.cbt-lightbox img{
+  max-width:96vw; max-height:100%; object-fit:contain;
+  transform-origin:center center; transition:transform .08s linear; touch-action:none;
+}
 
 /* ── 底部題號列 ─────────────────────────────────────────── */
 .cbt-foot{
@@ -394,11 +431,14 @@ mark.hl.has-note{background:var(--c-note); border-bottom:2px dotted currentColor
 /* 提示訊息不要蓋在底部的題號列與上下題按鈕上 */
 .exam-body #toasts{bottom:calc(var(--foot-h, 56px) + 14px)}
 
-/* 本節圖片（地圖／平面圖） */
-.sec-img {
-  display: block; max-width: 100%; height: auto; margin: .6rem 0;
-  border: 1px solid var(--c-line, #ccc); border-radius: 4px; background: #fff;
+/* .sec-img 與 .fig 都併進 .cbt-fig 了（見上面「考卷裡的圖」那一段）。
+   舊試卷或自訂 HTML 裡如果還有這兩個 class，至少不要讓它撐爆版面。 */
+.cbt .sec-img, .cbt img.fig{
+  display:block; max-width:100%; height:auto; max-height:min(70vh, 860px);
+  object-fit:contain; margin:.6rem 0; border:1px solid var(--c-line-soft); background:#fff;
 }
+/* 老師貼在題目／文章 HTML 裡的圖也一樣不能撐爆 */
+.cbt-body img, .cbt-passage img, .cbt-stem img{max-width:100%; height:auto; object-fit:contain}
 
 /* 口說控制列：結束測驗要看得出是不可逆的動作 */
 .cbt-btn.danger { border-color: var(--c-danger); color: var(--c-danger); }

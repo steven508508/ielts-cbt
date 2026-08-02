@@ -6,6 +6,13 @@ const Results = (() => {
   let D = null;
   let pollTimer = null;
 
+  /* 檢討頁的圖表也要能放大。考試中看不清楚的圖，檢討時同樣看不清楚 ——
+     而檢討才是學生真正要看懂圖表在說什麼的時候。 */
+  document.addEventListener('click', (e) => {
+    const img = e.target.closest?.('img.rev-img');
+    if (img) Exam.zoom(img.src, img.alt || '圖表');
+  });
+
   async function render(attemptId, mount) {
     clearInterval(pollTimer);
     UI.render(mount, UI.loading('載入成績單…', 5));

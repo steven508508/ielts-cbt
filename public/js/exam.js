@@ -713,6 +713,7 @@ const Exam = (() => {
         el('p', {}, `確定要結束「${UI.MODULE_LABEL[S.module]}」嗎？結束後就不能再修改答案。`), '結束');
       if (!ok) return;
     }
+    $$('.cbt-lightbox').forEach((n) => n.remove());
     await flush();
     // 結束前再試一次，並且把「有沒有東西沒存出去」帶到結束畫面上
     if (pending.size || Object.keys(S.writingDirty || {}).length) await flush();
@@ -951,8 +952,8 @@ const Exam = (() => {
         requestAnimationFrame(() => { if (p.isConnected && p.scrollTop !== scroll) p.scrollTop = scroll; });
       }
     }
-    if (name === 'reading') {
-      // 文章欄的捲動位置以前完全沒有還原 —— 學生畫一條線，文章就跳回最上面
+    if (name === 'reading' || name === 'writing') {
+      // 左欄的捲動位置以前完全沒有還原 —— 學生畫一條線，文章就跳回最上面
       const lp = $('#pane-passage');
       if (lp && passScroll) {
         lp.scrollTop = passScroll;
@@ -960,7 +961,7 @@ const Exam = (() => {
       }
     }
     refreshFoot();
-    if (name === 'reading') setupSplit();
+    if (name === 'reading' || name === 'writing') setupSplit(name === 'writing' && !!sec && hasFigure(name));
     if (name === 'listening') setupAudio(sec);
     // 畫記在重畫後要塗回去 —— 這是官方機考的行為，畫記整科都留著
     setupContextMenu();
@@ -988,7 +989,7 @@ const Exam = (() => {
       el('div', { class: 'cbt-pane single' },
         el('div', { class: 'inner' },
           audioBar(sec),
-          sec.image ? el('img', { src: sec.image, class: 'sec-img', alt: sec.title || '本節圖片', ...imgGuard() }) : null,
+          sec.image ? figure(sec.image, sec.title || '本節圖片') : null,
           sec.groups.map((g, gi) => renderGroup('listening', g, S.section, gi)))));
   }
 
@@ -1004,6 +1005,100 @@ const Exam = (() => {
    * 作法：CSS 先給一塊 min-height 佔位，載完（或載失敗）再標記 data-loaded
    * 讓它收掉；失敗改用 visibility 而不是 display，位置至少不會再變。
    */
+  /**
+   * 考卷裡的圖（Task 1 圖表、地圖、平面圖、流程圖）。
+   *
+   * 以前這些 <img> 直接輸出，只有 `.cbt-group img.fig` 那一條 CSS 有
+   * max-width —— 而寫作 Task 1 的圖表不在 .cbt-group 裡面，於是**完全沒有
+   * 任何寬度限制**。一張 1600×900 的長條圖就原尺寸畫出來，右邊超出容器
+   * 981px、下面超出視窗 276px。學生看到的是圖表的左上角：兩根長條、
+   * 沒有年份、沒有圖例、沒有單位 —— 這題根本沒辦法作答。
+   *
+   * 光是縮到容器內還不夠：Task 1 的圖表被塞進 50% 寬的欄位只剩約 39%，
+   * 座標軸的字會小到看不清楚。官方機考給圖表的空間大得多。所以：
+   *   · 縮到容器內、保持比例、不超過視窗高度
+   *   · 可以點開放大（全螢幕檢視、可縮放、可拖曳）
+   *   · 寫作的分隔線也改成真的可以拖（以前是裝飾用的）
+   */
+  function figure(src, alt) {
+    const img = el('img', {
+      class: 'cbt-fig', src, alt: alt || '',
+      title: '點一下可以放大',
+      onclick: () => lightbox(src, alt),
+      ...imgGuard(),
+    });
+    return el('figure', { class: 'cbt-figwrap' },
+      img,
+      el('figcaption', {},
+        el('button', {
+          class: 'cbt-btn cbt-zoom',
+          onclick: (e) => { e.stopPropagation(); lightbox(src, alt); },
+        }, '🔍 放大檢視')));
+  }
+
+  /**
+   * 放大檢視。掛在 document.body（跟對話框同一個理由：畫面每一次重畫都是
+   * root().replaceChildren()，掛在裡面會被連根拔掉），而且要自己帶 `cbt`
+   * 才吃得到配色變數。
+   */
+  function lightbox(src, alt) {
+    const host = document.querySelector('.cbt:not(.cbt-dim):not(.cbt-lightbox)');
+    const box = el('div', { class: 'cbt cbt-lightbox' });
+    if (host) {
+      if (host.dataset.size) box.dataset.size = host.dataset.size;
+      if (host.dataset.scheme) box.dataset.scheme = host.dataset.scheme;
+    }
+    let zoom = 1;
+    let panX = 0; let panY = 0;
+    const img = el('img', { src, alt: alt || '', draggable: 'false' });
+    const paint = () => {
+      img.style.transform = `translate(${panX}px, ${panY}px) scale(${zoom})`;
+      img.style.cursor = zoom > 1 ? 'grab' : 'zoom-in';
+    };
+    const setZoom = (z) => {
+      zoom = Math.min(6, Math.max(1, z));
+      if (zoom === 1) { panX = 0; panY = 0; }
+      paint();
+    };
+    const close = () => {
+      box.remove();
+      document.removeEventListener('keydown', onKey);
+    };
+    function onKey(e) {
+      if (e.key === 'Escape') { e.stopPropagation(); close(); }
+      else if (e.key === '+' || e.key === '=') setZoom(zoom + 0.5);
+      else if (e.key === '-') setZoom(zoom - 0.5);
+    }
+    // 滾輪縮放；拖曳平移
+    img.addEventListener('wheel', (e) => { e.preventDefault(); setZoom(zoom + (e.deltaY < 0 ? 0.3 : -0.3)); }, { passive: false });
+    let drag = null;
+    img.addEventListener('pointerdown', (e) => {
+      if (zoom <= 1) return;
+      drag = { x: e.clientX - panX, y: e.clientY - panY };
+      img.setPointerCapture(e.pointerId);
+      img.style.cursor = 'grabbing';
+    });
+    img.addEventListener('pointermove', (e) => {
+      if (!drag) return;
+      panX = e.clientX - drag.x; panY = e.clientY - drag.y; paint();
+    });
+    img.addEventListener('pointerup', () => { drag = null; paint(); });
+    img.addEventListener('dblclick', () => setZoom(zoom > 1 ? 1 : 2));
+
+    box.append(
+      el('div', { class: 'bar' },
+        el('span', { class: 'ttl' }, alt || '圖表'),
+        el('span', { style: { flex: 1 } }),
+        el('button', { class: 'cbt-btn', onclick: () => setZoom(zoom - 0.5) }, '－'),
+        el('button', { class: 'cbt-btn', onclick: () => setZoom(1) }, '原始大小'),
+        el('button', { class: 'cbt-btn', onclick: () => setZoom(zoom + 0.5) }, '＋'),
+        el('button', { class: 'cbt-btn primary', onclick: close }, '關閉')),
+      el('div', { class: 'stage', onclick: (e) => { if (e.target.classList.contains('stage')) close(); } }, img));
+    document.body.append(box);
+    document.addEventListener('keydown', onKey);
+    paint();
+  }
+
   const imgGuard = () => ({
     onload: (e) => { e.target.dataset.loaded = '1'; },
     onerror: (e) => { e.target.dataset.loaded = '1'; e.target.style.visibility = 'hidden'; },
@@ -1127,7 +1222,7 @@ const Exam = (() => {
         sec.source && el('div', { class: 'sub' }, sec.source),
         // 素材編輯器的「本節圖片（地圖／平面圖）」以前沒有任何地方讀，
         // 老師填了等於丟進黑洞，學生看到的是空白
-        sec.image ? el('img', { src: sec.image, class: 'sec-img', alt: sec.title || '本節圖片', ...imgGuard() }) : null,
+        sec.image ? figure(sec.image, sec.title || '本節圖片') : null,
         el('div', { html: sanitize(sec.passage || '<p>（沒有文章內容）</p>') })),
       el('div', { class: 'cbt-split', id: 'splitter' }),
       el('div', { class: 'cbt-pane right' },
@@ -1143,10 +1238,18 @@ const Exam = (() => {
        之後同一個事件會跑幾十遍。 */
   let splitDrag = false;
   let splitBound = false;
-  function setupSplit() {
+  /** 這一科目前這一頁有沒有圖 */
+  function hasFigure(name) {
+    if (name === 'writing') return !!(S.writingTasks?.[S.section]?.image);
+    return false;
+  }
+  function setupSplit(wideDefault = false) {
     const sp = $('#splitter');
     const left = $('#pane-passage');
     if (!sp || !left) return;
+    /* 有圖表的時候左欄預設給多一點。Task 1 的長條圖在 50% 欄位裡只剩約 37%，
+       座標軸的字幾乎看不清楚 —— 而學生不會知道那根分隔線可以拖。 */
+    if (!S._splitFlex && wideDefault) S._splitFlex = '0 0 60%';
     if (S._splitFlex) left.style.flex = S._splitFlex;
     const move = (x) => {
       const pct = Math.min(78, Math.max(22, (x / window.innerWidth) * 100));
@@ -1497,16 +1600,19 @@ const Exam = (() => {
       },
     }, S.writing[t.taskNo] ?? '');
 
+    /* 左欄要給 id，setupSplit 才抓得到 —— 以前寫作這裡放了一根 .cbt-split
+       卻沒有 id，看起來可以拖，實際上完全拖不動。Task 1 的圖表本來就需要
+       更多寬度，這件事影響很大。 */
     return el('div', { class: 'cbt-stage' },
-      el('div', { class: 'cbt-pane left' },
+      el('div', { class: 'cbt-pane left', id: 'pane-passage' },
         el('div', { class: 'cbt-rubric' },
           el('span', { class: 'rng' }, `WRITING TASK ${t.taskNo}`),
           `You should spend about ${t.taskNo === 2 ? 40 : 20} minutes on this task. Write at least ${t.minWords} words.`),
-        t.image && el('img', { class: 'fig', src: t.image, alt: `Task ${t.taskNo}`, ...imgGuard() }),
+        t.image && figure(t.image, `Task ${t.taskNo} 圖表`),
         t.visualDescription && el('div', { class: 'cbt-rubric' },
           el('span', { class: 'rng' }, '圖表說明 Figure description'), t.visualDescription),
         el('div', { class: 'cbt-body', html: sanitize(t.prompt) })),
-      el('div', { class: 'cbt-split' }),
+      el('div', { class: 'cbt-split', id: 'splitter' }),
       el('div', { class: 'cbt-pane right cbt-write' },
         ta,
         el('div', { class: 'cbt-wc' + (wc(S.writing[t.taskNo]) < t.minWords ? ' under' : '') },
@@ -1530,7 +1636,7 @@ const Exam = (() => {
       el('div', { class: 'cbt-rubric' },
         range && el('span', { class: 'rng' }, range),
         el('span', { html: sanitize(g.instructions || '') })),
-      g.image && el('img', { class: 'fig', src: g.image, alt: '', ...imgGuard() }));
+      g.image && figure(g.image, '本題圖片'));
 
     if (['matching', 'gap_fill_bank', 'label_image'].includes(g.type) && g.options?.length) {
       wrap.append(optionBank(g));
@@ -1923,5 +2029,5 @@ const Exam = (() => {
     if (document.visibilityState === 'hidden') beacon();
   });
 
-  return { open, dlg, notice, prefs, applyPrefs };
+  return { open, dlg, notice, prefs, applyPrefs, zoom: lightbox };
 })();
