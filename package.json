@@ -1,6 +1,6 @@
 {
   "name": "ielts-cbt",
-  "version": "2.18.0",
+  "version": "2.19.0",
   "description": "IELTS Computer-Delivered Test simulation — official-style UI, realtime AI speaking, full teacher data management",
   "main": "server/index.js",
   "type": "commonjs",

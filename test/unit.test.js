@@ -1376,3 +1376,58 @@ test('口說分數要寫回 attempts，成績單那一欄才不會是空的', ()
   assert.match(src, /att\.status !== 'in_progress'/,
     '還在考的時候不能重算總分與狀態，那會把考試標成已批改');
 });
+
+// ── 考官不能講到一半就永遠沉默 ────────────────────────────
+// 實測症狀：學生講完姓名與出生地，考官回一句之後就再也不出聲。
+// 成因是 response.create 撞上進行中的回應（端點回 already_active），
+// 而那則錯誤被當成協定雜訊濾掉了 —— 撞在階段轉換那一次就完全沒救。
+test('發話：要講話用排隊的，不能賭固定延遲', () => {
+  const src = require('fs').readFileSync(require.resolve('../server/lib/realtime'), 'utf8');
+  const block = src.slice(src.indexOf('requestResponse('), src.indexOf('startPump()'));
+  assert.match(block, /this\.wantResponse = \{/, '要有「排隊中」的狀態');
+  assert.ok(!/setTimeout\(create, \d+\)/.test(block),
+    '不能取消之後隔固定毫秒就硬送，那是在賭取消已經處理完');
+  assert.match(src, /if \(this\.wantResponse\) this\.pumpResponse\(\);/,
+    'response.done 到了才送排隊中的那一次');
+});
+
+test('發話：撞到進行中的回應要重新排隊，不是濾掉就算了', () => {
+  const src = require('fs').readFileSync(require.resolve('../server/lib/realtime'), 'utf8');
+  assert.match(src, /already has an active response\/i\.test\(m\)[\s\S]{0,200}this\.wantResponse = /,
+    'already_active 代表狀態沒同步，要把該講的話重新排進去');
+});
+
+test('發話：考官沒動靜要自己重試，不是只通報', () => {
+  const src = require('fs').readFileSync(require.resolve('../server/lib/realtime'), 'utf8');
+  const i = src.indexOf('startPump()');
+  const block = src.slice(i, i + 2200);
+  assert.match(block, /this\.awaiting && now - this\.awaiting\.at > \d+/);
+  assert.match(block, /tries <= 3/, '要有重試上限');
+  assert.match(block, /this\.responseActive = false/, '重試前要把卡住的狀態清掉');
+  assert.match(block, /now - this\.lastActivity > \d+[\s\S]{0,160}responseActive = false/,
+    '標記成正在講話卻很久沒聲音，那個狀態就是壞的');
+});
+
+test('發話：改 session 之後不能還以為考官在講話', () => {
+  const src = require('fs').readFileSync(require.resolve('../server/lib/realtime'), 'utf8');
+  const block = src.slice(src.indexOf('configureSession()'), src.indexOf('setPhase('));
+  assert.match(block, /this\.responseActive = false/,
+    '端點在 session 被改掉時會中止進行中的回應，而且不保證補得出 response.done');
+});
+
+test('考官指示：Part 1 與 Part 3 都明確禁止自己停下來', () => {
+  for (const p of ['part1', 'part3']) {
+    const text = rt.examinerInstructions(SCRIPT, p);
+    assert.match(text, /NEVER STOP ASKING/, p);
+    assert.match(text, /must end with a question/, p);
+    assert.match(text, /keep (Part 1 going|going)/, `${p}：題目問完之後要繼續，不是收工`);
+  }
+});
+
+test('考官指示：換到會話階段時要明確叫它問出第一題', () => {
+  const src = require('fs').readFileSync(require.resolve('../server/lib/realtime'), 'utf8');
+  assert.match(src, /openingFor\(phase\)/);
+  assert.match(src, /Ask the candidate your first Part 1 question immediately/);
+  assert.match(src, /setPhase\('part1', \{ extra: this\.openingFor\('part1'\) \}\)/,
+    '光換指示不夠，要明確要求它開口');
+});

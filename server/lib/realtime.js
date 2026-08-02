@@ -62,9 +62,16 @@ Say, in your own natural words: good morning/afternoon, introduce yourself as ${
 ask the candidate to tell you their full name, then ask where they are from. Then STOP.`,
 
     part1: `CURRENT STAGE — Part 1 (4–5 minutes).
-Work through these topics in order, asking the questions roughly as written. You may add one
-short natural follow-up per topic based on what the candidate said. Move to the next topic once
-a topic has been covered.
+Work through these topics in order, asking the questions roughly as written. Add short natural
+follow-ups based on what the candidate actually said. Move to the next topic once a topic has
+been covered.
+
+NEVER STOP ASKING. Every turn you take must end with a question to the candidate.
+If you have already worked through every question listed below, keep Part 1 going with further
+natural questions on the same everyday themes (work/study, home, free time, food, travel,
+weather, technology) — a real examiner always keeps the conversation moving for the full
+4–5 minutes. Do NOT announce that this part is over, do NOT say you have no more questions,
+do NOT wait for the candidate to start. The system will tell you when to move on.
 ${p1}`,
 
     part2_instruct: `CURRENT STAGE — Part 2 instructions.
@@ -93,7 +100,12 @@ ${(script.rounding || []).map((q) => `    · ${q}`).join('\n') || '    · (ask o
 Say "We've been talking about ..., and I'd like to discuss with you one or two more general
 questions relating to this." Then discuss these areas, asking one question at a time and probing
 the candidate's answers with natural follow-ups ("Why do you think that is?", "Do you think that
-will change?").
+will change?", "What about in other countries?").
+
+NEVER STOP ASKING. Every turn you take must end with a question. If you have covered every
+area listed below, keep going with further abstract questions that widen the same themes
+(causes, consequences, comparisons with the past, predictions about the future, other countries).
+Do NOT announce that the test is over and do NOT fall silent — the system will tell you when to stop.
 ${p3}`,
 
     end: `CURRENT STAGE — End of test.
@@ -459,6 +471,10 @@ class Session {
   configureSession() {
     if (this.upstream?.readyState !== WebSocket.OPEN) return;
     this.upstream.send(JSON.stringify(this.sessionPayload()));
+    /* session 一改，端點會把進行中的回應中止掉，而且不保證補得出
+       response.done。狀態留著卡住的話，之後每一次要考官講話都會被
+       「已經有回應在跑」擋下來，考官從此不出聲。 */
+    this.responseActive = false;
   }
 
   /** 切換階段：更新指示，必要時要求模型立刻發話 */
@@ -492,22 +508,82 @@ class Session {
    */
   requestResponse(extra = '') {
     if (this.closed || this.upstream?.readyState !== WebSocket.OPEN) return false;
-    const create = () => {
-      if (this.closed || this.upstream?.readyState !== WebSocket.OPEN) return;
-      this.upstream.send(JSON.stringify({
-        type: 'response.create',
-        response: extra ? { instructions: extra } : undefined,
-      }));
-    };
-    if (this.responseActive) {
-      // 換階段時舊的回應已經不合時宜了，先取消再重下
-      this.upstream.send(JSON.stringify({ type: 'response.cancel' }));
-      this.responseActive = false;
-      setTimeout(create, 120);
-      return true;
-    }
-    create();
+    this.wantResponse = { extra, tries: 0 };
+    this.pumpResponse();
     return true;
+  }
+
+  /**
+   * 真正把 response.create 送出去。
+   *
+   * 以前是「有進行中的回應就先取消，120 毫秒後再送」—— 那是在賭。
+   * 取消還沒被處理完，新的 create 就撞上去，端點回
+   * 「Conversation already has an active response」，而那則錯誤被當成
+   * 協定雜訊濾掉了。撞在階段轉換那一次的話，考官就再也不會開口 ——
+   * 學生講完名字和出生地、考官回一句之後從此沉默，就是這樣來的。
+   *
+   * 現在改成排隊：要講話就記下來，等 response.done 真的到了再送。
+   */
+  pumpResponse() {
+    const want = this.wantResponse;
+    if (!want || this.closed || this.upstream?.readyState !== WebSocket.OPEN) return;
+    if (this.responseActive) {
+      if (!want.cancelSent) {
+        want.cancelSent = true;
+        this.upstream.send(JSON.stringify({ type: 'response.cancel' }));
+      }
+      return;   // response.done 會再叫一次
+    }
+    this.wantResponse = null;
+    this.upstream.send(JSON.stringify({
+      type: 'response.create',
+      response: want.extra ? { instructions: want.extra } : undefined,
+    }));
+    // 送出去不代表考官會開口。看門狗要盯著它。
+    this.awaiting = { at: Date.now(), tries: want.tries || 0, extra: want.extra };
+  }
+
+  /**
+   * 考官該講話卻沒講話時，自己想辦法救回來。
+   *
+   * 以前只有一個「12 秒後告訴學生考官沒接話」的提示 —— 只是通報，
+   * 不會修好任何事。學生只能一直按「叫考官接話」。
+   */
+  startPump() {
+    clearInterval(this.pumpTimer);
+    this.pumpTimer = setInterval(() => {
+      if (this.closed || this.finishing) return;
+      const now = Date.now();
+
+      // 說要講話但一直沒動靜 —— 重下一次
+      if (this.awaiting && now - this.awaiting.at > 5000) {
+        const tries = this.awaiting.tries + 1;
+        const extra = this.awaiting.extra;
+        this.awaiting = null;
+        if (tries <= 3) {
+          this.log(`考官沒有回應，重新要求第 ${tries} 次`);
+          this.responseActive = false;      // 卡住的狀態一併清掉
+          this.wantResponse = { extra, tries };
+          this.pumpResponse();
+          // 第二次還救不回來就先講一聲，不要讓學生盯著沉默的畫面等到重試用盡
+          if (tries === 2 && !this.toldStalled) {
+            this.toldStalled = true;
+            this.send({ type: 'stalled', message: '考官沒有接話，正在重新叫醒他…' });
+          }
+        } else {
+          this.send({ type: 'stalled',
+            message: '考官一直沒有接話。可以再說一次，或按「叫考官接話」。' });
+        }
+      }
+
+      // 標記成「正在講話」但很久沒有半點聲音 —— 那個狀態壞了
+      if (this.responseActive && this.lastActivity && now - this.lastActivity > 15000) {
+        this.log('考官的回應狀態卡住了，強制清掉');
+        this.responseActive = false;
+        if (this.wantResponse) this.pumpResponse();
+      }
+    }, 3000);
+    this.pumpTimer.unref?.();
   }
 
   // ── 上游事件 ──────────────────────────────────────────────
@@ -526,6 +602,9 @@ class Session {
 
       case 'response.created':
         this.responseActive = true;
+        this.awaiting = null;          // 端點真的開始產生回應了
+        this.toldStalled = false;
+        this.lastActivity = Date.now();
         break;
 
       case 'input_audio_buffer.speech_started': {
@@ -605,6 +684,10 @@ class Session {
 
       case 'response.done':
         this.responseActive = false;
+        this.awaiting = null;
+        this.lastActivity = Date.now();
+        // 排隊中的下一次發話現在可以送了
+        if (this.wantResponse) this.pumpResponse();
         this.send({ type: 'examiner_done' });
         // Part 2 指示唸完 → 開始 1 分鐘準備
         this.fire('examiner_done_hook');
@@ -629,6 +712,20 @@ class Session {
       case 'error': {
         const m = ev.error?.message || '模型回報錯誤';
         this.log('upstream error', m);
+        /* 撞到進行中的回應：狀態沒同步。把它記回去並重新排隊，
+           不能只是濾掉錯誤就當沒事 —— 那正是考官從此沉默的原因。 */
+        if (/already has an active response/i.test(m)) {
+          this.responseActive = true;
+          if (this.awaiting) { this.wantResponse = { ...this.awaiting }; this.awaiting = null; }
+        } else if (/no active response|cancellation failed/i.test(m)) {
+          this.responseActive = false;
+          if (this.wantResponse) this.pumpResponse();
+        } else if (/response/i.test(m)) {
+          // 這次回應失敗了，狀態不能留著卡住
+          this.responseActive = false;
+          this.awaiting = null;
+          if (this.wantResponse) this.pumpResponse();
+        }
         /* 協定層的雜訊不要丟到學生臉上 —— 他看到一句英文的
            「Cancellation failed: no active response found」只會慌，
            而且完全無從處理。記在伺服器日誌就好。 */
@@ -737,12 +834,21 @@ class Session {
       return this.send({ type: 'error', message: '與考官的連線已中斷，請重新整理頁面' });
     }
     this.log('nudge');
-    if (this.responseActive) {
-      // 考官其實正在講話，只是學生還沒聽到（或聲音被吃掉了）
-      return this.send({ type: 'nudged', already: true });
-    }
+    // 就算現在標記成「正在講話」也照樣排隊 —— 學生會按這顆，
+    // 就代表他等很久了，狀態很可能已經卡住。
     this.requestResponse();
     this.send({ type: 'nudged' });
+  }
+
+  /** 換到會話階段時，明確叫考官問出第一題 */
+  openingFor(phase) {
+    if (phase === 'part1') {
+      return 'Part 1 starts now. Ask the candidate your first Part 1 question immediately.';
+    }
+    if (phase === 'part3') {
+      return 'Part 3 starts now. Give the one-line lead-in, then ask your first Part 3 question immediately.';
+    }
+    return '';
   }
 
   /** 依規則自動推進階段 */
@@ -751,7 +857,7 @@ class Session {
     const elapsed = (Date.now() - this.startedAt) / 1000;
 
     if (this.phase === 'intro' && candidateTurns >= 2) {
-      return this.setPhase('part1');
+      return this.setPhase('part1', { extra: this.openingFor('part1') });
     }
     if (this.phase === 'part1') {
       const target = Math.max(8, this.script.part1.reduce((n, t) => n + (t.items?.length || 0), 0));
@@ -760,7 +866,7 @@ class Session {
     if (this.phase === 'part2_round') {
       const done = this.turns.filter((t) => t.role === 'candidate').length;
       if (done >= this.roundStartTurns + (this.script.rounding?.length || 1)) {
-        return this.setPhase('part3');
+        return this.setPhase('part3', { extra: this.openingFor('part3') });
       }
     }
     if (this.phase === 'part3') {
@@ -898,6 +1004,7 @@ class Session {
     clearTimeout(this.phaseTimer);
     clearTimeout(this.finishTimer);
     clearTimeout(this.stallTimer);
+    clearInterval(this.pumpTimer);
     try { this.upstream?.close(); } catch {}
     try { this.ws?.close(); } catch {}
     // 只刪掉「自己」。同一場考試若已經有新的連線接手，
@@ -977,6 +1084,7 @@ function attach(server) {
         [attemptId]
       );
 
+      session.startPump();
       session.send({
         type: 'ready', api: session.flavor, resumed: !!session.resumed,
         examiner: { name: ex.name, ...examiner.displayFlags(ex) },
