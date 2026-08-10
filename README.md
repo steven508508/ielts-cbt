@@ -5,6 +5,8 @@
 ![Node](https://img.shields.io/badge/Node-%E2%89%A518-339933?logo=node.js&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker-compose-2496ED?logo=docker&logoColor=white)
 
+[繁體中文](README.md) · **[English](README.en.md)**
+
 一套可以自行架設的雅思電腦化測驗（CBT）模擬平台。學生端 1:1 臨摹官方機考介面，
 支援所有官方題型，口說是與 AI 考官的**即時語音對話**並即時評分，
 考完自動產出仿官方風格成績單；教師端有完整的檔案、考試資料與成績管理服務。
@@ -12,6 +14,24 @@
 - 後端：Node.js + Express + MySQL（口說即時語音走 WebSocket）
 - 前端：原生 JavaScript（沒有打包工具，改了存檔重新整理就生效）
 - AI：Claude / OpenAI / 任何自訂端點皆可，可分別指定文字、語音辨識、語音合成、即時對話
+
+---
+
+## 畫面
+
+| 閱讀：左文章右題目、可拖曳分隔線、螢光筆與註記 | 聽力：表單式填空、音檔只播一次 |
+|---|---|
+| ![閱讀](docs/screenshots/02-reading.png) | ![聽力](docs/screenshots/03-listening.png) |
+
+| 寫作 Task 1：圖表、即時字數 | 圖表放大檢視：可縮放、可拖曳 |
+|---|---|
+| ![寫作](docs/screenshots/04-writing.png) | ![放大](docs/screenshots/05-figure-zoom.png) |
+
+| 官方同款的字級與高對比配色 | 教師端：成績總覽 |
+|---|---|
+| ![高對比](docs/screenshots/06-high-contrast.png) | ![後台](docs/screenshots/07-admin-overview.png) |
+
+> 截圖由 `node test/browser/screenshots.mjs` 產生，改版之後重跑就會更新。
 
 ---
 

@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability / 安全性問題
+    url: https://github.com/steven508508/ielts-cbt/security/advisories/new
+    about: 請不要開公開 issue，改用私下回報。
