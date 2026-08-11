@@ -2,9 +2,33 @@
 node_modules/
 
 # 機密設定（.env.example / .env.docker.example 才是範本）
+#
+# 這裡用萬用字元而不是逐一列舉，是因為實務上會長出 .env.save、.env.bak、
+# .env.20260801 這種手改前的備份 —— 逐一列舉的清單永遠追不上。
+# 只有 *.example 是例外，那是要進版控的範本。
 .env
-.env.local
-.env.production
+.env.*
+!.env.example
+!.env.*.example
+
+# 資料庫備份與匯出
+#
+# 一份 mysqldump 裡有全校學生的帳號、成績與作答內容。倉庫公開之後，
+# 一次 git add -A 就會把它推上去，而且 git 歷史刪不乾淨。
+*.sql
+*.sql.gz
+*.dump
+*.dump.gz
+backup*/
+backups/
+# 但 server/ 底下的是資料表定義，那是程式的一部分，要進版控
+!server/*.sql
+
+# 憑證與金鑰
+*.pem
+*.key
+*.p12
+*.pfx
 
 # 使用者上傳的檔案（聽力音檔、圖片、口說錄音）
 uploads/audio/*
