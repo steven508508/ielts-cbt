@@ -1,0 +1,55 @@
+{
+ "checks": {
+  "browser": {
+   "label": "瀏覽器",
+   "critical": false
+  },
+  "secure": {
+   "label": "安全連線",
+   "critical": true
+  },
+  "server": {
+   "label": "伺服器連線",
+   "critical": true
+  },
+  "clock": {
+   "label": "電腦時鐘",
+   "critical": false
+  },
+  "screen": {
+   "label": "螢幕大小",
+   "critical": false
+  },
+  "storage": {
+   "label": "瀏覽器儲存",
+   "critical": true
+  },
+  "fullscreen": {
+   "label": "全螢幕",
+   "critical": false
+  },
+  "speaker": {
+   "label": "喇叭／耳機",
+   "critical": false
+  },
+  "audio": {
+   "label": "聽力音檔格式",
+   "critical": false
+  },
+  "mic": {
+   "label": "麥克風",
+   "critical": true
+  },
+  "ws": {
+   "label": "口說即時通道",
+   "critical": false
+  },
+  "turnstile": {
+   "label": "人機驗證",
+   "critical": false
+  }
+ },
+ "turnstileEnabled": false,
+ "serverTime": 1786534818249,
+ "wsPath": "/ws/speaking"
+}

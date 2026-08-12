@@ -7,6 +7,17 @@
 
 **English** · [繁體中文](README.md)
 
+### ▶ [Live demo — no signup, just start the exam](https://steven508508.github.io/ielts-cbt/)
+
+It runs this project's **actual front-end code**, with the backend replaced by a
+mock layer inside your browser. Reading, Listening and Writing are fully playable
+with real audio; Speaking is a scripted demo conversation — the examiner really
+speaks, but your microphone is never used. Listening and Reading are marked by
+`server/lib/answers.js` and `server/lib/bands.js`, the same files the real server
+uses, so the band conversion is identical. Refresh for a clean slate.
+
+---
+
 A complete IELTS mock-exam platform you can run on your own server. The student
 screen is a close reproduction of the official computer-delivered IELTS interface,
 all eleven official question types are supported, and **Speaking is a real-time

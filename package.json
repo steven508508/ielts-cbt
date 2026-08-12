@@ -18,7 +18,11 @@
     "test:browser": "node test/browser/speaking.mjs && node test/browser/answerScroll.mjs && node test/browser/speakingScenarios.mjs && node test/browser/speakingButtons.mjs && node test/browser/dialogStyle.mjs && node test/browser/listeningAudio.mjs && node test/browser/saveLoss.mjs && node test/browser/figures.mjs && node test/browser/swallowed.mjs",
     "test:security": "node test/security.js",
     "test:scope": "node test/scope.js",
-    "test:all": "npm test && npm run test:e2e && npm run test:security && npm run test:scope"
+    "test:all": "npm test && npm run test:e2e && npm run test:security && npm run test:scope",
+    "demo:build": "node scripts/build-demo.mjs",
+    "demo:audio": "node scripts/build-demo-audio.mjs && python3 scripts/build-demo-images.py",
+    "demo:serve": "node scripts/build-demo.mjs && cd _site && python3 -m http.server 8899",
+    "test:demo": "node test/browser/demoSite.mjs"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

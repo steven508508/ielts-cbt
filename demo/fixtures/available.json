@@ -1,0 +1,36 @@
+{
+  "available": [
+    {
+      "assignmentId": 1,
+      "testId": 1,
+      "title": "IELTS Academic 模擬試卷 一（範例）",
+      "testType": "academic",
+      "description": "系統內建的完整範例試卷：聽力 40 題、閱讀 40 題、寫作兩篇、口說三部分。可直接指派給學生試考。",
+      "modules": [
+        "listening",
+        "reading",
+        "writing",
+        "speaking"
+      ],
+      "speakingGrading": "ai",
+      "writingGrading": "ai",
+      "openFrom": null,
+      "openUntil": null,
+      "maxAttempts": 3,
+      "attempts": [
+        {
+          "id": 806,
+          "test_id": 1,
+          "assignment_id": 1,
+          "status": "graded",
+          "started_at": "2026-08-02 14:05:21",
+          "submitted_at": "2026-08-02 14:05:21",
+          "overall_band": "7.5"
+        }
+      ],
+      "canStart": true,
+      "inProgress": null,
+      "blockedReason": null
+    }
+  ]
+}

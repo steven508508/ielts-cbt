@@ -1,0 +1,73 @@
+name: 示範站
+
+# 每次 push 到 main 就重建示範站並部署到 GitHub Pages。
+#
+# 之所以在 CI 建而不是把 _site/ 提交進版控：示範站的前端是從 public/ 整份
+# 複製的，提交等於把同一份程式碼存兩份，而且遲早會有人改了 public/ 忘記重建，
+# 示範站就開始跟真站長得不一樣 —— 那正是示範站最不該出的錯。
+#
+# 第一次要先到 Settings → Pages → Source 選 "GitHub Actions"。
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'public/**'
+      - 'demo/**'
+      - 'samples/full-paper-academic.json'
+      - 'server/lib/answers.js'
+      - 'server/lib/bands.js'
+      - 'scripts/build-demo.mjs'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: 建置
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: 組靜態站
+        run: node scripts/build-demo.mjs
+
+      # 建完就在真的瀏覽器裡跑一次。示範站最容易出的錯是「畫面看起來正常，
+      # 其實什麼都沒載到」—— 相對路徑破掉、假後端漏接、音檔 404，
+      # 這些在截圖上都不一定看得出來。
+      - name: 實測
+        run: |
+          npm i -D playwright --no-save
+          npx playwright install --with-deps chromium
+          (cd _site && python3 -m http.server 8899 &)
+          for i in $(seq 1 30); do
+            curl -sf -o /dev/null http://localhost:8899/index.html && break
+            sleep 1
+          done
+          node test/browser/demoSite.mjs http://localhost:8899
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    name: 部署
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4

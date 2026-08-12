@@ -1,0 +1,90 @@
+{
+ "conduct": {
+  "counts": {
+   "module_start": 4
+  },
+  "flagged": {},
+  "bySeverity": {
+   "info": 4,
+   "warn": 0,
+   "alert": 0
+  },
+  "leaveCount": 0,
+  "excusedCount": 0,
+  "events": []
+ },
+ "attempt": {
+  "id": 832,
+  "status": "grading",
+  "modules": [
+   "listening",
+   "reading",
+   "writing",
+   "speaking"
+  ],
+  "startedAt": "2026-08-12 11:40:46",
+  "submittedAt": "2026-08-12 11:40:47",
+  "gradedAt": null,
+  "bands": {
+   "listening": null,
+   "reading": null,
+   "writing": null,
+   "speaking": null,
+   "overall": null
+  },
+  "cefr": "",
+  "bandSummary": null
+ },
+ "candidate": {
+  "id": 3,
+  "name": "示範考生",
+  "username": "demo",
+  "candidate_no": "A0001",
+  "class_group": "示範班",
+  "date_of_birth": null,
+  "nationality": null
+ },
+ "test": {
+  "id": 1,
+  "title": "IELTS Academic 模擬試卷 一（範例）",
+  "testType": "academic"
+ },
+ "criteriaLabels": {
+  "writing": {
+   "TA": {
+    "en": "Task Achievement / Task Response",
+    "zh": "任務完成度"
+   },
+   "CC": {
+    "en": "Coherence and Cohesion",
+    "zh": "連貫與銜接"
+   },
+   "LR": {
+    "en": "Lexical Resource",
+    "zh": "詞彙豐富度"
+   },
+   "GRA": {
+    "en": "Grammatical Range and Accuracy",
+    "zh": "文法多樣性與準確度"
+   }
+  },
+  "speaking": {
+   "FC": {
+    "en": "Fluency and Coherence",
+    "zh": "流利度與連貫性"
+   },
+   "LR": {
+    "en": "Lexical Resource",
+    "zh": "詞彙豐富度"
+   },
+   "GRA": {
+    "en": "Grammatical Range and Accuracy",
+    "zh": "文法多樣性與準確度"
+   },
+   "PRO": {
+    "en": "Pronunciation",
+    "zh": "發音"
+   }
+  }
+ }
+}

@@ -1,0 +1,62 @@
+{
+  "note": "示範站用的口說腳本。考官語音由 scripts/build-demo.mjs 用 Piper 產生；考生只有逐字稿，跟真站一樣不回放考生錄音。",
+  "examinerVoice": "en_GB-jenny_dioco-medium",
+  "turns": [
+    { "at": 600,  "phase": "intro" },
+    { "at": 900,  "ex": "Good morning. My name is Eleanor Shaw. Can you tell me your full name, please?" },
+    { "at": 2000, "ca": "Good morning. My name is Wang Xiao Ming." },
+    { "at": 1200, "ex": "Thank you. And can you tell me where you're from?" },
+    { "at": 1800, "ca": "I'm from Taipei, in Taiwan. I've lived there my whole life, apart from one year when I studied in Tainan." },
+
+    { "at": 900,  "phase": "part1" },
+    { "at": 600,  "ex": "Let's talk about where you live. Do you live in a house or an apartment?" },
+    { "at": 2400, "ca": "I live in an apartment on the eighth floor. It's not very big, but it has a balcony, which I think makes a real difference in a city like Taipei." },
+    { "at": 1200, "ex": "And what do you like most about the area you live in?" },
+    { "at": 2600, "ca": "Probably how convenient it is. There's a metro station about three minutes away, and a night market at the end of the street, so I hardly ever need to plan anything in advance." },
+    { "at": 1000, "score": { "band": 6.5, "FC": 6.5, "LR": 7, "GRA": 6, "PRO": 6.5 } },
+    { "at": 600,  "ex": "Do you think you will stay living there in the future?" },
+    { "at": 2200, "ca": "I'd like to, though it depends on work. If I get a job in the south I'd have to move, and honestly the rent there is much more reasonable." },
+
+    { "at": 1000, "phase": "part2_instruct",
+      "ex": "Now I'm going to give you a topic, and I'd like you to talk about it for one to two minutes. Before you talk, you'll have one minute to think about what you're going to say. You can make some notes if you wish. Here's your topic." },
+    { "at": 900,  "cue": {
+      "title": "Describe a skill you learned that was difficult at first.",
+      "bullets": [
+        "what the skill was",
+        "how you learned it",
+        "why it was difficult at first"
+      ],
+      "final": "and explain how you feel about having learned it."
+    } },
+    { "at": 400,  "prep": 60 },
+    { "at": 1200, "ex": "All right? Remember you have one to two minutes for this. Don't worry if I stop you. I'll tell you when the time is up. Can you start speaking now, please?" },
+    { "at": 600,  "talk": 120 },
+    { "at": 1500, "ca": "I'd like to talk about learning to swim, which I only did properly when I was twenty-three. Most people learn as children, so it was quite embarrassing to start that late. I signed up for adult beginner lessons at a public pool near my office, twice a week, early in the morning before work. The hardest part wasn't the technique at all — it was breathing. I could move my arms and legs perfectly well standing in the shallow end, but the moment I had to put my face in the water and exhale slowly, I panicked. My instructor made me spend three whole lessons just blowing bubbles, which felt ridiculous at the time. Looking back, that was exactly the right thing to do, because once breathing stopped being frightening, everything else came together within a month. Now I swim about a kilometre twice a week, and it's become the part of my routine I'd least want to give up. What I took from it is that when something feels impossible, it's usually one specific piece that's blocking you, not the whole thing." },
+    { "at": 1000, "score": { "band": 7, "FC": 7, "LR": 7, "GRA": 6.5, "PRO": 7 } },
+    { "at": 800,  "phase": "part2_round" },
+    { "at": 500,  "ex": "Thank you. Do you still take lessons now?" },
+    { "at": 1600, "ca": "Not regularly, no. I go back for a technique class maybe twice a year." },
+
+    { "at": 1000, "phase": "part3" },
+    { "at": 600,  "ex": "We've been talking about learning a skill, and I'd like to ask you some more general questions about this. Do you think adults and children learn new skills in different ways?" },
+    { "at": 2800, "ca": "Yes, quite differently, I'd say. Children seem to be much less afraid of looking foolish, so they simply try things. Adults tend to want to understand the whole method before they start, which sounds sensible but often slows them down. On the other hand, adults can be far more deliberate about practice — they'll work on one weakness for weeks, and a child usually won't." },
+    { "at": 1200, "ex": "And should schools spend more time teaching practical skills rather than academic subjects?" },
+    { "at": 2600, "ca": "I'd be careful about framing it as a choice between the two. Practical skills are obviously useful, but a lot of what makes them useful is the reasoning underneath, and that comes from academic work. What I would change is how they're assessed — practical subjects get treated as less serious largely because they're harder to put in an exam." },
+    { "at": 1000, "score": { "band": 7, "FC": 7, "LR": 7.5, "GRA": 7, "PRO": 7 } },
+
+    { "at": 900,  "phase": "end" },
+    { "at": 400,  "ex": "Thank you very much. That is the end of the speaking test." },
+    { "at": 1500, "finish": true }
+  ],
+  "final": {
+    "band": 7,
+    "criteria": { "FC": 7, "LR": 7.5, "GRA": 6.5, "PRO": 7 },
+    "feedback": {
+      "FC": "Speaks at length without noticeable effort, and develops answers with reasons and examples rather than stopping at the first idea. Some hesitation before the Part 3 answers, but it reads as thinking rather than searching for words.",
+      "LR": "Uses a good range of less common vocabulary naturally — 'deliberate about practice', 'framing it as a choice'. Occasional imprecision, but meaning is never in doubt.",
+      "GRA": "A mix of simple and complex structures with generally good control. A few slips in conditional forms ('If I get a job in the south I'd have to move') keep this below the level of the other criteria.",
+      "PRO": "Clear throughout and easy to follow. Uses stress and intonation to mark contrast effectively. First-language features are audible but never cause strain for the listener."
+    },
+    "summary": "A strong band 7 performance. The Part 2 long turn was well organised and finished with a genuine reflection rather than trailing off, which is what separates this from a band 6.5."
+  }
+}

@@ -37,6 +37,8 @@ uploads/speaking/*
 !uploads/**/.gitkeep
 
 # 執行期產物
+# 示範站的建置產物（gitignore 不支援行內註解，所以註解要自己一行）
+_site/
 *.log
 npm-debug.log*
 coverage/
