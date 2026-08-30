@@ -5,6 +5,8 @@
 ![Node](https://img.shields.io/badge/Node-%E2%89%A518-339933?logo=node.js&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker-compose-2496ED?logo=docker&logoColor=white)
 
+https://doi.org/10.5281/zenodo.22181834
+
 [繁體中文](README.md) · **[English](README.en.md)**
 
 ### ▶ [線上示範站 — 不用註冊，點進去就能考](https://steven508508.github.io/ielts-cbt/)
